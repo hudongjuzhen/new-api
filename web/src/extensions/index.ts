@@ -18,3 +18,6 @@ installing or uninstalling a plugin only touches this and the plugin folder.
 export * from './menus'
 export * from './channel-types'
 export * from './locales'
+
+// Plugin registrations (side-effect imports that push menu groups, locales, etc.)
+import './zsy-runninghub'

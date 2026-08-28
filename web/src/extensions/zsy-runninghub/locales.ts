@@ -1,0 +1,73 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+RunningHub plugin i18n resources. Keys are English source strings per
+the project convention; zh/zh-TW provide Chinese translations.
+*/
+
+import type { ExtensionLocales } from '@/extensions/locales'
+
+export const locales: ExtensionLocales = {
+  en: {
+    'RH Apps': 'RH Apps',
+    'RH Instances': 'RH Instances',
+    'RunningHub Apps': 'RunningHub Apps',
+    'RunningHub Instances': 'RunningHub Instances',
+    'Upstream ID': 'Upstream ID',
+    'Per-Call Billing': 'Per-Call Billing',
+    'Fixed Quota': 'Fixed Quota',
+    'Rate Ratio': 'Rate Ratio',
+    'Published': 'Published',
+    'Admin Only': 'Admin Only',
+    'Create App': 'Create App',
+    'Edit App': 'Edit App',
+    'Delete App': 'Delete App',
+    'App Name': 'App Name',
+    'Slug': 'Slug',
+    'Kind': 'Kind',
+    'Description': 'Description',
+    'Cover URL': 'Cover URL',
+    'Param Schema': 'Param Schema',
+    'Model Base Rate Ratio': 'Model Base Rate Ratio',
+    'Instance Name': 'Instance Name',
+    'Channel': 'Channel',
+    'Key Pool Count': 'Key Pool Count',
+    'Create Instance': 'Create Instance',
+    'Edit Instance': 'Edit Instance',
+    'Delete Instance': 'Delete Instance',
+    'Refresh Keys': 'Refresh Keys',
+    'Sync from Channel': 'Sync from Channel',
+    'No data': 'No data',
+  },
+  zhCN: {
+    'RH Apps': 'RH 应用',
+    'RH Instances': 'RH 实例',
+    'RunningHub Apps': 'RunningHub 应用',
+    'RunningHub Instances': 'RunningHub 实例',
+    'Upstream ID': '上游 ID',
+    'Per-Call Billing': '按次计费',
+    'Fixed Quota': '固定额度',
+    'Rate Ratio': '倍率',
+    'Published': '已发布',
+    'Admin Only': '仅管理员',
+    'Create App': '创建应用',
+    'Edit App': '编辑应用',
+    'Delete App': '删除应用',
+    'App Name': '应用名称',
+    'Slug': 'Slug',
+    'Kind': '类型',
+    'Description': '描述',
+    'Cover URL': '封面地址',
+    'Param Schema': '参数模板',
+    'Model Base Rate Ratio': '模型基础倍率',
+    'Instance Name': '实例名称',
+    'Channel': '渠道',
+    'Key Pool Count': '密钥池数量',
+    'Create Instance': '创建实例',
+    'Edit Instance': '编辑实例',
+    'Delete Instance': '删除实例',
+    'Refresh Keys': '刷新密钥',
+    'Sync from Channel': '从渠道同步',
+    'No data': '暂无数据',
+  },
+}
