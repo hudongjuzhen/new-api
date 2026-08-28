@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/extcore"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	"github.com/QuantumNous/new-api/relay/channel/ali"
@@ -142,6 +143,15 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 }
 
 func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+	// Consult the plugin registry first so out-of-tree platforms can be
+	// installed without modifying this switch body. extcore intentionally
+	// returns an opaque value (it cannot import relay/channel without creating
+	// an import cycle via model); validate the concrete shape here.
+	if raw := extcore.GetTaskAdaptorRaw(string(platform)); raw != nil {
+		if adaptor, ok := raw.(channel.TaskAdaptor); ok {
+			return adaptor
+		}
+	}
 	switch platform {
 	//case constant.APITypeAIProxyLibrary:
 	//	return &aiproxy.Adaptor{}

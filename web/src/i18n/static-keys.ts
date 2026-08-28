@@ -215,6 +215,9 @@ export const STATIC_I18N_KEYS = [
   // Channel Affinity section
   'Channel Affinity',
 
+  // Extension channel type labels (contributed via extensions/channel-types.ts)
+  'RunningHub',
+
   // Models constants
   'Exact Match',
   'Prefix Match',

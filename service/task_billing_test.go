@@ -1226,3 +1226,88 @@ func TestSettle_NonPerCallBilling_AppliesAdaptorAdjustment(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 }
+
+// clampCheckedAdaptor implements the optional TaskBillingClampAdjustor
+// interface, mirroring adaptors whose settle-time quota conversion can
+// saturate (e.g. RunningHub's consumeCoins conversion).
+type clampCheckedAdaptor struct {
+	mockAdaptor
+	quota int
+	clamp *common.QuotaClamp
+}
+
+func (c *clampCheckedAdaptor) AdjustBillingOnCompleteChecked(_ *model.Task, _ *relaycommon.TaskInfo) (int, *common.QuotaClamp) {
+	return c.quota, c.clamp
+}
+
+func TestSettle_CheckedAdaptor_SurfacesQuotaClamp(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 33, 33, 33
+	const initQuota, preConsumed = 10000, 5000
+	const adaptorQuota = 3000
+	const tokenRemain = 8000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-checked-clamp", tokenRemain)
+	seedChannel(t, channelID)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Status = model.TaskStatus(model.TaskStatusInProgress)
+	require.NoError(t, model.DB.Create(task).Error)
+
+	clamp := &common.QuotaClamp{Op: "QuotaFromFloat", Kind: common.QuotaClampOverflow, Original: 1e300, Clamped: adaptorQuota}
+	adaptor := &clampCheckedAdaptor{quota: adaptorQuota, clamp: clamp}
+	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
+
+	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+
+	// Diff settlement used the Checked quota.
+	assert.Equal(t, initQuota+(preConsumed-adaptorQuota), getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain+(preConsumed-adaptorQuota), getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, adaptorQuota, task.Quota)
+
+	// The saturation event must be auditable under other.admin_info.quota_saturation.
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeRefund, log.Type)
+	var other map[string]any
+	require.NoError(t, json.Unmarshal([]byte(log.Other), &other))
+	adminInfo, ok := other["admin_info"].(map[string]any)
+	require.True(t, ok, "admin_info missing from log other: %v", other)
+	sat, ok := adminInfo["quota_saturation"].(map[string]any)
+	require.True(t, ok, "quota_saturation missing from admin_info: %v", adminInfo)
+	assert.Equal(t, "QuotaFromFloat", sat["op"])
+	assert.Equal(t, "overflow", sat["kind"])
+	assert.Equal(t, float64(adaptorQuota), sat["clamped"])
+}
+
+func TestSettle_CheckedAdaptor_ZeroKeepsPreConsumed(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 34, 34, 34
+	const initQuota, preConsumed = 10000, 4000
+	const tokenRemain = 7000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-checked-zero", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Status = model.TaskStatus(model.TaskStatusInProgress)
+	require.NoError(t, model.DB.Create(task).Error)
+
+	// Checked variant returns 0 with no tokens → pre-charged amount is kept.
+	adaptor := &clampCheckedAdaptor{quota: 0}
+	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
+
+	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+
+	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, preConsumed, task.Quota)
+	assert.Equal(t, int64(0), countLogs(t))
+}

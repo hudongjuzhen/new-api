@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/extcore"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/clickhouse"
@@ -307,7 +308,7 @@ func migrateDB() error {
 		return err
 	}
 
-	err := DB.AutoMigrate(
+	migrateTargets := []any{
 		&Channel{},
 		&Token{},
 		&User{},
@@ -341,7 +342,9 @@ func migrateDB() error {
 		&SystemTaskLock{},
 		&CasbinRule{},
 		&AuthzRole{},
-	)
+	}
+	migrateTargets = append(migrateTargets, extcore.ExtraMigrateModels()...)
+	err := DB.AutoMigrate(migrateTargets...)
 	if err != nil {
 		return err
 	}

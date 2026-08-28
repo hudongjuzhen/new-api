@@ -20,6 +20,7 @@ import i18n from 'i18next'
 import LanguageDetector from 'i18next-browser-languagedetector'
 import { initReactI18next } from 'react-i18next'
 
+import { EXTENSION_LOCALES } from '@/extensions/locales'
 import { convertDetectedLanguage } from './languages'
 import en from './locales/en.json'
 import fr from './locales/fr.json'
@@ -29,14 +30,28 @@ import vi from './locales/vi.json'
 import zhTW from './locales/zh-TW.json'
 import zhCN from './locales/zh.json'
 
+function mergeExt<LangCode extends keyof typeof EXTENSION_LOCALES>(
+  base: Record<string, unknown>,
+  code: LangCode,
+): Record<string, unknown> {
+  const ext = EXTENSION_LOCALES[code]
+  if (!ext || Object.keys(ext).length === 0) return base
+  const baseAny = base as Record<string, unknown>
+  const baseTx = (baseAny.translation ?? {}) as Record<string, unknown>
+  return {
+    ...baseAny,
+    translation: { ...baseTx, ...(ext as Record<string, unknown>) },
+  }
+}
+
 export const resources = {
-  en,
-  zhCN,
-  fr,
-  ru,
-  ja,
-  vi,
-  zhTW,
+  en: mergeExt(en as Record<string, unknown>, 'en'),
+  zhCN: mergeExt(zhCN as Record<string, unknown>, 'zhCN'),
+  fr: mergeExt(fr as Record<string, unknown>, 'fr'),
+  ru: mergeExt(ru as Record<string, unknown>, 'ru'),
+  ja: mergeExt(ja as Record<string, unknown>, 'ja'),
+  vi: mergeExt(vi as Record<string, unknown>, 'vi'),
+  zhTW: mergeExt(zhTW as Record<string, unknown>, 'zhTW'),
 } as const
 
 i18n

@@ -34,6 +34,14 @@ type TaskPollingAdaptor interface {
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 }
 
+// TaskBillingClampAdjustor 是 TaskPollingAdaptor 的可选扩展接口。实现它的
+// adaptor 在计算实际结算额度的过程中若发生额度饱和（溢出/NaN），可同时返回
+// *common.QuotaClamp，由差额结算写入任务账单日志 other.admin_info.quota_saturation
+// （仅管理员可见），保证饱和事件在后端日志与账单日志中都可审计。
+type TaskBillingClampAdjustor interface {
+	AdjustBillingOnCompleteChecked(task *model.Task, taskResult *relaycommon.TaskInfo) (int, *common.QuotaClamp)
+}
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -636,7 +644,7 @@ func truncateBase64(s string) string {
 }
 
 // settleTaskBillingOnComplete 任务完成时的统一计费调整。
-// 优先级：1. adaptor.AdjustBillingOnComplete 返回正数 → 使用 adaptor 计算的额度
+// 优先级：1. adaptor.AdjustBillingOnComplete（或 Checked 变体）返回正数 → 使用 adaptor 计算的额度
 //
 //  2. taskResult.TotalTokens > 0 → 按 token 重算
 //  3. 都不满足 → 保持预扣额度不变
@@ -646,8 +654,14 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return
 	}
-	// 1. 优先让 adaptor 决定最终额度
-	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
+	// 1. 优先让 adaptor 决定最终额度；实现 Checked 变体的 adaptor 会同时透出
+	//    额度饱和事件（QuotaClamp → 差额结算日志 admin_info）。
+	if ca, ok := adaptor.(TaskBillingClampAdjustor); ok {
+		if actualQuota, clamp := ca.AdjustBillingOnCompleteChecked(task, taskResult); actualQuota > 0 {
+			RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整", clamp)
+			return
+		}
+	} else if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
 		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
 		return
 	}

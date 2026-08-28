@@ -1,0 +1,79 @@
+package runninghub
+
+import (
+	"github.com/QuantumNous/new-api/zsy/runninghub/rhparser"
+	"github.com/gin-gonic/gin"
+)
+
+// TestHookParseCurl is exported for the plugin's own test suite only. It
+// forwards to parseCurlEndpoint, which is the canonical admin handler.
+func TestHookParseCurl(c *gin.Context) { parseCurlEndpoint(c) }
+
+// TestHookCreateApp exposes the createApp admin handler for tests.
+func TestHookCreateApp(c *gin.Context) { createApp(c) }
+
+// TestHookGetApp exposes the getApp admin handler for tests.
+func TestHookGetApp(c *gin.Context) { getApp(c) }
+
+// TestHookUpdateApp exposes updateApp for tests.
+func TestHookUpdateApp(c *gin.Context) { updateApp(c) }
+
+// TestHookDeleteApp exposes deleteApp for tests.
+func TestHookDeleteApp(c *gin.Context) { deleteApp(c) }
+
+// TestHookListApps exposes listApps for tests.
+func TestHookListApps(c *gin.Context) { listApps(c) }
+
+// TestHookSyncApps exposes syncAppsFromChannel for tests.
+func TestHookSyncApps(c *gin.Context) { syncAppsFromChannel(c) }
+
+// TestHookValidateAppCreate runs the same DTO->App translation + validator
+// used by AppInsert / AppUpdate but returns the validation error without
+// touching the database. Exported for unit tests that exercise the validator
+// table drive.
+func TestHookValidateAppCreate(dto *AppCreateDTO) error {
+	app, err := applyDto(dto, nil)
+	if err != nil {
+		return err
+	}
+	return validateApp(app)
+}
+
+// --- User-side hooks -------------------------------------------------------
+
+// TestHookListPublicApps exposes the user-side list handler for tests.
+func TestHookListPublicApps(c *gin.Context) { listPublicApps(c) }
+
+// TestHookGetPublicAppDetail exposes the user-side detail handler for tests.
+func TestHookGetPublicAppDetail(c *gin.Context) { getPublicAppDetail(c) }
+
+// TestHookSubmitAppRun exposes the user-side submit handler for tests.
+func TestHookSubmitAppRun(c *gin.Context) { submitAppRun(c) }
+
+// TestHookGetAppTaskResult exposes the user-side task query handler for tests.
+func TestHookGetAppTaskResult(c *gin.Context) { getAppTaskResult(c) }
+
+// TestHookValidateRunPayload runs the in-memory validation path used by
+// submitAppRun without hitting the relay pipeline. Exported for table-driven
+// unit tests covering the typed schema validator.
+func TestHookValidateRunPayload(schema []rhparser.SchemaParam, values map[string]any) error {
+	_, err := validateAndBuildNodeInfoList(schema, values)
+	return err
+}
+
+// --- Instance admin hooks ---------------------------------------------------
+
+// TestHookListInstances exposes the instance list handler for tests.
+func TestHookListInstances(c *gin.Context) { listInstances(c) }
+
+// TestHookCreateInstance exposes the instance create handler for tests.
+func TestHookCreateInstance(c *gin.Context) { createInstance(c) }
+
+// TestHookUpdateInstance exposes the instance update handler for tests.
+func TestHookUpdateInstance(c *gin.Context) { updateInstance(c) }
+
+// TestHookDeleteInstance exposes the instance delete handler for tests.
+func TestHookDeleteInstance(c *gin.Context) { deleteInstance(c) }
+
+// TestHookRefreshKeypool exposes the keypool-refresh handler for tests.
+func TestHookRefreshKeypool(c *gin.Context) { refreshKeypool(c) }

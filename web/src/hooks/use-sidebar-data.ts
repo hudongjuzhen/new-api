@@ -37,6 +37,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { type SidebarData } from '@/components/layout/types'
+import { EXT_MENU_GROUPS } from '@/extensions/menus'
 import { ROLE } from '@/lib/roles'
 
 /**
@@ -158,6 +159,7 @@ export function useSidebarData(): SidebarData {
           },
         ],
       },
+      ...EXT_MENU_GROUPS,
     ],
   }
 }
