@@ -108,7 +108,7 @@ function AppForm({
           />
         </div>
         <div className='space-y-1.5'>
-          <Label htmlFor='rh-app-slug'>Slug</Label>
+          <Label htmlFor='rh-app-slug'>{t('Slug')}</Label>
           <Input
             id='rh-app-slug'
             value={dto.slug}
@@ -122,8 +122,8 @@ function AppForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value='aic_app'>AIC App</SelectItem>
-              <SelectItem value='workflow'>Workflow</SelectItem>
+              <SelectItem value='aic_app'>{t('AIC App')}</SelectItem>
+              <SelectItem value='workflow'>{t('Workflow')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -283,96 +283,98 @@ export function RhAppsPage() {
   }
 
   return (
-    <SectionPageLayout fixedContent>
-      <SectionPageLayout.Title>{t('RunningHub Apps')}</SectionPageLayout.Title>
-      <SectionPageLayout.Actions>
-        <Button
-          variant='outline'
-          size='sm'
-          onClick={() => syncMutation.mutate(0)}
-          disabled={syncMutation.isPending}
-        >
-          <RefreshCw className='size-4' />
-          {t('Sync from Channel')}
-        </Button>
-        <Button size='sm' onClick={openCreate}>
-          <Plus className='size-4' />
-          {t('Create App')}
-        </Button>
-      </SectionPageLayout.Actions>
-      <SectionPageLayout.Content>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>{t('App Name')}</TableHead>
-              <TableHead>{t('Kind')}</TableHead>
-              <TableHead>{t('Upstream ID')}</TableHead>
-              <TableHead>{t('Per-Call Billing')}</TableHead>
-              <TableHead>{t('Rate Ratio')}</TableHead>
-              <TableHead>{t('Published')}</TableHead>
-              <TableHead className='text-right'>{t('Actions')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
+    <>
+      <SectionPageLayout fixedContent>
+        <SectionPageLayout.Title>{t('RunningHub Apps')}</SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <Button
+            variant='outline'
+            size='sm'
+            onClick={() => syncMutation.mutate(0)}
+            disabled={syncMutation.isPending}
+          >
+            <RefreshCw className='size-4' />
+            {t('Sync from Channel')}
+          </Button>
+          <Button size='sm' onClick={openCreate}>
+            <Plus className='size-4' />
+            {t('Create App')}
+          </Button>
+        </SectionPageLayout.Actions>
+        <SectionPageLayout.Content>
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={8} className='text-center'>
-                  {t('Loading...')}
-                </TableCell>
+                <TableHead>ID</TableHead>
+                <TableHead>{t('App Name')}</TableHead>
+                <TableHead>{t('Kind')}</TableHead>
+                <TableHead>{t('Upstream ID')}</TableHead>
+                <TableHead>{t('Per-Call Billing')}</TableHead>
+                <TableHead>{t('Rate Ratio')}</TableHead>
+                <TableHead>{t('Published')}</TableHead>
+                <TableHead className='text-right'>{t('Actions')}</TableHead>
               </TableRow>
-            ) : !data?.items?.length ? (
-              <TableRow>
-                <TableCell colSpan={8} className='text-center'>
-                  {t('No data')}
-                </TableCell>
-              </TableRow>
-            ) : (
-              data.items.map((app) => (
-                <TableRow key={app.id}>
-                  <TableCell>{app.id}</TableCell>
-                  <TableCell className='font-medium'>{app.name}</TableCell>
-                  <TableCell>{app.kind}</TableCell>
-                  <TableCell className='font-mono text-xs'>
-                    {app.upstreamId}
-                  </TableCell>
-                  <TableCell>
-                    {app.perCallBilling ? (
-                      <Badge>{t('Per-Call Billing')}</Badge>
-                    ) : (
-                      <Badge variant='outline'>{t('Dynamic')}</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>{app.modelBaseRateRatio}</TableCell>
-                  <TableCell>
-                    {app.published ? (
-                      <Badge>{t('Published')}</Badge>
-                    ) : (
-                      <Badge variant='outline'>{t('Draft')}</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className='text-right'>
-                    <Button
-                      variant='ghost'
-                      size='icon-sm'
-                      onClick={() => openEdit(app)}
-                    >
-                      <Pencil className='size-3.5' />
-                    </Button>
-                    <Button
-                      variant='ghost'
-                      size='icon-sm'
-                      onClick={() => setDeleteId(app.id)}
-                    >
-                      <Trash2 className='size-3.5' />
-                    </Button>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={8} className='text-center'>
+                    {t('Loading...')}
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </SectionPageLayout.Content>
+              ) : !data?.items?.length ? (
+                <TableRow>
+                  <TableCell colSpan={8} className='text-center'>
+                    {t('No data')}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                data.items.map((app) => (
+                  <TableRow key={app.id}>
+                    <TableCell>{app.id}</TableCell>
+                    <TableCell className='font-medium'>{app.name}</TableCell>
+                    <TableCell>{app.kind}</TableCell>
+                    <TableCell className='font-mono text-xs'>
+                      {app.upstreamId}
+                    </TableCell>
+                    <TableCell>
+                      {app.perCallBilling ? (
+                        <Badge>{t('Per-Call Billing')}</Badge>
+                      ) : (
+                        <Badge variant='outline'>{t('Dynamic')}</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>{app.modelBaseRateRatio}</TableCell>
+                    <TableCell>
+                      {app.published ? (
+                        <Badge>{t('Published')}</Badge>
+                      ) : (
+                        <Badge variant='outline'>{t('Draft')}</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className='text-right'>
+                      <Button
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => openEdit(app)}
+                      >
+                        <Pencil className='size-3.5' />
+                      </Button>
+                      <Button
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => setDeleteId(app.id)}
+                      >
+                        <Trash2 className='size-3.5' />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className='max-w-2xl'>
@@ -427,6 +429,6 @@ export function RhAppsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </SectionPageLayout>
+    </>
   )
 }

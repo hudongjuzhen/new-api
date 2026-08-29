@@ -39,6 +39,8 @@ import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
 import { ThemeProvider } from './context/theme-provider'
 import './i18n/config'
+// Extension registrations (sidebar menus, channel types, locales, etc.)
+import '@/extensions'
 // Generated Routes
 import { routeTree } from './routeTree.gen'
 

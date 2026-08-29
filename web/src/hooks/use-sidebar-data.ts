@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+
 import { type SidebarData } from '@/components/layout/types'
 import { EXT_MENU_GROUPS } from '@/extensions/menus'
 import { ROLE } from '@/lib/roles'
@@ -159,7 +160,16 @@ export function useSidebarData(): SidebarData {
           },
         ],
       },
-      ...EXT_MENU_GROUPS,
+      // Extension groups register plain-English keys; translate them at render
+      // time so language switching works (group items are static strings).
+      ...EXT_MENU_GROUPS.map((group) => ({
+        ...group,
+        title: t(group.title),
+        items: group.items.map((item) => ({
+          ...item,
+          title: t(item.title),
+        })),
+      })),
     ],
   }
 }

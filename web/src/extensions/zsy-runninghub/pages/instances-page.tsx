@@ -89,7 +89,7 @@ function InstanceForm({
           />
         </div>
         <div className='space-y-1.5'>
-          <Label htmlFor='rh-inst-appid'>App ID</Label>
+          <Label htmlFor='rh-inst-appid'>{t('App ID')}</Label>
           <Input
             id='rh-inst-appid'
             type='number'
@@ -206,96 +206,98 @@ export function RhInstancesPage() {
   }
 
   return (
-    <SectionPageLayout fixedContent>
-      <SectionPageLayout.Title>
-        {t('RunningHub Instances')}
-      </SectionPageLayout.Title>
-      <SectionPageLayout.Actions>
-        <Button
-          size='sm'
-          onClick={() => {
-            setEditing(null)
-            setDialogOpen(true)
-          }}
-        >
-          <Plus className='size-4' />
-          {t('Create Instance')}
-        </Button>
-      </SectionPageLayout.Actions>
-      <SectionPageLayout.Content>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>{t('Instance Name')}</TableHead>
-              <TableHead>{t('Channel')}</TableHead>
-              <TableHead>{t('Key Pool Count')}</TableHead>
-              <TableHead>{t('Enabled')}</TableHead>
-              <TableHead className='text-right'>{t('Actions')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
+    <>
+      <SectionPageLayout fixedContent>
+        <SectionPageLayout.Title>
+          {t('RunningHub Instances')}
+        </SectionPageLayout.Title>
+        <SectionPageLayout.Actions>
+          <Button
+            size='sm'
+            onClick={() => {
+              setEditing(null)
+              setDialogOpen(true)
+            }}
+          >
+            <Plus className='size-4' />
+            {t('Create Instance')}
+          </Button>
+        </SectionPageLayout.Actions>
+        <SectionPageLayout.Content>
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={6} className='text-center'>
-                  {t('Loading...')}
-                </TableCell>
+                <TableHead>ID</TableHead>
+                <TableHead>{t('Instance Name')}</TableHead>
+                <TableHead>{t('Channel')}</TableHead>
+                <TableHead>{t('Key Pool Count')}</TableHead>
+                <TableHead>{t('Enabled')}</TableHead>
+                <TableHead className='text-right'>{t('Actions')}</TableHead>
               </TableRow>
-            ) : !data?.items?.length ? (
-              <TableRow>
-                <TableCell colSpan={6} className='text-center'>
-                  {t('No data')}
-                </TableCell>
-              </TableRow>
-            ) : (
-              data.items.map((inst) => (
-                <TableRow key={inst.id}>
-                  <TableCell>{inst.id}</TableCell>
-                  <TableCell className='font-medium'>{inst.name}</TableCell>
-                  <TableCell>
-                    {inst.channelName || `#${inst.channelId}`}
-                  </TableCell>
-                  <TableCell>{inst.keypoolCount}</TableCell>
-                  <TableCell>
-                    {inst.enabled ? (
-                      <Badge>{t('Enabled')}</Badge>
-                    ) : (
-                      <Badge variant='outline'>{t('Disabled')}</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className='text-right'>
-                    <Button
-                      variant='ghost'
-                      size='icon-sm'
-                      onClick={() => refreshMutation.mutate(inst.id)}
-                      disabled={refreshMutation.isPending}
-                    >
-                      <KeyRound className='size-3.5' />
-                    </Button>
-                    <Button
-                      variant='ghost'
-                      size='icon-sm'
-                      onClick={() => {
-                        setEditing(inst)
-                        setDialogOpen(true)
-                      }}
-                    >
-                      <Pencil className='size-3.5' />
-                    </Button>
-                    <Button
-                      variant='ghost'
-                      size='icon-sm'
-                      onClick={() => setDeleteId(inst.id)}
-                    >
-                      <Trash2 className='size-3.5' />
-                    </Button>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={6} className='text-center'>
+                    {t('Loading...')}
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </SectionPageLayout.Content>
+              ) : !data?.items?.length ? (
+                <TableRow>
+                  <TableCell colSpan={6} className='text-center'>
+                    {t('No data')}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                data.items.map((inst) => (
+                  <TableRow key={inst.id}>
+                    <TableCell>{inst.id}</TableCell>
+                    <TableCell className='font-medium'>{inst.name}</TableCell>
+                    <TableCell>
+                      {inst.channelName || `#${inst.channelId}`}
+                    </TableCell>
+                    <TableCell>{inst.keypoolCount}</TableCell>
+                    <TableCell>
+                      {inst.enabled ? (
+                        <Badge>{t('Enabled')}</Badge>
+                      ) : (
+                        <Badge variant='outline'>{t('Disabled')}</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className='text-right'>
+                      <Button
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => refreshMutation.mutate(inst.id)}
+                        disabled={refreshMutation.isPending}
+                      >
+                        <KeyRound className='size-3.5' />
+                      </Button>
+                      <Button
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => {
+                          setEditing(inst)
+                          setDialogOpen(true)
+                        }}
+                      >
+                        <Pencil className='size-3.5' />
+                      </Button>
+                      <Button
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => setDeleteId(inst.id)}
+                      >
+                        <Trash2 className='size-3.5' />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </SectionPageLayout.Content>
+      </SectionPageLayout>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className='max-w-lg'>
@@ -342,6 +344,6 @@ export function RhInstancesPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </SectionPageLayout>
+    </>
   )
 }
