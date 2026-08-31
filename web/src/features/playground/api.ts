@@ -41,6 +41,23 @@ export async function sendChatCompletion(
 }
 
 /**
+ * Upload an image for playground attachments; resolves with the stored URL
+ */
+export async function uploadPlaygroundImage(file: File): Promise<string> {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await api.post(API_ENDPOINTS.UPLOAD_IMAGE, formData)
+  const { data } = res
+
+  if (!data.success || !data.data?.url) {
+    throw new Error(data.message || 'Image upload failed')
+  }
+
+  return data.data.url as string
+}
+
+/**
  * Get user available models
  */
 export async function getUserModels(group: string): Promise<ModelOption[]> {

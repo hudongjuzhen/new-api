@@ -28,13 +28,7 @@ type AppsStats struct {
 	ByKind    map[string]int64 `json:"byKind"`
 }
 
-// InstancesStats summarises app↔channel bindings.
-type InstancesStats struct {
-	Total   int64 `json:"total"`
-	Enabled int64 `json:"enabled"`
-}
-
-// KeypoolStats summarises keypool rows and in-flight submit audits.
+// KeypoolStats summarises per-app keypool rows and in-flight submit audits.
 type KeypoolStats struct {
 	TotalKeys      int64 `json:"totalKeys"`
 	EnabledKeys    int64 `json:"enabledKeys"`
@@ -51,10 +45,9 @@ type TasksStats struct {
 
 // AdminStats is the response shape of GET /dashboard/zsy/rh/stats.
 type AdminStats struct {
-	Apps      AppsStats      `json:"apps"`
-	Instances InstancesStats `json:"instances"`
-	Keypool   KeypoolStats   `json:"keypool"`
-	Tasks     TasksStats     `json:"tasks"`
+	Apps    AppsStats    `json:"apps"`
+	Keypool KeypoolStats `json:"keypool"`
+	Tasks   TasksStats   `json:"tasks"`
 }
 
 // rhTaskPlatform is the host `tasks.platform` value for this plugin
@@ -87,19 +80,11 @@ func CollectStats() (*AdminStats, error) {
 		out.Apps.ByKind[string(k.Kind)] = k.C
 	}
 
-	// instances: total + enabled
-	if err := db().Model(&AppInstance{}).Count(&out.Instances.Total).Error; err != nil {
-		return nil, fmt.Errorf("stats instances total: %w", err)
-	}
-	if err := db().Model(&AppInstance{}).Where("enabled = ?", true).Count(&out.Instances.Enabled).Error; err != nil {
-		return nil, fmt.Errorf("stats instances enabled: %w", err)
-	}
-
 	// keypool: keys + enabled keys + pending audits
-	if err := db().Model(&AppInstanceKeyPool{}).Count(&out.Keypool.TotalKeys).Error; err != nil {
+	if err := db().Model(&AppKeyPool{}).Count(&out.Keypool.TotalKeys).Error; err != nil {
 		return nil, fmt.Errorf("stats keypool total: %w", err)
 	}
-	if err := db().Model(&AppInstanceKeyPool{}).Where("enabled = ?", true).Count(&out.Keypool.EnabledKeys).Error; err != nil {
+	if err := db().Model(&AppKeyPool{}).Where("enabled = ?", true).Count(&out.Keypool.EnabledKeys).Error; err != nil {
 		return nil, fmt.Errorf("stats keypool enabled: %w", err)
 	}
 	if err := db().Model(&KeypoolPending{}).Where("state = ?", keypoolStatePending).Count(&out.Keypool.PendingSubmits).Error; err != nil {
@@ -139,13 +124,14 @@ func CollectStats() (*AdminStats, error) {
 // §3.9 probe), so the sync reconciles against the channel's own model
 // registry instead — the same registry Distribute uses for routing:
 //
-//  A. channel.models → plugin: every channel model that resolves to an app
+//  A. channel.models → app: every channel model that resolves to an app
 //     (exact UpstreamID match, or the dev-plan `rh-aiapp-<id>` style prefix)
-//     gets an AppInstance row if one does not exist yet.
-//  B. plugin → channel.models: every app with a live instance on this
-//     channel gets its UpstreamID appended to channel.models when missing,
-//     then the channel is saved through the host Channel.Update() so the
-//     abilities table is rebuilt.
+//     that is not yet bound to this channel gets App.ChannelID set to this
+//     channel (an app already pinned to a different channel is left alone).
+//  B. app → channel.models: every app pinned to this channel gets its
+//     UpstreamID appended to channel.models when missing, then the channel is
+//     saved through the host Channel.Update() so the abilities table is
+//     rebuilt.
 //
 // The operation is idempotent: running it twice yields zero changes.
 // ---------------------------------------------------------------------------
@@ -154,7 +140,7 @@ func CollectStats() (*AdminStats, error) {
 type ChannelSyncItem struct {
 	// Model is the channel model name (or the appended UpstreamID).
 	Model string `json:"model"`
-	// Action ∈ bound_instance | synced_to_channel | ok | orphan_model.
+	// Action ∈ bound_app | synced_to_channel | ok | orphan_model.
 	Action string `json:"action"`
 	AppID  uint   `json:"appId,omitempty"`
 }
@@ -162,7 +148,7 @@ type ChannelSyncItem struct {
 // ChannelSyncResult summarises one sync run.
 type ChannelSyncResult struct {
 	ChannelID            int64             `json:"channelId"`
-	InstancesCreated     int64             `json:"instancesCreated"`
+	AppsBound            int64             `json:"appsBound"`
 	ModelsSynced         int64             `json:"modelsSynced"`
 	ChannelModelsUpdated bool              `json:"channelModelsUpdated"`
 	Items                []ChannelSyncItem `json:"items"`
@@ -170,7 +156,7 @@ type ChannelSyncResult struct {
 
 // sync actions
 const (
-	syncActionBoundInstance = "bound_instance"
+	syncActionBoundApp      = "bound_app"
 	syncActionSyncedChannel = "synced_to_channel"
 	syncActionOK            = "ok"
 	syncActionOrphanModel   = "orphan_model"
@@ -230,60 +216,45 @@ func SyncChannelApps(channelID int64) (*ChannelSyncResult, error) {
 
 	// app registry: UpstreamID -> app (lowest id wins on duplicates)
 	var apps []App
-	if err := db().Select("id, kind, upstream_id").Order("id asc").Find(&apps).Error; err != nil {
+	if err := db().Select("id, kind, upstream_id, channel_id").Order("id asc").Find(&apps).Error; err != nil {
 		return nil, fmt.Errorf("load runninghub apps: %w", err)
 	}
 	appByUpstream := make(map[string]*App, len(apps))
-	appByID := make(map[uint]*App, len(apps))
 	for i := range apps {
 		app := &apps[i]
 		if _, exists := appByUpstream[app.UpstreamID]; !exists {
 			appByUpstream[app.UpstreamID] = app
 		}
-		appByID[app.ID] = app
 	}
 
-	// live instances already bound to this channel
-	var instances []AppInstance
-	if err := db().Where("channel_id = ?", channelID).Find(&instances).Error; err != nil {
-		return nil, fmt.Errorf("load runninghub instances: %w", err)
-	}
-	boundApps := make(map[uint]bool, len(instances))
-	for _, inst := range instances {
-		boundApps[inst.AppID] = true
-	}
-
-	// A. channel.models -> instances
+	// A. channel.models -> app binding
 	for _, m := range models {
 		app, ok := appByUpstream[modelToUpstreamID(m)]
 		if !ok {
 			result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionOrphanModel})
 			continue
 		}
-		if boundApps[app.ID] {
+		if app.ChannelID == channelID {
 			result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionOK, AppID: app.ID})
 			continue
 		}
-		inst := &AppInstance{
-			AppID:        app.ID,
-			ChannelID:    channelID,
-			InstanceType: InstanceDefault,
-			Enabled:      true,
-			Weight:       1,
+		// An app pinned to a different channel is intentionally left alone.
+		if app.ChannelID > 0 {
+			result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionOK, AppID: app.ID})
+			continue
 		}
-		if err := db().Create(inst).Error; err != nil {
-			return nil, fmt.Errorf("create runninghub instance: %w", err)
+		if err := db().Model(&App{}).Where("id = ?", app.ID).Update("channel_id", channelID).Error; err != nil {
+			return nil, fmt.Errorf("bind channel to runninghub app %d: %w", app.ID, err)
 		}
-		boundApps[app.ID] = true
-		result.InstancesCreated++
-		result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionBoundInstance, AppID: app.ID})
+		app.ChannelID = channelID
+		result.AppsBound++
+		result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionBoundApp, AppID: app.ID})
 	}
 
-	// B. instances -> channel.models
+	// B. app -> channel.models
 	modelsChanged := false
-	for _, inst := range instances {
-		app, ok := appByID[inst.AppID]
-		if !ok || !inst.Enabled || inModels[app.UpstreamID] {
+	for _, app := range apps {
+		if app.ChannelID != channelID || inModels[app.UpstreamID] {
 			continue
 		}
 		inModels[app.UpstreamID] = true

@@ -65,6 +65,13 @@ func SetApiRouter(router *gin.Engine) {
 		// Universal secure verification routes
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.UniversalVerify)
 
+		// Playground image upload (stored under uploads/images/YYYYMM/)
+		uploadRoute := apiRouter.Group("/upload")
+		uploadRoute.Use(middleware.UserAuth())
+		{
+			uploadRoute.POST("/image", middleware.UserCriticalRateLimit("upload-image"), controller.UploadImage)
+		}
+
 		userRoute := apiRouter.Group("/user")
 		{
 			userRoute.POST("/auth/refresh", middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.RefreshAuth)

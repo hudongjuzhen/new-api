@@ -37,6 +37,13 @@ export const API_ENDPOINTS = {
   CHAT_COMPLETIONS: '/pg/chat/completions',
   USER_MODELS: '/api/user/models',
   USER_GROUPS: '/api/user/self/groups',
+  UPLOAD_IMAGE: '/api/upload/image',
+} as const
+
+// Image upload constraints (aligned with backend controller limits)
+export const IMAGE_UPLOAD = {
+  MAX_FILES: 4,
+  ACCEPT: 'image/png,image/jpeg,image/gif,image/webp,image/bmp',
 } as const
 
 // Default group — uses 'default' as the safe fallback; auto-group is

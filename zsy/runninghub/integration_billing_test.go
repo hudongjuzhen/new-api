@@ -197,7 +197,7 @@ func newRHITestEnv(t *testing.T, upstreamID string) *rhITestEnv {
 	require.NoError(t, db.AutoMigrate(
 		&model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Ability{},
 		&model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.UserSubscription{},
-		&runninghub.App{}, &runninghub.AppInstance{}, &runninghub.AppInstanceKeyPool{}, &runninghub.KeypoolPending{},
+		&runninghub.App{}, &runninghub.AppKeyPool{}, &runninghub.KeypoolPending{},
 	))
 
 	// Seed user / token / channel / ability wired to the fake upstream.

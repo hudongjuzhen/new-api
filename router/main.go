@@ -14,6 +14,8 @@ import (
 )
 
 func SetRouter(router *gin.Engine, assets WebAssets) {
+	// Serve locally uploaded files (e.g. playground images under uploads/images/YYYYMM/)
+	router.Static("/uploads", "uploads")
 	SetApiRouter(router)
 	SetDashboardRouter(router)
 	SetRelayRouter(router)

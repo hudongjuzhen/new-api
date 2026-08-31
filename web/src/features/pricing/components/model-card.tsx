@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ChevronRight, Copy } from 'lucide-react'
+import { ChevronRight, Copy, Play } from 'lucide-react'
 import { memo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
@@ -39,6 +40,7 @@ import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
 export interface ModelCardProps {
   model: PricingModel
   onClick: () => void
+  onTry?: () => void
   priceRate?: number
   usdExchangeRate?: number
   tokenUnit?: TokenUnit
@@ -221,6 +223,20 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         </div>
 
         <div className='flex shrink-0 items-center gap-1.5'>
+          {props.onTry && (
+            <Button
+              type='button'
+              size='xs'
+              className='gap-1 px-2'
+              onClick={(event) => {
+                event.stopPropagation()
+                props.onTry?.()
+              }}
+            >
+              <Play className='size-3' />
+              {t('Try Now')}
+            </Button>
+          )}
           <button
             type='button'
             onClick={props.onClick}

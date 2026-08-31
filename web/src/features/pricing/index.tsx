@@ -1,3 +1,4 @@
+import { useNavigate } from '@tanstack/react-router'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -38,6 +39,7 @@ import { usePricingData } from './hooks/use-pricing-data'
 
 export function Pricing() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const [selectedModelName, setSelectedModelName] = useState<string | null>(
     null
   )
@@ -87,6 +89,13 @@ export function Pricing() {
     setSelectedModelName(modelName)
   }, [])
 
+  const handleTryModel = useCallback(
+    (modelName: string) => {
+      navigate({ to: '/lab', search: { model: modelName || undefined } })
+    },
+    [navigate]
+  )
+
   const selectedModel = useMemo(
     () =>
       selectedModelName
@@ -126,6 +135,7 @@ export function Pricing() {
         <ModelCardGrid
           models={filteredModels}
           onModelClick={handleModelClick}
+          onTryModel={handleTryModel}
           priceRate={priceRate}
           usdExchangeRate={usdExchangeRate}
           tokenUnit={tokenUnit}
@@ -144,6 +154,7 @@ export function Pricing() {
         showRechargePrice={showRechargePrice}
         selectedGroup={groupFilter}
         onModelClick={handleModelClick}
+        onTryModel={handleTryModel}
       />
     )
   }

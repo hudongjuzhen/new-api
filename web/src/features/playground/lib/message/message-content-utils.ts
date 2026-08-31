@@ -76,6 +76,35 @@ function getDisplayContent(message: Message, versionContent: string): string {
   return parseThinkTags(versionContent).visibleContent
 }
 
+/**
+ * Extract the markdown image alternate-text reference used by image models
+ * (e.g. gpt-image-2-c emits `![image_1](data:image/png;base64,....)`).
+ * The alt text must be non-empty and the destination must be an image data
+ * URI, otherwise this message carries no in-chat image.
+ */
+export function extractMarkdownImageRef(content: string): string | null {
+  if (!content || content.length > 30000) return null
+  const match = /!\[([^\]]*)\]\((data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+)\)/.exec(content)
+  if (!match) return null
+  const alt = match[1].trim()
+  const dataUri = match[2].trim()
+  if (!alt || !dataUri) return null
+  return dataUri
+}
+
+/**
+ * Remove markdown image references that have been captured into message.images
+ * (e.g. `![image_1](data:image/png;base64,...)`), so the visible message shows
+ * the rendered thumbnail instead of a wall of base64 text.
+ */
+export function stripMarkdownImageRefs(content: string): string {
+  if (!content || !content.includes('![')) return content
+  return content.replace(
+    /!\[[^\]]*\]\(data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+\)/g,
+    ''
+  )
+}
+
 export function getMessageContentState(
   message: Message,
   versionContent: string

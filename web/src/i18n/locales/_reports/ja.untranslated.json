@@ -1,3 +1,5 @@
 {
-  "RunningHub": "RunningHub"
+  "RunningHub": "RunningHub",
+  "Save base64 images from image-generation streams to uploads/images (organized by date) and return relative URLs instead of inline data.": "Save base64 images from image-generation streams to uploads/images (organized by date) and return relative URLs instead of inline data.",
+  "Save generated images locally": "Save generated images locally"
 }

@@ -32,6 +32,7 @@ import type { ModelPerfBadgeData } from './model-perf-badge'
 export interface ModelCardGridProps {
   models: PricingModel[]
   onModelClick: (modelName: string) => void
+  onTryModel?: (modelName: string) => void
   priceRate?: number
   usdExchangeRate?: number
   tokenUnit?: TokenUnit
@@ -85,6 +86,11 @@ export function ModelCardGrid(props: ModelCardGridProps) {
             selectedGroup={props.selectedGroup}
             perf={perfMap.get(model.model_name || '')}
             onClick={() => props.onModelClick(model.model_name || '')}
+            onTry={
+              props.onTryModel
+                ? () => props.onTryModel?.(model.model_name || '')
+                : undefined
+            }
           />
         ))}
       </div>

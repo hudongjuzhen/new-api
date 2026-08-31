@@ -20,14 +20,20 @@ import (
 //
 // Route layout:
 //
-//	/api/zsy/rh/app          (user-side)  Run an app via keypool, fetch results
-//	/dashboard/zsy/rh/app    (admin)     App CRUD, instance management, curl import
+//	/api/zsy/rh/app          (user-side)  Run an app, fetch results
+//	/dashboard/zsy/rh/app    (admin)     App CRUD, keypool, curl import
 //
 // NOTE: These routes intentionally sit *outside* the core router groups so the
 // plugin does not take hard dependency on the internals of
 // SetApiRouter/SetDashboardRouter. Admin and user auth are guarded with
 // existing middlewares looked up by name via controller helpers.
 func mountRoutes(router *gin.Engine) {
+	// One-time legacy data migration: adopt a legacy AppInstance channel
+	// binding into the App.ChannelID column and migrate the legacy per-instance
+	// keypool rows up to the per-app AppKeyPool table. Fire-and-forget and
+	// idempotent.
+	go runAppDataMigration()
+
 	api := router.Group("/api/zsy/rh")
 	{
 		apps := api.Group("/apps")
@@ -36,6 +42,7 @@ func mountRoutes(router *gin.Engine) {
 			apps.GET("/:id", getPublicAppDetail)
 			apps.POST("/:id/run", requireUserAuth, submitAppRun)
 			apps.GET("/task/:task_id", requireUserAuth, getAppTaskResult)
+			apps.GET("/tasks", requireUserAuth, listMyRhTasks)
 		}
 	}
 
@@ -50,15 +57,10 @@ func mountRoutes(router *gin.Engine) {
 			apps.PUT("/:id", updateApp)
 			apps.DELETE("/:id", deleteApp)
 			apps.POST("/parse-curl", parseCurlEndpoint)
+			apps.POST("/fetch-template", fetchAppTemplate)
 			apps.POST("/sync-from-channel", syncAppsFromChannel)
-		}
-		instances := admin.Group("/instances")
-		{
-			instances.GET("", listInstances)
-			instances.POST("", createInstance)
-			instances.PUT("/:id", updateInstance)
-			instances.DELETE("/:id", deleteInstance)
-			instances.POST("/:id/keypool-refresh", refreshKeypool)
+			apps.GET("/:id/keypool", getAppKeypool)
+			apps.POST("/:id/keypool-refresh", refreshAppKeypool)
 		}
 		admin.GET("/stats", stats)
 	}
@@ -94,10 +96,10 @@ func notYetImplemented(c *gin.Context, feature string) {
 
 // User-side handlers are implemented in controllers_user.go
 // (listPublicApps, getPublicAppDetail, submitAppRun, getAppTaskResult).
-// Instance CRUD + keypool-refresh admin handlers are implemented in
-// controllers_instances.go; stats and the channel sync store layer live in
-// stats_sync.go. They are NOT re-stubbed here to avoid redeclaring the same
-// symbols.
+// App CRUD admin handlers live in controllers_admin.go; the app-level keypool
+// view / refresh handlers live in controllers_keypool.go; stats and the
+// channel sync store layer live in stats_sync.go. They are NOT re-stubbed here
+// to avoid redeclaring the same symbols.
 
 // avoid-import lint: keep common package ref so future JSON writes are ready.
 var _ = common.Marshal

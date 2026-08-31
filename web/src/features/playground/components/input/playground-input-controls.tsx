@@ -39,12 +39,14 @@ type PlaygroundInputControlsProps = {
   onStop?: () => void
   text: string
   tools: ReactNode
+  hasImages?: boolean
 }
 
 export function PlaygroundInputControls({
   disabled,
   groups,
   groupValue,
+  hasImages = false,
   isGenerating,
   isModelLoading = false,
   models,
@@ -60,6 +62,7 @@ export function PlaygroundInputControls({
     getInputControlState({
       disabled,
       groups,
+      hasImages,
       hasStopHandler: Boolean(onStop),
       isGenerating,
       isModelLoading,

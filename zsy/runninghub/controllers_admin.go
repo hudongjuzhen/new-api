@@ -264,7 +264,7 @@ func syncAppsFromChannel(c *gin.Context) {
 	}
 	recordManageAudit(c, "rh_app.sync_from_channel", map[string]any{
 		"channelId":            payload.ChannelID,
-		"instancesCreated":     result.InstancesCreated,
+		"appsBound":            result.AppsBound,
 		"modelsSynced":         result.ModelsSynced,
 		"channelModelsUpdated": result.ChannelModelsUpdated,
 	})

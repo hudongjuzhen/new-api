@@ -46,6 +46,11 @@ export const ATTACHMENT_ACTIONS = [
   { action: 'take-photo', icon: CameraIcon, label: 'Take photo' },
 ] satisfies AttachmentAction[]
 
+/** Whether the attachment action opens the image picker (real upload) */
+export function isImageUploadAction(action: string): boolean {
+  return action === 'upload-photo'
+}
+
 export function getAttachmentActionNotice(action: string): InputToolNotice {
   return {
     description: action,

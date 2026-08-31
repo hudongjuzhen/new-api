@@ -248,9 +248,28 @@ func submitAppRun(c *gin.Context) {
 		Retry:       common.GetPointer(0),
 	}
 
+	// If the app pins a specific RunningHub channel, route every attempt
+	// through it (still via RelayTaskSubmit so billing/audit stay intact);
+	// otherwise fall back to the host's model->channel selection below.
+	var pinnedChannel *model.Channel
+	if app.ChannelID > 0 {
+		pc, pcErr := model.GetChannelById(int(app.ChannelID), false)
+		if pcErr != nil {
+			common.ApiErrorMsg(c, "应用绑定渠道无效: "+pcErr.Error())
+			return
+		}
+		pinnedChannel = pc
+	}
+
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		var channel *model.Channel
-		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
+		if pinnedChannel != nil {
+			channel = pinnedChannel
+			if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
+				taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_pinned_channel_failed", http.StatusInternalServerError)
+				break
+			}
+		} else if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
 			channel = lockedCh
 			if retryParam.GetRetry() > 0 {
 				if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
@@ -336,6 +355,28 @@ func submitAppRun(c *gin.Context) {
 		"upstreamTaskId": upstreamFromResult(result),
 		"raw":            rawFromResult(result),
 	})
+}
+
+// listMyRhTasks returns the current user's RunningHub tasks (paginated). It
+// reuses the host task query filtered to the RH platform so the "generation
+// records" panel renders the same TaskDto envelope as the submit path.
+func listMyRhTasks(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	userId := c.GetInt("id")
+
+	status := strings.TrimSpace(c.Query("status"))
+	params := model.SyncTaskQueryParams{Platform: rhPlatform, Status: status}
+
+	items := model.TaskGetAllUserTask(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), params)
+	total := model.TaskCountAllUserTask(userId, params)
+
+	dtos := make([]*dto.TaskDto, 0, len(items))
+	for _, it := range items {
+		dtos = append(dtos, relay.TaskModel2Dto(it))
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(dtos)
+	common.ApiSuccess(c, pageInfo)
 }
 
 // getAppTaskResult returns the user's task record by public task_id. Outputs

@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Internal tests for the pure helpers behind instance CRUD and keypool
-// refresh. These encode contracts the admin UI and the keypool runtime depend
-// on; they never touch the database.
+// Internal tests for the pure helpers behind the app-level keypool refresh.
+// These encode contracts the admin UI and the keypool runtime depend on; they
+// never touch the database.
 
 func TestSplitChannelKeys(t *testing.T) {
 	t.Parallel()
@@ -56,22 +56,6 @@ func TestMaskKey(t *testing.T) {
 	long := "rh-0123456789abcdefghijklmnopqrstuvwxyz"
 	masked := maskKey(long)
 	assert.False(t, strings.Contains(masked, "0123456789"))
-}
-
-func TestNormalizeInstanceType(t *testing.T) {
-	t.Parallel()
-	// empty and whitespace fall back to the default instance type
-	for _, in := range []string{"", " ", "DEFAULT"} {
-		got, err := normalizeInstanceType(in)
-		require.NoError(t, err, "input %q", in)
-		assert.Equal(t, InstanceDefault, got, "input %q", in)
-	}
-	got, err := normalizeInstanceType(" Plus ")
-	require.NoError(t, err)
-	assert.Equal(t, InstancePlus, got)
-	_, err = normalizeInstanceType("turbo")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "instanceType")
 }
 
 func TestIsTerminalTaskStatus(t *testing.T) {

@@ -37,8 +37,7 @@ func init() {
 	// init() runs) in main() before model.InitDB.
 	extcore.RegisterMigrateModels(
 		&App{},
-		&AppInstance{},
-		&AppInstanceKeyPool{},
+		&AppKeyPool{},
 		&KeypoolPending{},
 	)
 

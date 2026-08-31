@@ -61,19 +61,10 @@ func TestHookValidateRunPayload(schema []rhparser.SchemaParam, values map[string
 	return err
 }
 
-// --- Instance admin hooks ---------------------------------------------------
+// --- App keypool admin hooks ----------------------------------------------
 
-// TestHookListInstances exposes the instance list handler for tests.
-func TestHookListInstances(c *gin.Context) { listInstances(c) }
+// TestHookGetAppKeypool exposes the getAppKeypool handler for tests.
+func TestHookGetAppKeypool(c *gin.Context) { getAppKeypool(c) }
 
-// TestHookCreateInstance exposes the instance create handler for tests.
-func TestHookCreateInstance(c *gin.Context) { createInstance(c) }
-
-// TestHookUpdateInstance exposes the instance update handler for tests.
-func TestHookUpdateInstance(c *gin.Context) { updateInstance(c) }
-
-// TestHookDeleteInstance exposes the instance delete handler for tests.
-func TestHookDeleteInstance(c *gin.Context) { deleteInstance(c) }
-
-// TestHookRefreshKeypool exposes the keypool-refresh handler for tests.
-func TestHookRefreshKeypool(c *gin.Context) { refreshKeypool(c) }
+// TestHookRefreshAppKeypool exposes the refreshAppKeypool handler for tests.
+func TestHookRefreshAppKeypool(c *gin.Context) { refreshAppKeypool(c) }

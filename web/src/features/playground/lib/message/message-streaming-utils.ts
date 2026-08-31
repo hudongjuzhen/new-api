@@ -22,6 +22,10 @@ import { ERROR_MESSAGES, MESSAGE_ROLES, MESSAGE_STATUS } from '../../constants'
 import type { ChatCompletionResponse, Message } from '../../types'
 import { parseThinkTags } from './message-reasoning-utils'
 import {
+  extractMarkdownImageRef,
+  stripMarkdownImageRefs,
+} from './message-content-utils'
+import {
   completeAssistantTiming,
   completeReasoningTiming,
   startReasoningTiming,
@@ -128,6 +132,16 @@ export function finalizeMessage(
     : undefined
   const visibleContent =
     parsedThinkTags?.visibleContent ?? currentVersion.content
+
+  // Image-generation models (e.g. gpt-image-2-c) stream
+  // `![image_1](data:image/png;base64,....)`. Capture the data URI onto the
+  // message so the chat renders it as a real image thumbnail, and strip the
+  // inline markdown so the viewer does not show a wall of base64 text.
+  const generatedImage = extractMarkdownImageRef(visibleContent)
+  const displayContent = generatedImage
+    ? stripMarkdownImageRefs(visibleContent)
+    : visibleContent
+
   const finalReasoning =
     apiReasoningContent ||
     message.reasoning?.content ||
@@ -135,7 +149,8 @@ export function finalizeMessage(
     ''
 
   const finalized = {
-    ...updateCurrentVersionContent(message, visibleContent),
+    ...updateCurrentVersionContent(message, displayContent),
+    ...(generatedImage ? { images: [generatedImage] } : {}),
     reasoning: finalReasoning
       ? {
           ...startReasoningTiming(message),

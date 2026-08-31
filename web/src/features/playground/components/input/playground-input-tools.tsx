@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { GlobeIcon, PaperclipIcon, Trash2Icon } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -38,10 +38,12 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
+import { IMAGE_UPLOAD } from '../../constants'
 import {
   ATTACHMENT_ACTIONS,
   getAttachmentActionNotice,
   getSearchActionNotice,
+  isImageUploadAction,
 } from '../../lib'
 import type { ParameterEnabled, PlaygroundConfig } from '../../types'
 import { PlaygroundParameterPanel } from './playground-parameter-panel'
@@ -50,11 +52,13 @@ type PlaygroundInputToolsProps = {
   config: PlaygroundConfig
   disabled?: boolean
   hasMessages?: boolean
+  isUploadingImages?: boolean
   onClearMessages?: () => void
   onConfigChange: <K extends keyof PlaygroundConfig>(
     key: K,
     value: PlaygroundConfig[K]
   ) => void
+  onImagesPicked: (files: FileList | File[]) => void
   onParameterEnabledChange: (
     key: keyof ParameterEnabled,
     value: boolean
@@ -66,19 +70,38 @@ export function PlaygroundInputTools({
   config,
   disabled,
   hasMessages = false,
+  isUploadingImages = false,
   onClearMessages,
   onConfigChange,
+  onImagesPicked,
   onParameterEnabledChange,
   parameterEnabled,
 }: PlaygroundInputToolsProps) {
   const { t } = useTranslation()
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleFileAction = (action: string) => {
+    if (isImageUploadAction(action)) {
+      imageInputRef.current?.click()
+      return
+    }
+
     const notice = getAttachmentActionNotice(action)
     toast.info(t(notice.title), {
       description: notice.description,
     })
+  }
+
+  const handleImageInputChange = (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const files = event.target.files
+    if (files && files.length > 0) {
+      onImagesPicked(files)
+    }
+    // Reset so selecting the same file again still fires onChange
+    event.target.value = ''
   }
 
   const handleSearchAction = () => {
@@ -94,6 +117,16 @@ export function PlaygroundInputTools({
 
   return (
     <>
+      <input
+        accept={IMAGE_UPLOAD.ACCEPT}
+        className='hidden'
+        disabled={disabled || isUploadingImages}
+        multiple
+        ref={imageInputRef}
+        type='file'
+        onChange={handleImageInputChange}
+      />
+
       <PromptInputTools className='bg-background/70 border-border/60 rounded-lg border p-1 shadow-xs'>
         <Tooltip>
           <DropdownMenu>

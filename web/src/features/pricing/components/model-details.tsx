@@ -27,6 +27,7 @@ import {
   Info,
   Layers,
   Maximize2,
+  Play,
   Sparkles,
   Timer,
 } from 'lucide-react'
@@ -525,18 +526,32 @@ function ModelBackendDetailsSection(props: { model: PricingModel }) {
 
 function ModelHeader(props: { model: PricingModel }) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const model = props.model
   const modelIconKey = model.icon || model.vendor_icon
   const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 20) : null
   const description = model.description || model.vendor_description || null
 
+  const handleTryModel = () => {
+    navigate({ to: '/lab', search: { model: model.model_name || undefined } })
+  }
+
   return (
     <header className='pb-4'>
-      <div className='flex items-center gap-2.5'>
+      <div className='flex flex-wrap items-center gap-2.5'>
         {modelIcon}
         <h1 className='font-mono text-xl font-bold tracking-tight sm:text-2xl'>
           {model.model_name}
         </h1>
+        <Button
+          type='button'
+          size='xs'
+          className='gap-1'
+          onClick={handleTryModel}
+        >
+          <Play className='size-3' />
+          {t('Try Now')}
+        </Button>
         <CopyButton
           value={model.model_name || ''}
           className='size-6'

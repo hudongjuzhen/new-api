@@ -9,25 +9,25 @@ Registers sidebar menu entries into the host's extension anchor
 find-missing-keys) covers them like any other UI string.
 */
 
-import { Boxes } from 'lucide-react'
+import { Boxes, Sparkles } from 'lucide-react'
 
 import { ROLE } from '@/lib/roles'
 import { EXT_MENU_GROUPS } from '@/extensions/menus'
 
-// Register admin sidebar menu group
+// Register sidebar menu group. "RH App Center" is available to every
+// authenticated user; "RH Apps" (management) is admin-only.
 EXT_MENU_GROUPS.push({
   id: 'zsy-runninghub',
   title: 'RunningHub',
   items: [
     {
-      title: 'RH Apps',
-      url: '/rh-apps',
-      icon: Boxes,
-      requiredRole: ROLE.ADMIN,
+      title: 'RH App Center',
+      url: '/rh-app-center',
+      icon: Sparkles,
     },
     {
-      title: 'RH Instances',
-      url: '/rh-instances',
+      title: 'RH Apps',
+      url: '/rh-apps',
       icon: Boxes,
       requiredRole: ROLE.ADMIN,
     },

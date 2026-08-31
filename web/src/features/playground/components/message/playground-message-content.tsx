@@ -126,6 +126,24 @@ export function PlaygroundMessageContent({
         </div>
       )}
 
+      {message.images && message.images.length > 0 && (
+        <div
+          className={cn(
+            'flex max-w-full flex-wrap gap-2 py-1',
+            alignment === 'right' ? 'justify-end' : 'justify-start'
+          )}
+        >
+          {message.images.map((url) => (
+            <img
+              alt=''
+              className='border-border/60 max-h-48 max-w-full rounded-lg border object-contain'
+              key={url}
+              src={url}
+            />
+          ))}
+        </div>
+      )}
+
       {isError && (
         <>
           <MessageError message={message} className='mb-2' />

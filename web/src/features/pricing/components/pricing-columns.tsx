@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
+import { Play } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -26,6 +27,7 @@ import {
 } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
+import { Button } from '@/components/ui/button'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { DEFAULT_TOKEN_UNIT } from '../constants'
@@ -53,6 +55,7 @@ export interface PricingColumnsOptions {
   usdExchangeRate?: number
   showRechargePrice?: boolean
   selectedGroup?: string
+  onTryModel?: (modelName: string) => void
 }
 
 export function usePricingColumns(
@@ -65,6 +68,7 @@ export function usePricingColumns(
     usdExchangeRate = 1,
     showRechargePrice = false,
     selectedGroup,
+    onTryModel,
   } = options
 
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
@@ -407,6 +411,29 @@ export function usePricingColumns(
         )
       },
       size: 130,
+      enableSorting: false,
+    },
+
+    // Actions column
+    {
+      id: 'actions',
+      header: t('Actions'),
+      cell: ({ row }) =>
+        onTryModel ? (
+          <Button
+            type='button'
+            size='xs'
+            className='gap-1 px-2'
+            onClick={(event) => {
+              event.stopPropagation()
+              onTryModel(row.original.model_name || '')
+            }}
+          >
+            <Play className='size-3' />
+            {t('Try Now')}
+          </Button>
+        ) : null,
+      size: 100,
       enableSorting: false,
     },
   ]
