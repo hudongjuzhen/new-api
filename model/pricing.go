@@ -261,6 +261,10 @@ func updatePricing() {
 	modelGroupsMap := make(map[string]*types.Set[string])
 
 	for _, ability := range enableAbilities {
+		if ability.ChannelType == constant.ChannelTypeRunningHub {
+			// RunningHub 渠道的模型不进入模型广场定价列表
+			continue
+		}
 		groups, ok := modelGroupsMap[ability.Model]
 		if !ok {
 			groups = types.NewSet[string]()

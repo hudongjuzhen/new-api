@@ -116,6 +116,36 @@ const newKeys = {
     'This application has no configurable parameters yet.':
       'This application has no configurable parameters yet.',
     'This field is required': 'This field is required',
+    'Background mode': 'Background mode',
+    'Click or drag images here': 'Click or drag images here',
+    'Content moderation': 'Content moderation',
+    'Describe the image you want to generate…':
+      'Describe the image you want to generate…',
+    'Image API request failed': 'Image API request failed',
+    'Image description': 'Image description',
+    'Image editing': 'Image editing',
+    'Image generation': 'Image generation',
+    'Mask image (optional)': 'Mask image (optional)',
+    'Maximum {{count}} images allowed': 'Maximum {{count}} images allowed',
+    'N (count)': 'N (count)',
+    'No image in the API response.': 'No image in the API response.',
+    'Optional: paste a mask image URL or upload':
+      'Optional: paste a mask image URL or upload',
+    'Or paste an image URL, then press Add':
+      'Or paste an image URL, then press Add',
+    'Original image ({{count}}/16)': 'Original image ({{count}}/16)',
+    'Output format': 'Output format',
+    'Please enter the image description': 'Please enter the image description',
+    Quality: 'Quality',
+    Resolution: 'Resolution',
+    'Select an API key to run image requests.':
+      'Select an API key to run image requests.',
+    'Supports JPG / PNG / WebP, up to 20MB each':
+      'Supports JPG / PNG / WebP, up to 20MB each',
+    'Unsupported image (JPG / PNG / WebP, max 20MB).':
+      'Unsupported image (JPG / PNG / WebP, max 20MB).',
+    'Upload at least one original image.':
+      'Upload at least one original image.',
   },
   zh: {
     '(empty prompt)': '（空提示词）',
@@ -203,6 +233,32 @@ const newKeys = {
     'This application has no configurable parameters yet.':
       '该应用暂无可配置的参数。',
     'This field is required': '该字段为必填项',
+    'Background mode': '背景模式',
+    'Click or drag images here': '点击或拖拽图片到此处',
+    'Content moderation': '内容审核',
+    'Describe the image you want to generate…': '描述你想生成的图片…',
+    'Image API request failed': '图片 API 请求失败',
+    'Image description': '图片描述',
+    'Image editing': '图片编辑',
+    'Image generation': '图片生成',
+    'Mask image (optional)': '蒙版图片（可选）',
+    'Maximum {{count}} images allowed': '最多允许 {{count}} 张图片',
+    'N (count)': 'N（数量）',
+    'No image in the API response.': 'API 响应中没有图片。',
+    'Optional: paste a mask image URL or upload': '可选：粘贴蒙版图片链接或上传',
+    'Or paste an image URL, then press Add': '或粘贴图片链接后点击添加',
+    'Original image ({{count}}/16)': '原图（{{count}}/16）',
+    'Output format': '输出格式',
+    'Please enter the image description': '请输入图片描述',
+    Quality: '质量',
+    Resolution: '分辨率',
+    'Select an API key to run image requests.':
+      '请选择一个 API 密钥来执行图片请求。',
+    'Supports JPG / PNG / WebP, up to 20MB each':
+      '支持 JPG / PNG / WebP，单张最大 20MB',
+    'Unsupported image (JPG / PNG / WebP, max 20MB).':
+      '不支持的图片（仅支持 JPG / PNG / WebP，最大 20MB）。',
+    'Upload at least one original image.': '请至少上传一张原图。',
   },
   'zh-TW': {
     '(empty prompt)': '（空提示詞）',
@@ -290,6 +346,33 @@ const newKeys = {
     'This application has no configurable parameters yet.':
       '該應用暫無可設定的參數。',
     'This field is required': '該欄位為必填項',
+    'Background mode': '背景模式',
+    'Click or drag images here': '點擊或拖曳圖片至此處',
+    'Content moderation': '內容審核',
+    'Describe the image you want to generate…': '描述你想產生的圖片…',
+    'Image API request failed': '圖片 API 請求失敗',
+    'Image description': '圖片描述',
+    'Image editing': '圖片編輯',
+    'Image generation': '圖片產生',
+    'Mask image (optional)': '遮罩圖片（可選）',
+    'Maximum {{count}} images allowed': '最多允許 {{count}} 張圖片',
+    'N (count)': 'N（數量）',
+    'No image in the API response.': 'API 回應中沒有圖片。',
+    'Optional: paste a mask image URL or upload':
+      '可選：貼上遮罩圖片連結或上傳',
+    'Or paste an image URL, then press Add': '或貼上圖片連結後點擊新增',
+    'Original image ({{count}}/16)': '原始圖片（{{count}}/16）',
+    'Output format': '輸出格式',
+    'Please enter the image description': '請輸入圖片描述',
+    Quality: '品質',
+    Resolution: '解析度',
+    'Select an API key to run image requests.':
+      '請選擇一個 API 金鑰來執行圖片請求。',
+    'Supports JPG / PNG / WebP, up to 20MB each':
+      '支援 JPG / PNG / WebP，單張最大 20MB',
+    'Unsupported image (JPG / PNG / WebP, max 20MB).':
+      '不支援的圖片（僅支援 JPG / PNG / WebP，最大 20MB）。',
+    'Upload at least one original image.': '請至少上傳一張原始圖片。',
   },
   fr: {
     '(empty prompt)': '(invite vide)',
@@ -385,6 +468,38 @@ const newKeys = {
     'This application has no configurable parameters yet.':
       "Cette application n'a pas encore de paramètres configurables.",
     'This field is required': 'Ce champ est requis',
+    'Background mode': "Mode d'arrière-plan",
+    'Click or drag images here': 'Cliquez ou faites glisser des images ici',
+    'Content moderation': 'Modération du contenu',
+    'Describe the image you want to generate…':
+      "Décrivez l'image que vous souhaitez générer…",
+    'Image API request failed': "La requête API d'image a échoué",
+    'Image description': "Description de l'image",
+    'Image editing': "Édition d'image",
+    'Image generation': "Génération d'image",
+    'Mask image (optional)': 'Masque (facultatif)',
+    'Maximum {{count}} images allowed': '{{count}} images maximum autorisées',
+    'N (count)': 'N (nombre)',
+    'No image in the API response.':
+      "Aucune image dans la réponse de l'API.",
+    'Optional: paste a mask image URL or upload':
+      'Facultatif : collez une URL de masque ou téléversez',
+    'Or paste an image URL, then press Add':
+      "Ou collez une URL d'image puis cliquez sur Ajouter",
+    'Original image ({{count}}/16)': 'Image originale ({{count}}/16)',
+    'Output format': 'Format de sortie',
+    'Please enter the image description':
+      "Veuillez saisir la description de l'image",
+    Quality: 'Qualité',
+    Resolution: 'Résolution',
+    'Select an API key to run image requests.':
+      "Sélectionnez une clé API pour exécuter les requêtes d'image.",
+    'Supports JPG / PNG / WebP, up to 20MB each':
+      "Prend en charge JPG / PNG / WebP, jusqu'à 20 Mo chacun",
+    'Unsupported image (JPG / PNG / WebP, max 20MB).':
+      'Image non prise en charge (JPG / PNG / WebP, 20 Mo max).',
+    'Upload at least one original image.':
+      'Téléversez au moins une image originale.',
   },
   ja: {
     '(empty prompt)': '（空のプロンプト）',
@@ -476,6 +591,36 @@ const newKeys = {
     'This application has no configurable parameters yet.':
       'このアプリには設定可能なパラメータがまだありません。',
     'This field is required': 'このフィールドは必須です',
+    'Background mode': '背景モード',
+    'Click or drag images here': 'クリックまたはドラッグで画像をここに追加',
+    'Content moderation': 'コンテンツモデレーション',
+    'Describe the image you want to generate…':
+      '生成したい画像を説明してください…',
+    'Image API request failed': '画像 API リクエストに失敗しました',
+    'Image description': '画像の説明',
+    'Image editing': '画像編集',
+    'Image generation': '画像生成',
+    'Mask image (optional)': 'マスク画像（任意）',
+    'Maximum {{count}} images allowed': '最大 {{count}} 枚まで許可されています',
+    'N (count)': 'N（枚数）',
+    'No image in the API response.': 'API レスポンスに画像がありません。',
+    'Optional: paste a mask image URL or upload':
+      '任意：マスク画像の URL を貼り付けるかアップロード',
+    'Or paste an image URL, then press Add':
+      'または画像 URL を貼り付けて追加を押してください',
+    'Original image ({{count}}/16)': '元画像（{{count}}/16）',
+    'Output format': '出力フォーマット',
+    'Please enter the image description': '画像の説明を入力してください',
+    Quality: '品質',
+    Resolution: '解像度',
+    'Select an API key to run image requests.':
+      '画像リクエストを実行するには API キーを選択してください。',
+    'Supports JPG / PNG / WebP, up to 20MB each':
+      'JPG / PNG / WebP に対応（各 20MB まで）',
+    'Unsupported image (JPG / PNG / WebP, max 20MB).':
+      '対応していない画像です（JPG / PNG / WebP、最大 20MB）。',
+    'Upload at least one original image.':
+      '元画像を少なくとも 1 枚アップロードしてください。',
   },
   ru: {
     '(empty prompt)': '(пустой запрос)',
@@ -570,6 +715,37 @@ const newKeys = {
     'This application has no configurable parameters yet.':
       'У этого приложения пока нет настраиваемых параметров.',
     'This field is required': 'Это поле обязательно',
+    'Background mode': 'Режим фона',
+    'Click or drag images here': 'Нажмите или перетащите изображения сюда',
+    'Content moderation': 'Модерация контента',
+    'Describe the image you want to generate…':
+      'Опишите изображение, которое хотите сгенерировать…',
+    'Image API request failed': 'Ошибка запроса API изображений',
+    'Image description': 'Описание изображения',
+    'Image editing': 'Редактирование изображения',
+    'Image generation': 'Генерация изображения',
+    'Mask image (optional)': 'Маска (необязательно)',
+    'Maximum {{count}} images allowed':
+      'Допускается не более {{count}} изображений',
+    'N (count)': 'N (количество)',
+    'No image in the API response.': 'В ответе API нет изображений.',
+    'Optional: paste a mask image URL or upload':
+      'Необязательно: вставьте URL маски или загрузите',
+    'Or paste an image URL, then press Add':
+      'Или вставьте URL изображения и нажмите «Добавить»',
+    'Original image ({{count}}/16)': 'Исходное изображение ({{count}}/16)',
+    'Output format': 'Формат вывода',
+    'Please enter the image description': 'Введите описание изображения',
+    Quality: 'Качество',
+    Resolution: 'Разрешение',
+    'Select an API key to run image requests.':
+      'Выберите API-ключ для выполнения запросов изображений.',
+    'Supports JPG / PNG / WebP, up to 20MB each':
+      'Поддерживаются JPG / PNG / WebP, до 20 МБ каждый',
+    'Unsupported image (JPG / PNG / WebP, max 20MB).':
+      'Неподдерживаемое изображение (JPG / PNG / WebP, макс. 20 МБ).',
+    'Upload at least one original image.':
+      'Загрузите хотя бы одно исходное изображение.',
   },
   vi: {
     '(empty prompt)': '(prompt trống)',
@@ -662,6 +838,36 @@ const newKeys = {
     'This application has no configurable parameters yet.':
       'Ứng dụng này chưa có tham số nào có thể cấu hình.',
     'This field is required': 'Trường này là bắt buộc',
+    'Background mode': 'Chế độ nền',
+    'Click or drag images here': 'Nhấp hoặc kéo ảnh vào đây',
+    'Content moderation': 'Kiểm duyệt nội dung',
+    'Describe the image you want to generate…':
+      'Mô tả ảnh bạn muốn tạo…',
+    'Image API request failed': 'Yêu cầu API ảnh thất bại',
+    'Image description': 'Mô tả ảnh',
+    'Image editing': 'Chỉnh sửa ảnh',
+    'Image generation': 'Tạo ảnh',
+    'Mask image (optional)': 'Ảnh mặt nạ (tùy chọn)',
+    'Maximum {{count}} images allowed': 'Tối đa {{count}} ảnh',
+    'N (count)': 'N (số lượng)',
+    'No image in the API response.': 'Không có ảnh trong phản hồi API.',
+    'Optional: paste a mask image URL or upload':
+      'Tùy chọn: dán URL ảnh mặt nạ hoặc tải lên',
+    'Or paste an image URL, then press Add':
+      'Hoặc dán URL ảnh rồi nhấn Thêm',
+    'Original image ({{count}}/16)': 'Ảnh gốc ({{count}}/16)',
+    'Output format': 'Định dạng đầu ra',
+    'Please enter the image description': 'Vui lòng nhập mô tả ảnh',
+    Quality: 'Chất lượng',
+    Resolution: 'Độ phân giải',
+    'Select an API key to run image requests.':
+      'Chọn một API key để chạy yêu cầu ảnh.',
+    'Supports JPG / PNG / WebP, up to 20MB each':
+      'Hỗ trợ JPG / PNG / WebP, tối đa 20MB mỗi ảnh',
+    'Unsupported image (JPG / PNG / WebP, max 20MB).':
+      'Ảnh không được hỗ trợ (JPG / PNG / WebP, tối đa 20MB).',
+    'Upload at least one original image.':
+      'Tải lên ít nhất một ảnh gốc.',
   },
 }
 

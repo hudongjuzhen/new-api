@@ -28,7 +28,8 @@ import {
 import { ERROR_MESSAGES } from '@/features/playground/constants'
 import { getFreshAuthHeaders } from '@/lib/api'
 
-const LAB_CHAT_COMPLETIONS_ENDPOINT = '/pg/chat/completions'
+const SESSION_CHAT_COMPLETIONS_ENDPOINT = '/pg/chat/completions'
+const TOKEN_CHAT_COMPLETIONS_ENDPOINT = '/v1/chat/completions'
 const MAX_RAW_LINES = 200
 
 interface StreamEventSource {
@@ -66,10 +67,18 @@ const INITIAL_STATE: LabRunState = {
   durationMs: null,
 }
 
+export interface LabRunOptions {
+  /** API key (token) to run with; requests then go through /v1 with the
+   * key's own group instead of the signed-in session's /pg endpoint. */
+  apiKey?: string
+}
+
 /**
  * Streaming run controller for the lab playground: posts to the
  * session-authenticated /pg/chat/completions endpoint and keeps both the
  * parsed text updates and the raw SSE lines (for the JSON output view).
+ * When an API key is provided, the request is sent to /v1/chat/completions
+ * with Bearer auth so it executes under the key's group.
  */
 export function useLabRun(onSettled?: (result: LabRunResult) => void) {
   const [state, setState] = useState<LabRunState>(INITIAL_STATE)
@@ -113,7 +122,7 @@ export function useLabRun(onSettled?: (result: LabRunResult) => void) {
   }, [settle])
 
   const run = useCallback(
-    (payload: Record<string, unknown>) => {
+    (payload: Record<string, unknown>, options?: LabRunOptions) => {
       const generation = generationRef.current + 1
       generationRef.current = generation
       sourceRef.current?.close()
@@ -122,26 +131,38 @@ export function useLabRun(onSettled?: (result: LabRunResult) => void) {
       startedAtRef.current = Date.now()
       setState({ ...INITIAL_STATE, phase: 'running' })
 
+      const apiKey = options?.apiKey?.trim() || ''
+
       void (async () => {
         let headers: Record<string, string>
-        try {
-          headers = await getFreshAuthHeaders()
-        } catch (error: unknown) {
-          if (generationRef.current !== generation) return
-          settle(
-            generation,
-            'error',
-            error instanceof Error
-              ? error.message
-              : ERROR_MESSAGES.STREAM_START_ERROR
-          )
-          return
+        if (apiKey) {
+          headers = {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          }
+        } else {
+          try {
+            headers = await getFreshAuthHeaders()
+          } catch (error: unknown) {
+            if (generationRef.current !== generation) return
+            settle(
+              generation,
+              'error',
+              error instanceof Error
+                ? error.message
+                : ERROR_MESSAGES.STREAM_START_ERROR
+            )
+            return
+          }
         }
         if (generationRef.current !== generation) return
 
+        const endpoint = apiKey
+          ? TOKEN_CHAT_COMPLETIONS_ENDPOINT
+          : SESSION_CHAT_COMPLETIONS_ENDPOINT
         let source: StreamEventSource
         try {
-          source = new SSE(LAB_CHAT_COMPLETIONS_ENDPOINT, {
+          source = new SSE(endpoint, {
             headers,
             method: 'POST',
             payload: JSON.stringify(payload),

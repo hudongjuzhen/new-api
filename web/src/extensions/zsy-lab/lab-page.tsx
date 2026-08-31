@@ -33,7 +33,9 @@ import { getLobeIcon } from '@/lib/lobe-icon'
 import { LabApi } from './lab-api'
 import { LabExamples } from './lab-examples'
 import { LabHistory } from './lab-history'
+import { LabImagePlayground } from './lab-image-playground'
 import { LabPlayground } from './lab-playground'
+import { isImageGenModel } from './lib/model'
 
 export interface LabProps {
   model?: string
@@ -124,7 +126,11 @@ export function Lab(props: LabProps) {
           </TabsList>
 
           <TabsContent value='playground'>
-            <LabPlayground model={modelName || undefined} />
+            {isImageGenModel(modelInfo) ? (
+              <LabImagePlayground model={modelName || undefined} />
+            ) : (
+              <LabPlayground model={modelName || undefined} />
+            )}
           </TabsContent>
           <TabsContent value='examples'>
             <LabExamples model={modelName || undefined} />

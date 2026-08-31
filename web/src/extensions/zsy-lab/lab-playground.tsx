@@ -25,7 +25,7 @@ import {
   XIcon,
 } from 'lucide-react'
 import { nanoid } from 'nanoid'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -38,6 +38,13 @@ import {
 } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -50,10 +57,11 @@ import {
 import { uploadPlaygroundImage } from '@/features/playground/api'
 import { IMAGE_UPLOAD } from '@/features/playground/constants'
 import { Link } from '@tanstack/react-router'
-import { useAuthStore } from '@/stores/auth-store'
 import { cn } from '@/lib/utils'
 
 import { appendLabHistory } from './lib/history'
+import { extractGeneratedImages } from './lib/image'
+import { useLabKeys } from './use-lab-keys'
 import { useLabRun } from './use-lab-run'
 
 type InputMode = 'form' | 'json'
@@ -121,7 +129,6 @@ function ParameterSlider(props: {
 
 export function LabPlayground(props: { model?: string }) {
   const { t } = useTranslation()
-  const user = useAuthStore((s) => s.auth.user)
   const lastPromptRef = useRef('')
   const run = useLabRun((result) => {
     appendLabHistory({
@@ -148,6 +155,14 @@ export function LabPlayground(props: { model?: string }) {
   const [stream, setStream] = useState(true)
   const [jsonDraft, setJsonDraft] = useState('')
   const outputScrollRef = useRef<HTMLDivElement | null>(null)
+
+  const {
+    user,
+    enabledKeys,
+    selectedKey,
+    setSelectedKeyId,
+    resolveRealKey,
+  } = useLabKeys()
 
   useEffect(() => {
     const node = outputScrollRef.current
@@ -247,8 +262,18 @@ export function LabPlayground(props: { model?: string }) {
     })
   }
 
-  const handleRun = () => {
+  const handleRun = async () => {
     if (!props.model || isRunning) return
+
+    let apiKey: string | undefined
+    if (selectedKey) {
+      try {
+        apiKey = await resolveRealKey(selectedKey)
+      } catch {
+        toast.error(t('Failed to fetch the API key'))
+        return
+      }
+    }
 
     if (inputMode === 'json') {
       let payload: Record<string, unknown>
@@ -268,7 +293,7 @@ export function LabPlayground(props: { model?: string }) {
       if (!payload.model) payload.model = props.model
       if (typeof payload.stream !== 'boolean') payload.stream = true
       lastPromptRef.current = extractPromptPreview(payload)
-      sendRun(payload)
+      sendRun(payload, { apiKey })
       return
     }
 
@@ -281,10 +306,14 @@ export function LabPlayground(props: { model?: string }) {
       return
     }
     lastPromptRef.current = promptText
-    sendRun(buildFormPayload())
+    sendRun(buildFormPayload(), { apiKey })
   }
 
   const hasOutput = state.content.length > 0 || state.reasoning.length > 0
+  const { images: generatedImages, displayContent } = useMemo(
+    () => extractGeneratedImages(state.content),
+    [state.content]
+  )
   const outputJson =
     state.rawLines.length > 0 ? state.rawLines.join('\n') : ''
 
@@ -542,6 +571,63 @@ export function LabPlayground(props: { model?: string }) {
             />
           )}
 
+          {user && (
+            <div className='space-y-2'>
+              <div className='flex items-center gap-2'>
+                <span className='text-muted-foreground text-xs font-semibold tracking-wider uppercase'>
+                  {t('API Key')}
+                </span>
+                {selectedKey && (
+                  <Badge
+                    className='font-mono text-xs font-normal'
+                    variant='outline'
+                  >
+                    {selectedKey.group
+                      ? selectedKey.group
+                      : t('Follow user group')}
+                  </Badge>
+                )}
+              </div>
+              <Select
+                items={[
+                  { value: 'session', label: t('Signed-in session (default)') },
+                  ...enabledKeys.map((key) => ({
+                    value: String(key.id),
+                    label: key.name,
+                  })),
+                ]}
+                value={selectedKey ? String(selectedKey.id) : 'session'}
+                onValueChange={(value) =>
+                  value !== null &&
+                  setSelectedKeyId(value === 'session' ? '' : value)
+                }
+              >
+                <SelectTrigger className='w-full' disabled={isRunning}>
+                  <SelectValue>
+                    {selectedKey
+                      ? selectedKey.name
+                      : t('Signed-in session (default)')}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  <SelectItem value='session'>
+                    {t('Signed-in session (default)')}
+                  </SelectItem>
+                  {enabledKeys.map((key) => (
+                    <SelectItem key={key.id} value={String(key.id)}>
+                      {key.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedKey && (
+                <p className='text-muted-foreground text-xs'>
+                  {t('Requests will run with the group of the selected API key.')}
+                </p>
+              )}
+            </div>
+          )}
+
           <div className='border-border/60 flex items-center justify-between gap-3 border-t pt-4'>
             <div className='flex items-center gap-2'>
               <Switch
@@ -584,8 +670,8 @@ export function LabPlayground(props: { model?: string }) {
                   : `${state.durationMs}ms`}
               </span>
             )}
-            {state.content && (
-              <CopyButton value={state.content} iconClassName='size-3.5' />
+            {state.content && displayContent && (
+              <CopyButton value={displayContent} iconClassName='size-3.5' />
             )}
           </div>
         </div>
@@ -621,18 +707,30 @@ export function LabPlayground(props: { model?: string }) {
                   {state.reasoning}
                 </div>
               )}
-              {hasOutput ? (
-                <div className='text-sm leading-relaxed whitespace-pre-wrap'>
-                  {state.content}
+              {generatedImages.length > 0 && (
+                <div className='mb-3 flex flex-wrap gap-2'>
+                  {generatedImages.map((src) => (
+                    <img
+                      alt=''
+                      className='border-border/60 max-h-64 max-w-full rounded-lg border object-contain'
+                      key={src}
+                      src={src}
+                    />
+                  ))}
                 </div>
-              ) : (
+              )}
+              {hasOutput && displayContent ? (
+                <div className='text-sm leading-relaxed whitespace-pre-wrap'>
+                  {displayContent}
+                </div>
+              ) : null}
+              {!hasOutput &&
                 !isRunning &&
                 state.phase !== 'error' && (
                   <p className='text-muted-foreground/60 text-sm'>
                     {t('Run a request to see the model response here.')}
                   </p>
-                )
-              )}
+                )}
             </TabsContent>
             <TabsContent value='json' className='outline-none'>
               {outputJson ? (

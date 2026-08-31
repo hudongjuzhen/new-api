@@ -36,16 +36,16 @@ type SubmitBody struct {
 
 // SubmitResp is the flat V2 response shape returned by a successful submit.
 type SubmitResp struct {
-	TaskID         string           `json:"taskId"`
-	Status         string           `json:"status"`
-	ClientID       string           `json:"clientId,omitempty"`
-	PromptTips     string           `json:"promptTips,omitempty"`
-	FailedReason   string           `json:"failedReason,omitempty"`
-	ErrorCode      string           `json:"errorCode,omitempty"`
-	ErrorMessage   string           `json:"errorMessage,omitempty"`
-	Usage          *TaskUsage       `json:"usage,omitempty"`
-	TaskUsageList  []TaskUsageEntry `json:"taskUsageList,omitempty"`
-	Results        []TaskResult     `json:"results,omitempty"`
+	TaskID        string           `json:"taskId"`
+	Status        string           `json:"status"`
+	ClientID      string           `json:"clientId,omitempty"`
+	PromptTips    string           `json:"promptTips,omitempty"`
+	FailedReason  string           `json:"failedReason,omitempty"`
+	ErrorCode     string           `json:"errorCode,omitempty"`
+	ErrorMessage  string           `json:"errorMessage,omitempty"`
+	Usage         *TaskUsage       `json:"usage,omitempty"`
+	TaskUsageList []TaskUsageEntry `json:"taskUsageList,omitempty"`
+	Results       []TaskResult     `json:"results,omitempty"`
 }
 
 // TaskResult describes a single output item from RH.
@@ -60,9 +60,9 @@ type TaskResult struct {
 // All fields are kept string because RH upstream uses quoted numeric strings
 // for precision in different SDKs.
 type TaskUsage struct {
-	ConsumeMoney          string `json:"consumeMoney,omitempty"`
-	ConsumeCoins          string `json:"consumeCoins,omitempty"`
-	TaskCostTime          string `json:"taskCostTime,omitempty"`
+	ConsumeMoney           string `json:"consumeMoney,omitempty"`
+	ConsumeCoins           string `json:"consumeCoins,omitempty"`
+	TaskCostTime           string `json:"taskCostTime,omitempty"`
 	ThirdPartyConsumeMoney string `json:"thirdPartyConsumeMoney,omitempty"`
 }
 

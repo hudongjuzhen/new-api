@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -285,10 +286,11 @@ func InjectGoogleAnalytics() {
 func InitResources() error {
 	// Initialize resources here if needed
 	// This is a placeholder function for future resource initialization
+	// Prefer .env in the current working directory; fall back to the directory of the executable
 	err := godotenv.Load(".env")
 	if err != nil {
-		if common.DebugEnabled {
-			common.SysLog("No .env file found, using default environment variables. If needed, please create a .env file and set the relevant variables.")
+		if exePath, exeErr := os.Executable(); exeErr == nil {
+			_ = godotenv.Load(filepath.Join(filepath.Dir(exePath), ".env"))
 		}
 	}
 
