@@ -25,6 +25,16 @@ const (
 // Keep in sync with constant.ChannelTypeRunningHub.
 const pluginChannelType = constant.ChannelTypeRunningHub
 
+// pluginChannelTypes is the set of channel types this plugin serves. All three
+// (RunningHub 国内站 / 国际站 / LiblibAI) share the same RH V2 protocol, so the
+// platform requests are issued under the host TaskPlatform derived from
+// pluginChannelType; the upstream base URL differs per channel.
+var pluginChannelTypes = map[int]bool{
+	constant.ChannelTypeRunningHub:     true,
+	constant.ChannelTypeRunningHubIntl: true,
+	constant.ChannelTypeLiblib:         true,
+}
+
 func init() {
 	extcore.RegisterPlugin(extcore.PluginInfo{
 		Name:    pluginName,

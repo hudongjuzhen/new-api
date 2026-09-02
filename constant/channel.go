@@ -59,7 +59,9 @@ const (
 	ChannelTypeSub2API        = 59
 	ChannelTypeNewAPI         = 60
 	ChannelTypeRunningHub     = 61
-	ChannelTypeDummy          = 62 // this one is only for count, do not add any channel after this
+	ChannelTypeRunningHubIntl = 62 // RunningHub 国际站 (https://www.runninghub.ai)
+	ChannelTypeLiblib         = 63 // LiblibAI (https://openapi.liblibai.cloud)
+	ChannelTypeDummy          = 64 // this one is only for count, do not add any channel after this
 
 )
 
@@ -126,6 +128,8 @@ var ChannelBaseURLs = []string{
 	"",                                          //59
 	"",                                          //60
 	"https://www.runninghub.cn",                 //61  RunningHub
+	"https://www.runninghub.ai",                 //62  RunningHub 国际站
+	"https://openapi.liblibai.cloud",            //63  LiblibAI
 }
 
 var ChannelTypeNames = map[int]string{
@@ -187,6 +191,8 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSub2API:        "Sub2API",
 	ChannelTypeNewAPI:         "New API",
 	ChannelTypeRunningHub:     "RunningHub",
+	ChannelTypeRunningHubIntl: "RunningHub Intl",
+	ChannelTypeLiblib:         "LiblibAI",
 }
 
 func GetChannelTypeName(channelType int) string {

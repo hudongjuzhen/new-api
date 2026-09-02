@@ -62,7 +62,12 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
 	a.apiKey = info.ApiKey
 	if a.baseURL == "" {
-		a.baseURL = DefaultBaseURL
+		switch info.ChannelType {
+		case constant.ChannelTypeRunningHubIntl:
+			a.baseURL = DefaultBaseURLIntl
+		default:
+			a.baseURL = DefaultBaseURL
+		}
 	}
 	a.userAgent = DefaultUserAgent
 }
@@ -160,7 +165,11 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	}
 	base := a.baseURL
 	if base == "" {
-		base = DefaultBaseURL
+		if a.ChannelType == constant.ChannelTypeRunningHubIntl {
+			base = DefaultBaseURLIntl
+		} else {
+			base = DefaultBaseURL
+		}
 	}
 	model := strings.TrimSpace(info.OriginModelName)
 	switch info.Action {
@@ -347,7 +356,11 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	// endpoint because it's the same POST regardless of app/workflow kind.
 	_ = body["action"]
 	if baseURL == "" {
-		baseURL = DefaultBaseURL
+		if a.ChannelType == constant.ChannelTypeRunningHubIntl {
+			baseURL = DefaultBaseURLIntl
+		} else {
+			baseURL = DefaultBaseURL
+		}
 	}
 	fullURL := strings.TrimRight(baseURL, "/") + PathQueryTask
 	qbody := QueryBody{TaskID: taskID}

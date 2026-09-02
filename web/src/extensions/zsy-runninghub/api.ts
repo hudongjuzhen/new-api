@@ -205,7 +205,7 @@ export async function getRhChannels(): Promise<RhChannel[]> {
   const res = await api.get<{
     success: boolean
     data?: { items?: RhChannel[] }
-  }>('/api/channel', { params: { type: 61, page: 1, pageSize: 100 } })
+  }>('/api/channel', { params: { type: [61, 62, 63].join(','), page: 1, pageSize: 100 } })
   return res.data.data?.items ?? []
 }
 

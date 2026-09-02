@@ -341,9 +341,21 @@ func SearchChannels(c *gin.Context) {
 
 	typeParam := c.Query("type")
 	typeFilter := -1
+	var typeFilters map[int]bool
 	if typeParam != "" {
-		if tp, err := strconv.Atoi(typeParam); err == nil {
-			typeFilter = tp
+		// Support comma-separated channel types (e.g. "61,62,63") so callers can
+		// query a family of related channel types in one request.
+		parts := strings.Split(typeParam, ",")
+		typeFilters = make(map[int]bool, len(parts))
+		okParts := 0
+		for _, p := range parts {
+			if tp, err := strconv.Atoi(strings.TrimSpace(p)); err == nil && tp >= 0 {
+				typeFilters[tp] = true
+				okParts++
+			}
+		}
+		if okParts > 0 {
+			typeFilter = -2 // sentinel: filter by the set above
 		}
 	}
 
@@ -351,6 +363,14 @@ func SearchChannels(c *gin.Context) {
 		filtered := make([]*model.Channel, 0, len(channelData))
 		for _, ch := range channelData {
 			if ch.Type == typeFilter {
+				filtered = append(filtered, ch)
+			}
+		}
+		channelData = filtered
+	} else if typeFilter == -2 {
+		filtered := make([]*model.Channel, 0, len(channelData))
+		for _, ch := range channelData {
+			if typeFilters[ch.Type] {
 				filtered = append(filtered, ch)
 			}
 		}

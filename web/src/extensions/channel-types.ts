@@ -19,3 +19,5 @@ export const EXT_CHANNEL_TYPES: ExtChannelTypeContribution = {
 }
 
 export const CHANNEL_TYPE_RUNNING_HUB = 61
+export const CHANNEL_TYPE_RUNNING_HUB_INTL = 62
+export const CHANNEL_TYPE_LIBLIB = 63

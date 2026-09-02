@@ -503,7 +503,7 @@ func validatePinChannel(channelID int64) error {
 	if err != nil {
 		return fmt.Errorf("绑定渠道无效 (id=%d): %w", channelID, err)
 	}
-	if ch.Type != pluginChannelType {
+	if !pluginChannelTypes[ch.Type] {
 		return fmt.Errorf("渠道 %d (%s) 不是 RunningHub 渠道 (type=%d)", channelID, ch.Name, ch.Type)
 	}
 	return nil

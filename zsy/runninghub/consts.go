@@ -81,3 +81,7 @@ const (
 // DefaultBaseURL mirrors constant.ChannelBaseURLs[RunningHub] and is used as a
 // fallback when the channel's base URL is empty.
 const DefaultBaseURL = "https://www.runninghub.cn"
+
+// DefaultBaseURLIntl mirrors constant.ChannelBaseURLs[RunningHubIntl] and is
+// used as a fallback for RunningHub 国际站 channels.
+const DefaultBaseURLIntl = "https://www.runninghub.ai"

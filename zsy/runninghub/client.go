@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 )
 
 // ---------------------------------------------------------------------------
@@ -113,6 +114,22 @@ func NewClient(baseURL, key string, httpClient *http.Client) *Client {
 		httpClient = http.DefaultClient
 	}
 	return &Client{BaseURL: strings.TrimRight(baseURL, "/"), Key: key, HTTPClient: httpClient, UserAgent: DefaultUserAgent}
+}
+
+// NewClientForType returns a new Client whose default base URL matches the
+// given channel type (RunningHub → runninghub.cn, RunningHub 国际站 →
+// runninghub.ai). Callers that already resolved the channel's base URL should
+// pass it in baseURL — the type only matters when baseURL is empty.
+func NewClientForType(channelType int, baseURL, key string, httpClient *http.Client) *Client {
+	if baseURL == "" {
+		switch channelType {
+		case constant.ChannelTypeRunningHubIntl:
+			baseURL = DefaultBaseURLIntl
+		default:
+			baseURL = DefaultBaseURL
+		}
+	}
+	return NewClient(baseURL, key, httpClient)
 }
 
 // SubmitAICApp posts a nodeInfoList payload to the V2 AI 应用 submit path.

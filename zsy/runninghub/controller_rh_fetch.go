@@ -224,7 +224,7 @@ func fetchAppTemplate(c *gin.Context) {
 		common.ApiError(c, fmt.Errorf("加载 RunningHub 渠道失败: %w", err))
 		return
 	}
-	if ch.Type != pluginChannelType {
+	if !pluginChannelTypes[ch.Type] {
 		common.ApiErrorMsg(c, fmt.Sprintf("渠道 %d (%s) 不是 RunningHub 渠道 (type=%d)", req.ChannelID, ch.Name, ch.Type))
 		return
 	}
@@ -233,7 +233,7 @@ func fetchAppTemplate(c *gin.Context) {
 	if ch.BaseURL != nil {
 		baseURL = *ch.BaseURL
 	}
-	client := NewClient(baseURL, ch.Key, nil)
+	client := NewClientForType(ch.Type, baseURL, ch.Key, nil)
 	demo, err := client.ApiCallDemo(req.UpstreamID)
 	if err != nil {
 		common.ApiError(c, err)

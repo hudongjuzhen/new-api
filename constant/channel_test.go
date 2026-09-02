@@ -15,4 +15,8 @@ func TestChannelBaseURLsCoverAllChannelTypes(t *testing.T) {
 	assert.Equal(t, ChannelTypeDummy, len(ChannelBaseURLs),
 		"every channel type must have a ChannelBaseURLs entry (see ChannelTypeDummy)")
 	assert.NotEmpty(t, ChannelBaseURLs[ChannelTypeRunningHub])
+	assert.NotEmpty(t, ChannelBaseURLs[ChannelTypeRunningHubIntl])
+	assert.NotEmpty(t, ChannelBaseURLs[ChannelTypeLiblib])
+	assert.Equal(t, "https://www.runninghub.ai", ChannelBaseURLs[ChannelTypeRunningHubIntl])
+	assert.Equal(t, "https://openapi.liblibai.cloud", ChannelBaseURLs[ChannelTypeLiblib])
 }

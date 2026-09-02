@@ -164,6 +164,36 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models',
     },
   },
+  61: {
+    id: 61,
+    name: CHANNEL_TYPES[61],
+    icon: 'RunningHub',
+    defaultBaseUrl: 'https://www.runninghub.cn',
+    hints: {
+      key: 'RunningHub API Key',
+      models: 'runninghub:ai-app,runninghub:workflow,runninghub:model',
+    },
+  },
+  62: {
+    id: 62,
+    name: CHANNEL_TYPES[62],
+    icon: 'RunningHub',
+    defaultBaseUrl: 'https://www.runninghub.ai',
+    hints: {
+      key: 'RunningHub API Key',
+      models: 'runninghub:ai-app,runninghub:workflow,runninghub:model',
+    },
+  },
+  63: {
+    id: 63,
+    name: CHANNEL_TYPES[63],
+    icon: 'LiblibAI',
+    defaultBaseUrl: 'https://openapi.liblibai.cloud',
+    hints: {
+      key: 'LiblibAI API Key',
+      models: 'liblib:ai-app,liblib:workflow,liblib:model',
+    },
+  },
 }
 
 /**

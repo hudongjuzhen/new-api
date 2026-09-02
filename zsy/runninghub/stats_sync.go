@@ -203,7 +203,7 @@ func SyncChannelApps(channelID int64) (*ChannelSyncResult, error) {
 		}
 		return nil, fmt.Errorf("load channel %d: %w", channelID, err)
 	}
-	if ch.Type != pluginChannelType {
+	if !pluginChannelTypes[ch.Type] {
 		return nil, fmt.Errorf("渠道 %d 不是 RunningHub 渠道 (type=%d)", channelID, ch.Type)
 	}
 
