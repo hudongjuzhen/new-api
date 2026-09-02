@@ -18,7 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
+import { hexToRgba } from '@/lib/colors'
 import { cn } from '@/lib/utils'
+import { useGroupColor } from '@/stores/group-color-store'
 
 import { StatusBadge, type StatusBadgeProps } from './status-badge'
 
@@ -29,6 +31,8 @@ type GroupBadgeProps = Omit<
   group?: string | null
   label?: string
   ratio?: number | null
+  /** Overrides the default `${ratio}x` pill text (e.g. a percentage label). */
+  ratioLabel?: string
 }
 
 function getGroupRatioClassName(ratio: number): string {
@@ -54,12 +58,17 @@ function getGroupLabel(params: {
   return params.groupName ?? ''
 }
 
+/** Formats a group ratio multiplier as an explicit percentage (0.5 -> "50%"). */
+// eslint-disable-next-line react-refresh/only-export-components
+export { formatGroupRatioPercent } from '@/lib/group-ratio-format'
+
 export function GroupBadge(props: GroupBadgeProps) {
   const { t } = useTranslation()
   const {
     group,
     label: labelOverride,
     ratio,
+    ratioLabel,
     copyable = false,
     showDot,
     className,
@@ -69,6 +78,7 @@ export function GroupBadge(props: GroupBadgeProps) {
   const isAutoGroup = groupName === 'auto'
   const isEmptyGroup = !groupName
   const isSpecialGroup = isAutoGroup || isEmptyGroup
+  const groupColor = useGroupColor(isSpecialGroup ? null : groupName)
   const label = getGroupLabel({
     labelOverride,
     groupName,
@@ -85,6 +95,7 @@ export function GroupBadge(props: GroupBadgeProps) {
       showDot={showDot ?? (isSpecialGroup ? false : undefined)}
       variant={isSpecialGroup ? 'neutral' : undefined}
       autoColor={isSpecialGroup ? undefined : groupName}
+      color={isSpecialGroup ? undefined : groupColor}
       className={cn('min-w-0 shrink overflow-hidden', className)}
     />
   )
@@ -99,10 +110,18 @@ export function GroupBadge(props: GroupBadgeProps) {
       <span
         className={cn(
           'inline-flex h-5 shrink-0 items-center rounded-full px-1.5 font-mono text-xs leading-none font-medium tabular-nums',
-          getGroupRatioClassName(ratio)
+          !groupColor && getGroupRatioClassName(ratio)
         )}
+        style={
+          groupColor
+            ? {
+                color: groupColor,
+                backgroundColor: hexToRgba(groupColor, 0.1),
+              }
+            : undefined
+        }
       >
-        <span>{ratio}x</span>
+        <span>{ratioLabel ?? `${ratio}x`}</span>
       </span>
     </span>
   )

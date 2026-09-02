@@ -96,6 +96,7 @@ const extendedModelFormSchema = z.object({
   vendor_id: z.number().optional(),
   endpoints: z.string(),
   name_rule: z.number(),
+  sort: z.number().int(),
   status: z.boolean(),
   sync_official: z.boolean(),
   price: z.string().optional(),
@@ -323,6 +324,7 @@ export function ModelMutateDrawer({
       DefaultUseAutoGroup: false,
       CreateCacheRatio: '',
       'group_ratio_setting.group_special_usable_group': '{}',
+      'group_ratio_setting.group_color': '{}',
       'grok.violation_deduction_enabled': false,
       'grok.violation_deduction_amount': 0,
       RetryTimes: 0,
@@ -368,6 +370,7 @@ export function ModelMutateDrawer({
       vendor_id: undefined,
       endpoints: '',
       name_rule: 0,
+      sort: 0,
       status: true,
       sync_official: true,
       price: '',
@@ -436,6 +439,7 @@ export function ModelMutateDrawer({
         vendor_id: model.vendor_id,
         endpoints: model.endpoints || '',
         name_rule: model.name_rule || 0,
+        sort: model.sort || 0,
         status: model.status === 1,
         sync_official: model.sync_official === 1,
         ...pricing.fields,
@@ -461,6 +465,7 @@ export function ModelMutateDrawer({
         vendor_id: undefined,
         endpoints: '',
         name_rule: 0,
+        sort: 0,
         status: true,
         sync_official: true,
         ...pricing.fields,
@@ -870,6 +875,36 @@ export function ModelMutateDrawer({
                     </FormControl>
                     <FormDescription>
                       {t('Press Enter or comma to add tags')}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='sort'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Sort')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        step={1}
+                        placeholder='0'
+                        {...field}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          field.onChange(
+                            value === '' ? 0 : Math.trunc(Number(value)) || 0
+                          )
+                        }}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Larger values rank higher in the model square; same values ordered by ID descending.'
+                      )}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

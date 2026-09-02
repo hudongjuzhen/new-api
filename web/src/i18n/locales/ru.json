@@ -948,6 +948,7 @@
     "Collapse All": "Свернуть все",
     "Collect relay latency and success-rate metrics for the model square.": "Собирает метрики задержки Relay и доли успешных запросов для витрины моделей.",
     "Color": "Цвет",
+    "Custom color": "Custom color",
     "Color is required": "Цвет обязателен",
     "Color preset": "Цветовая предустановка",
     "Color:": "Цвет:",
@@ -2235,6 +2236,7 @@
     "Group config overrides global limits, shares the same period": "Конфигурация группы переопределяет глобальные лимиты, использует тот же период",
     "Group deleted. Click \"Save Settings\" to apply.": "Группа удалена. Нажмите \"Сохранить настройки\", чтобы применить.",
     "Group description": "Описание группы",
+    "Group colors": "Group colors",
     "Group details": "Детали группы",
     "Group identifier": "Идентификатор группы",
     "Group is required": "Группа обязательна",
@@ -2545,6 +2547,7 @@
     "Language preference saved": "Языковая настройка сохранена",
     "Language Preferences": "Языковые настройки",
     "Language preferences sync across your signed-in devices and affect API error messages.": "Языковые настройки синхронизируются на всех ваших устройствах после входа и влияют на язык сообщений об ошибках API.",
+    "Larger values rank higher in the model square; same values ordered by ID descending.": "Чем больше значение, тем выше позиция в каталоге моделей; при равных значениях — по убыванию идентификатора.",
     "Last 24h usage": "Расход за 24ч",
     "Last 30 days uptime": "Доступность за 30 дней",
     "Last active {{time}} · Expires {{expires}}": "Последняя активность: {{time}} · Истекает: {{expires}}",
@@ -3527,6 +3530,7 @@
     "Personal settings and profile management.": "Персональные настройки и управление профилем.",
     "Personal use": "Личное использование",
     "Personal use mode": "Режим личного использования",
+    "Pick a color": "Pick a color",
     "Pick a date": "Выберите дату",
     "Pick an application from the list to view its parameters and start generating.": "Выберите приложение из списка, чтобы просмотреть его параметры и начать генерацию.",
     "Pick or create both a store and a product before saving.": "Перед сохранением выберите или создайте и магазин, и продукт.",
@@ -4040,6 +4044,7 @@
     "Reset Stats": "Сбросить статистику",
     "Reset subscription quota": "Сбросить квоту подписки",
     "Reset the user passkey": "Ключ доступа пользователя сброшен",
+    "Reset to auto": "Reset to auto",
     "Reset to default": "Сбросить до значений по умолчанию",
     "Reset to Default": "Сбросить по умолчанию",
     "Reset to default configuration": "Сброшено к конфигурации по умолчанию",
@@ -5498,6 +5503,10 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Ranking": "Рейтинг",
+    "Sort updated successfully": "Сортировка обновлена",
+    "Failed to update sort": "Не удалось обновить сортировку",
+    "Double-click to edit ranking": "Двойной щелчок для изменения рейтинга"
   }
 }

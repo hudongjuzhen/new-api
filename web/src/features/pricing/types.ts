@@ -36,6 +36,8 @@ export type PricingModel = {
   vendor_name?: string
   vendor_icon?: string
   vendor_description?: string
+  /** Display order weight from model metadata; larger values rank higher */
+  sort?: number
   quota_type: number
   model_ratio: number
   completion_ratio: number

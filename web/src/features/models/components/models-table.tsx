@@ -31,7 +31,7 @@ import {
   getModelStatusOptions,
   getSyncStatusOptions,
 } from '../constants'
-import { modelsQueryKeys, vendorsQueryKeys } from '../lib'
+import { modelsQueryKeys, vendorsQueryKeys, compareModelsByRank } from '../lib'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 import { useModelsColumns } from './models-columns'
 import { useModels } from './models-provider'
@@ -151,12 +151,20 @@ export function ModelsTable() {
   const totalCount = data?.data?.total || 0
   const vendorCounts = data?.data?.vendor_counts
 
+  // Apply the model-square ranking rule on the current page: sort desc by
+  // `sort`, ties broken by `id` desc. Row selection relies on row indexes, so
+  // sort the resolved (non-stale) models, not the raw response, to keep ids
+  // aligned with what React Table renders.
+  const rankedModels = useMemo(() => {
+    return [...models].sort(compareModelsByRank)
+  }, [models])
+
   // Columns configuration
   const columns = useModelsColumns(vendors)
 
   // React Table instance
   const { table } = useDataTable({
-    data: models,
+    data: rankedModels,
     columns,
     totalCount,
     initialColumnVisibility: {

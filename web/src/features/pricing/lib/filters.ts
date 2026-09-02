@@ -106,7 +106,9 @@ function getModelPrice(model: PricingModel): number {
 }
 
 /**
- * Sort models by specified option
+ * Sort models by specified option. `sortBy` of `''` is the default ranking:
+ * metadata `sort` descending, then `id` descending — matching the backend
+ * model-square ordering and the metadata list, so all three stay in sync.
  */
 export function sortModels(
   models: PricingModel[],
@@ -126,6 +128,14 @@ export function sortModels(
     case SORT_OPTIONS.PRICE_HIGH:
       sorted.sort((a, b) => getModelPrice(b) - getModelPrice(a))
       break
+    default:
+      // Default ranking ('' or an unknown option): sort DESC, then id DESC.
+      // The backend already returns pricing in this order, but keep it
+      // explicit so filtering/typing always lands on the same rule.
+      sorted.sort((a, b) => {
+        if ((a.sort ?? 0) !== (b.sort ?? 0)) return (b.sort ?? 0) - (a.sort ?? 0)
+        return b.id - a.id
+      })
   }
 
   return sorted

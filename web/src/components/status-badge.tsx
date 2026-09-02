@@ -131,6 +131,8 @@ export interface StatusBadgeProps extends Omit<
   copyable?: boolean
   copyText?: string
   autoColor?: string
+  /** Explicit HEX color that overrides the auto/hash color. */
+  color?: string
   /** Visual style. Defaults to 'badge'. Can be overridden via StatusBadgeTypeContext. */
   type?: StatusBadgeType
 }
@@ -146,8 +148,10 @@ export function StatusBadge({
   copyable = true,
   copyText,
   autoColor,
+  color,
   type: typeProp,
   className,
+  style,
   onClick,
   ...props
 }: StatusBadgeProps) {
@@ -181,6 +185,7 @@ export function StatusBadge({
   return (
     <span
       data-slot='status-badge'
+      data-group-color={color || undefined}
       className={cn(
         'inline-flex w-fit max-w-full min-w-0 shrink items-center font-medium tracking-normal whitespace-nowrap transition-colors',
         isBadge
@@ -189,12 +194,13 @@ export function StatusBadge({
               textSizeMap[size ?? 'sm'],
               type === 'underline' && 'border-b border-current pb-px'
             ),
-        textColorMap[computedVariant],
+        !color && textColorMap[computedVariant],
         pulse && 'animate-pulse',
         copyable &&
           'cursor-copy hover:brightness-95 active:scale-95 dark:hover:brightness-110',
         className
       )}
+      style={color ? { ...style, color } : style}
       onClick={handleClick}
       title={title}
       {...props}
@@ -203,8 +209,9 @@ export function StatusBadge({
         <span
           className={cn(
             'inline-block size-1.5 shrink-0 rounded-full',
-            dotColorMap[computedVariant]
+            !color && dotColorMap[computedVariant]
           )}
+          style={color ? { backgroundColor: color } : undefined}
           aria-hidden='true'
         />
       )}

@@ -135,6 +135,8 @@ export interface SystemStatus {
     password_login_enabled?: boolean
     password_register_enabled?: boolean
     custom_oauth_providers?: CustomOAuthProviderInfo[]
+    /** Admin-configured explicit group colors (group → #hex). */
+    group_colors?: Record<string, string>
     [key: string]: unknown
   }
   // Allow direct access to common properties

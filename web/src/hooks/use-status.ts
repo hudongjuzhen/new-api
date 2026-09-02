@@ -20,6 +20,7 @@ import { useQuery } from '@tanstack/react-query'
 
 import type { SystemStatus } from '@/features/auth/types'
 import { getStatus } from '@/lib/api'
+import { useGroupColorStore } from '@/stores/group-color-store'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { mapStatusDataToConfig } from './use-system-config'
@@ -46,6 +47,12 @@ export function useStatus() {
         if (status) {
           const { setConfig } = useSystemConfigStore.getState()
           setConfig(mapStatusDataToConfig(status))
+          const groupColors = status.group_colors as
+            | Record<string, string>
+            | undefined
+          if (groupColors) {
+            useGroupColorStore.getState().setColors(groupColors)
+          }
         }
       } catch (err) {
         if (import.meta.env.DEV) {

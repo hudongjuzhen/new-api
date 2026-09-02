@@ -948,6 +948,7 @@
     "Collapse All": "Tout réduire",
     "Collect relay latency and success-rate metrics for the model square.": "Collecte les métriques de latence Relay et de taux de réussite pour la place des modèles.",
     "Color": "Couleur",
+    "Custom color": "Custom color",
     "Color is required": "La couleur est requise",
     "Color preset": "Préréglage de couleur",
     "Color:": "Couleur :",
@@ -2235,6 +2236,7 @@
     "Group config overrides global limits, shares the same period": "La configuration du groupe annule les limites globales et partage la même période",
     "Group deleted. Click \"Save Settings\" to apply.": "Groupe supprimé. Cliquez sur \"Enregistrer les paramètres\" pour appliquer.",
     "Group description": "Description du groupe",
+    "Group colors": "Group colors",
     "Group details": "Détails du groupe",
     "Group identifier": "Identifiant du groupe",
     "Group is required": "Le groupe est requis",
@@ -2545,6 +2547,7 @@
     "Language preference saved": "Préférence de langue enregistrée",
     "Language Preferences": "Préférences de langue",
     "Language preferences sync across your signed-in devices and affect API error messages.": "Les préférences de langue se synchronisent sur vos appareils connectés et affectent les messages d'erreur de l'API.",
+    "Larger values rank higher in the model square; same values ordered by ID descending.": "Les valeurs plus élevées apparaissent en premier dans la place des modèles ; à valeur égale, tri par identifiant décroissant.",
     "Last 24h usage": "Utilisation 24h",
     "Last 30 days uptime": "Disponibilité 30 derniers jours",
     "Last active {{time}} · Expires {{expires}}": "Dernière activité {{time}} · Expire le {{expires}}",
@@ -3527,6 +3530,7 @@
     "Personal settings and profile management.": "Paramètres personnels et gestion du profil.",
     "Personal use": "Usage personnel",
     "Personal use mode": "Mode usage personnel",
+    "Pick a color": "Pick a color",
     "Pick a date": "Choisir une date",
     "Pick an application from the list to view its parameters and start generating.": "Choisissez une application dans la liste pour voir ses paramètres et commencer à générer.",
     "Pick or create both a store and a product before saving.": "Choisissez ou créez à la fois une boutique et un produit avant d’enregistrer.",
@@ -4040,6 +4044,7 @@
     "Reset Stats": "Réinitialiser les statistiques",
     "Reset subscription quota": "Réinitialiser le quota d'abonnement",
     "Reset the user passkey": "Clé d'accès de l'utilisateur réinitialisée",
+    "Reset to auto": "Reset to auto",
     "Reset to default": "Réinitialiser par défaut",
     "Reset to Default": "Réinitialiser par défaut",
     "Reset to default configuration": "Réinitialisé à la configuration par défaut",
@@ -5498,6 +5503,10 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Ranking": "Classement",
+    "Sort updated successfully": "Tri mis à jour",
+    "Failed to update sort": "Échec de la mise à jour du tri",
+    "Double-click to edit ranking": "Double-cliquez pour modifier le classement"
   }
 }

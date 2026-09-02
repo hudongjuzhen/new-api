@@ -23,7 +23,6 @@ import { useDebounce } from '@/hooks/use-debounce'
 
 import {
   FILTER_ALL,
-  SORT_OPTIONS,
   QUOTA_TYPES,
   ENDPOINT_TYPES,
   DEFAULT_TOKEN_UNIT,
@@ -70,7 +69,7 @@ export function useFilters(models: PricingModel[]) {
 
   const searchInput = filterState.search || ''
   const debouncedSearchInput = useDebounce(searchInput, 200)
-  const sortBy = filterState.sort || SORT_OPTIONS.NAME
+  const sortBy = filterState.sort || ''
   const vendorFilter = filterState.vendor || FILTER_ALL
   const groupFilter = filterState.group || FILTER_ALL
   const quotaTypeFilter = filterState.quotaType || QUOTA_TYPES.ALL
@@ -98,8 +97,7 @@ export function useFilters(models: PricingModel[]) {
     [updateFilters]
   )
   const setSortBy = useCallback(
-    (v: string) =>
-      updateFilters({ sort: v === SORT_OPTIONS.NAME ? undefined : v }),
+    (v: string) => updateFilters({ sort: v === '' ? undefined : v }),
     [updateFilters]
   )
   const setVendorFilter = useCallback(

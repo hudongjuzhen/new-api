@@ -102,6 +102,17 @@ export async function updateModelStatus(
 }
 
 /**
+ * Update model sort weight only
+ */
+export async function updateModelSort(
+  id: number,
+  sort: number
+): Promise<{ success: boolean; message?: string }> {
+  const res = await api.put('/api/models/?sort_only=true', { id, sort })
+  return res.data
+}
+
+/**
  * Delete model
  */
 export async function deleteModel(

@@ -948,6 +948,7 @@
     "Collapse All": "すべて折りたたむ",
     "Collect relay latency and success-rate metrics for the model square.": "モデル広場向けに Relay のレイテンシと成功率メトリクスを収集します。",
     "Color": "カラー",
+    "Custom color": "Custom color",
     "Color is required": "色は必須です",
     "Color preset": "カラープリセット",
     "Color:": "色:",
@@ -2235,6 +2236,7 @@
     "Group config overrides global limits, shares the same period": "グループ設定はグローバル制限を上書きし、同じ期間を共有します",
     "Group deleted. Click \"Save Settings\" to apply.": "グループが削除されました。「Save Settings」をクリックして適用してください。",
     "Group description": "グループの説明",
+    "Group colors": "Group colors",
     "Group details": "グループの詳細",
     "Group identifier": "グループ識別子",
     "Group is required": "グループは必須です",
@@ -2545,6 +2547,7 @@
     "Language preference saved": "言語設定を保存しました",
     "Language Preferences": "言語設定",
     "Language preferences sync across your signed-in devices and affect API error messages.": "言語設定はログイン中のすべてのデバイスで同期され、API のエラーメッセージ言語にも反映されます。",
+    "Larger values rank higher in the model square; same values ordered by ID descending.": "値が大きいほどモデル広場で上位に表示されます。同じ値の場合は ID の降順で並びます。",
     "Last 24h usage": "直近24時間の使用量",
     "Last 30 days uptime": "直近 30 日の稼働率",
     "Last active {{time}} · Expires {{expires}}": "最終利用 {{time}} · 有効期限 {{expires}}",
@@ -3527,6 +3530,7 @@
     "Personal settings and profile management.": "個人設定とプロフィール管理。",
     "Personal use": "個人利用",
     "Personal use mode": "個人利用モード",
+    "Pick a color": "Pick a color",
     "Pick a date": "日付を選択",
     "Pick an application from the list to view its parameters and start generating.": "リストからアプリを選択して、パラメータを確認して生成を開始します。",
     "Pick or create both a store and a product before saving.": "保存する前に、ストアと商品の両方を選択または作成してください。",
@@ -4040,6 +4044,7 @@
     "Reset Stats": "統計をリセット",
     "Reset subscription quota": "サブスクリプションのクォータをリセット",
     "Reset the user passkey": "ユーザーのパスキーをリセットしました",
+    "Reset to auto": "Reset to auto",
     "Reset to default": "デフォルトにリセット",
     "Reset to Default": "デフォルトにリセット",
     "Reset to default configuration": "デフォルト設定にリセットしました",
@@ -5498,6 +5503,10 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Ranking": "ランキング",
+    "Sort updated successfully": "並べ替えを更新しました",
+    "Failed to update sort": "並べ替えの更新に失敗しました",
+    "Double-click to edit ranking": "ダブルクリックでランキングを編集"
   }
 }

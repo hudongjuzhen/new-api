@@ -20,7 +20,11 @@ import { type QueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
-import { updateModelStatus, deleteModel as deleteModelAPI } from '../api'
+import {
+  updateModelSort,
+  updateModelStatus,
+  deleteModel as deleteModelAPI,
+} from '../api'
 import { modelsQueryKeys } from './query-keys'
 
 // ============================================================================
@@ -88,6 +92,33 @@ export async function handleToggleModelStatus(
     await handleDisableModel(id, queryClient, onSuccess)
   } else {
     await handleEnableModel(id, queryClient, onSuccess)
+  }
+}
+
+/**
+ * Update model sort weight only
+ */
+export async function handleUpdateModelSort(
+  id: number,
+  sort: number,
+  queryClient?: QueryClient,
+  onSuccess?: () => void
+): Promise<boolean> {
+  try {
+    const response = await updateModelSort(id, sort)
+    if (response.success) {
+      toast.success(i18next.t('Sort updated successfully'))
+      queryClient?.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
+      onSuccess?.()
+      return true
+    }
+    toast.error(response.message || i18next.t('Failed to update sort'))
+    return false
+  } catch (error: unknown) {
+    toast.error(
+      (error as Error)?.message || i18next.t('Failed to update sort')
+    )
+    return false
   }
 }
 

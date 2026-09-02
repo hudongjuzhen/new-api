@@ -948,6 +948,7 @@
     "Collapse All": "Collapse All",
     "Collect relay latency and success-rate metrics for the model square.": "Collect relay latency and success-rate metrics for the model square.",
     "Color": "Color",
+    "Custom color": "Custom color",
     "Color is required": "Color is required",
     "Color preset": "Color preset",
     "Color:": "Color:",
@@ -2235,6 +2236,7 @@
     "Group config overrides global limits, shares the same period": "Group config overrides global limits, shares the same period",
     "Group deleted. Click \"Save Settings\" to apply.": "Group deleted. Click \"Save Settings\" to apply.",
     "Group description": "Group description",
+    "Group colors": "Group colors",
     "Group details": "Group details",
     "Group identifier": "Group identifier",
     "Group is required": "Group is required",
@@ -2545,6 +2547,7 @@
     "Language preference saved": "Language preference saved",
     "Language Preferences": "Language Preferences",
     "Language preferences sync across your signed-in devices and affect API error messages.": "Language preferences sync across your signed-in devices and affect API error messages.",
+    "Larger values rank higher in the model square; same values ordered by ID descending.": "Larger values rank higher in the model square; same values ordered by ID descending.",
     "Last 24h usage": "Last 24h usage",
     "Last 30 days uptime": "Last 30 days uptime",
     "Last active {{time}} · Expires {{expires}}": "Last active {{time}} · Expires {{expires}}",
@@ -3527,6 +3530,7 @@
     "Personal settings and profile management.": "Personal settings and profile management.",
     "Personal use": "Personal use",
     "Personal use mode": "Personal use mode",
+    "Pick a color": "Pick a color",
     "Pick a date": "Pick a date",
     "Pick an application from the list to view its parameters and start generating.": "Pick an application from the list to view its parameters and start generating.",
     "Pick or create both a store and a product before saving.": "Pick or create both a store and a product before saving.",
@@ -4040,6 +4044,7 @@
     "Reset Stats": "Reset Stats",
     "Reset subscription quota": "Reset subscription quota",
     "Reset the user passkey": "Reset the user passkey",
+    "Reset to auto": "Reset to auto",
     "Reset to default": "Reset to default",
     "Reset to Default": "Reset to Default",
     "Reset to default configuration": "Reset to default configuration",
@@ -5498,6 +5503,10 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Ranking": "Ranking",
+    "Sort updated successfully": "Sort updated successfully",
+    "Failed to update sort": "Failed to update sort",
+    "Double-click to edit ranking": "Double-click to edit ranking"
   }
 }

@@ -948,6 +948,7 @@
     "Collapse All": "Thu gọn tất cả",
     "Collect relay latency and success-rate metrics for the model square.": "Thu thập độ trễ Relay và tỷ lệ thành công cho quảng trường mô hình.",
     "Color": "Màu",
+    "Custom color": "Custom color",
     "Color is required": "Màu sắc là bắt buộc",
     "Color preset": "Cài đặt màu sẵn",
     "Color:": "Màu sắc:",
@@ -2235,6 +2236,7 @@
     "Group config overrides global limits, shares the same period": "Cấu hình nhóm ghi đè giới hạn toàn cầu, chia sẻ cùng một chu kỳ",
     "Group deleted. Click \"Save Settings\" to apply.": "Nhóm đã bị xóa. Nhấp vào \"Lưu Cài đặt\" để áp dụng.",
     "Group description": "Mô tả nhóm",
+    "Group colors": "Group colors",
     "Group details": "Chi tiết nhóm",
     "Group identifier": "Định danh nhóm",
     "Group is required": "Yêu cầu nhóm",
@@ -2545,6 +2547,7 @@
     "Language preference saved": "Đã lưu tùy chọn ngôn ngữ",
     "Language Preferences": "Tùy chọn ngôn ngữ",
     "Language preferences sync across your signed-in devices and affect API error messages.": "Tùy chọn ngôn ngữ sẽ đồng bộ trên các thiết bị đã đăng nhập và ảnh hưởng đến ngôn ngữ thông báo lỗi API.",
+    "Larger values rank higher in the model square; same values ordered by ID descending.": "Giá trị càng lớn càng đứng trước trong sảnh mô hình; giá trị bằng nhau thì sắp theo ID giảm dần.",
     "Last 24h usage": "Sử dụng 24h qua",
     "Last 30 days uptime": "Uptime 30 ngày qua",
     "Last active {{time}} · Expires {{expires}}": "Hoạt động gần nhất {{time}} · Hết hạn {{expires}}",
@@ -3527,6 +3530,7 @@
     "Personal settings and profile management.": "Cài đặt cá nhân và quản lý hồ sơ.",
     "Personal use": "Sử dụng cá nhân",
     "Personal use mode": "Chế độ sử dụng cá nhân",
+    "Pick a color": "Pick a color",
     "Pick a date": "Chọn ngày",
     "Pick an application from the list to view its parameters and start generating.": "Chọn một ứng dụng từ danh sách để xem tham số và bắt đầu tạo.",
     "Pick or create both a store and a product before saving.": "Hãy chọn hoặc tạo cả cửa hàng và sản phẩm trước khi lưu.",
@@ -4040,6 +4044,7 @@
     "Reset Stats": "Đặt lại thống kê",
     "Reset subscription quota": "Đặt lại hạn mức gói đăng ký",
     "Reset the user passkey": "Đã đặt lại passkey của người dùng",
+    "Reset to auto": "Reset to auto",
     "Reset to default": "Đặt lại mặc định",
     "Reset to Default": "Đặt lại mặc định",
     "Reset to default configuration": "Đã đặt lại cấu hình mặc định",
@@ -5498,6 +5503,10 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Ranking": "Thứ hạng",
+    "Sort updated successfully": "Đã cập nhật thứ hạng",
+    "Failed to update sort": "Không thể cập nhật thứ hạng",
+    "Double-click to edit ranking": "Nhấp đúp để sửa thứ hạng"
   }
 }

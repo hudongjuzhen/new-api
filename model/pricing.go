@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"sync"
@@ -21,6 +22,7 @@ type Pricing struct {
 	Icon                   string                  `json:"icon,omitempty"`
 	Tags                   string                  `json:"tags,omitempty"`
 	VendorID               int                     `json:"vendor_id,omitempty"`
+	Sort                   int                     `json:"sort"`
 	QuotaType              int                     `json:"quota_type"`
 	ModelRatio             float64                 `json:"model_ratio"`
 	ModelPrice             float64                 `json:"model_price"`
@@ -359,6 +361,8 @@ func updatePricing() {
 	}
 
 	pricingMap = make([]Pricing, 0)
+	sortMap := make(map[string]int, len(metaMap))
+	sortIDMap := make(map[string]int, len(metaMap))
 	for model, groups := range modelGroupsMap {
 		pricing := Pricing{
 			ModelName:              model,
@@ -376,6 +380,9 @@ func updatePricing() {
 			pricing.Icon = meta.Icon
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
+			pricing.Sort = meta.Sort
+			sortMap[model] = meta.Sort
+			sortIDMap[model] = meta.Id
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice {
@@ -412,6 +419,16 @@ func updatePricing() {
 		}
 		pricingMap = append(pricingMap, pricing)
 	}
+
+	// 模型广场排序：sort 越大越靠前（负值往后放，0 为默认位置）；
+	// 相同 sort 按 ID 倒序。无元数据的模型按 sort=0、ID=0 处理。
+	sort.SliceStable(pricingMap, func(i, j int) bool {
+		si, sj := sortMap[pricingMap[i].ModelName], sortMap[pricingMap[j].ModelName]
+		if si != sj {
+			return si > sj
+		}
+		return sortIDMap[pricingMap[i].ModelName] > sortIDMap[pricingMap[j].ModelName]
+	})
 
 	// 防止大更新后数据不通用
 	if len(pricingMap) > 0 {

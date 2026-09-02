@@ -16,14 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ChevronRight, Copy, Play } from 'lucide-react'
+import { ChevronRight, Copy, Play, Users } from 'lucide-react'
 import { memo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { getAvatarColorClass, getGroupDiscountClassName, hexToRgba } from '@/lib/colors'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
+import { useGroupColor } from '@/stores/group-color-store'
 
 import { DEFAULT_TOKEN_UNIT } from '../constants'
 import {
@@ -31,7 +33,7 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { getConfiguredGroupRatio, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
@@ -82,6 +84,31 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     : null
 
   const primaryGroup = groups[0]
+  const groupRatioMap = props.model.group_ratio || {}
+
+  // Convert a group multiplier to a discount label:
+  //  0.5 -> "5折", 0.8 -> "8折", 1 -> "原价", 1.5 -> "原价×1.5"
+  const formatDiscountLabel = (ratio: number): string => {
+    const percent = Math.round(ratio * 100)
+    if (percent === 100) return t('Standard price')
+    if (ratio < 1) {
+      return `${(percent / 10).toFixed(1).replace(/\.0$/, '')}${t('% off')}`
+    }
+    return `${t('Standard price')}×${(percent / 100)
+      .toFixed(2)
+      .replace(/\.?0+$/, '')}`
+  }
+
+  // Show each group's configured multiplier as an explicit discount label:
+  // 0.5 -> "5折" (50% off), 0.8 -> "8折", 1 -> "标准价格", 1.5 -> "标准价格×1.5".
+  // Sorted by ratio so the best discount (lowest %) shows first.
+  const groupRatios = groups
+    .map((group) => ({
+      group,
+      ratio: getConfiguredGroupRatio(groupRatioMap, group),
+      label: formatDiscountLabel(getConfiguredGroupRatio(groupRatioMap, group)),
+    }))
+    .sort((a, b) => a.ratio - b.ratio)
   const bottomTags = [...endpoints.slice(0, 2), ...tags.slice(0, 2)]
   const hiddenCount =
     Math.max(groups.length - 1, 0) +
@@ -261,30 +288,52 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         {props.model.description || t('No description available.')}
       </p>
 
-      {/* Footer: left metadata and right performance summary share row alignment */}
-      <div className='mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-1 sm:mt-4'>
-        <div className='flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1'>
-          {primaryGroup && (
-            <span className='text-muted-foreground text-sm font-medium'>
-              {primaryGroup}
-            </span>
-          )}
+      {/* Footer: billing + tags + performance on one row, groups full-width below */}
+      <div className='mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-1.5 sm:mt-4'>
+        {/* Row 1: billing mode (left) + endpoints/tags & perf summary (right) */}
+        <div className='inline-flex min-w-0 items-center gap-1.5'>
+          <span className='text-foreground/80 text-xs font-bold uppercase tracking-wide'>
+            {t('Billing')}
+          </span>
           <ModelBillingModeBadge model={props.model} />
         </div>
-        <ModelPerfBadge perf={props.perf} className='row-span-2 self-start' />
-
-        <div className='flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 sm:gap-x-3 sm:gap-y-1'>
-          {bottomTags.map((item) => (
-            <span key={item} className='text-muted-foreground/70 text-xs'>
-              {item}
+        <div className='flex min-w-0 items-center gap-2 justify-self-end'>
+          <div className='flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 sm:gap-x-3 sm:gap-y-1'>
+            {bottomTags.map((item) => (
+              <span key={item} className='text-muted-foreground/70 text-xs'>
+                {item}
+              </span>
+            ))}
+            <span className='text-muted-foreground/50 text-xs'>
+              {tokenUnitLabel}
             </span>
-          ))}
-          <span className='text-muted-foreground/50 text-xs'>
-            {tokenUnitLabel}
+            {hiddenCount > 0 && (
+              <span className='text-muted-foreground/40 text-xs'>
+                +{hiddenCount}
+              </span>
+            )}
+          </div>
+          <ModelPerfBadge perf={props.perf} />
+        </div>
+
+        {/* Row 2: groups span the full card width so lines wrap only when full */}
+        <div className='col-span-2 flex min-w-0 w-full flex-wrap items-center gap-x-2 gap-y-1'>
+          <span className='text-foreground/80 inline-flex items-center gap-1 text-xs font-bold uppercase tracking-wide'>
+            <Users className='size-3.5 text-info' />
+            {t('Groups')}
           </span>
-          {hiddenCount > 0 && (
-            <span className='text-muted-foreground/40 text-xs'>
-              +{hiddenCount}
+          {groupRatios.length > 0 ? (
+            groupRatios.map(({ group, ratio, label }) => (
+              <GroupRatioCapsule
+                key={group}
+                group={group}
+                ratio={ratio}
+                label={label}
+              />
+            ))
+          ) : (
+            <span className='text-muted-foreground text-sm font-medium'>
+              {primaryGroup}
             </span>
           )}
         </div>
@@ -292,3 +341,68 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     </div>
   )
 })
+
+/**
+ * A model card group pill with its discount capsule. Uses the admin-configured
+ * group color when present (inline styles — HEX cannot be statically scanned by
+ * Tailwind) and falls back to the stable hash color classes otherwise.
+ */
+function GroupRatioCapsule({
+  group,
+  ratio,
+  label,
+}: {
+  group: string
+  ratio: number
+  label: string
+}) {
+  const groupColor = useGroupColor(group)
+
+  if (!groupColor) {
+    return (
+      <span
+        className={cn(
+          'inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-xs font-semibold whitespace-nowrap',
+          getAvatarColorClass(group)
+        )}
+      >
+        <span>{group}</span>
+        <span
+          className={cn(
+            'rounded-full px-1.5 py-px font-mono tabular-nums',
+            getGroupDiscountClassName(group, ratio)
+          )}
+        >
+          {label}
+        </span>
+      </span>
+    )
+  }
+
+  // Depth/boldness encodes billing state, mirroring GROUP_TONE_TABLE:
+  // discount (< 1) and premium (> 1) are emphasized, normal (= 1) stays faint.
+  const emphasized = ratio !== 1
+  const discountStyle: React.CSSProperties = {
+    backgroundColor: hexToRgba(groupColor, emphasized ? 0.22 : 0.08),
+    fontWeight: emphasized ? 700 : 500,
+  }
+
+  return (
+    <span
+      className='inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-xs font-semibold whitespace-nowrap'
+      style={{
+        color: groupColor,
+        borderColor: hexToRgba(groupColor, 0.4),
+        backgroundColor: hexToRgba(groupColor, 0.12),
+      }}
+    >
+      <span>{group}</span>
+      <span
+        className='rounded-full px-1.5 py-px font-mono text-xs leading-none tabular-nums'
+        style={discountStyle}
+      >
+        {label}
+      </span>
+    </span>
+  )
+}

@@ -948,6 +948,7 @@
     "Collapse All": "全部收起",
     "Collect relay latency and success-rate metrics for the model square.": "收集 Relay 延迟和成功率指标，用于模型广场展示。",
     "Color": "颜色",
+    "Custom color": "Custom color",
     "Color is required": "颜色为必填项",
     "Color preset": "颜色预设",
     "Color:": "颜色：",
@@ -2235,6 +2236,7 @@
     "Group config overrides global limits, shares the same period": "分组配置覆盖全局限制，共享同一周期",
     "Group deleted. Click \"Save Settings\" to apply.": "组已删除。点击 \"保存设置\" 以应用。",
     "Group description": "分组描述",
+    "Group colors": "Group colors",
     "Group details": "分组详情",
     "Group identifier": "分组标识符",
     "Group is required": "组是必需的",
@@ -2545,6 +2547,7 @@
     "Language preference saved": "语言偏好已保存",
     "Language Preferences": "语言偏好",
     "Language preferences sync across your signed-in devices and affect API error messages.": "语言偏好会同步到您登录的所有设备，并影响 API 错误消息语言。",
+    "Larger values rank higher in the model square; same values ordered by ID descending.": "数值越大在模型广场中越靠前；相同时按 ID 倒序排列。",
     "Last 24h usage": "近 24 小时消耗",
     "Last 30 days uptime": "近 30 天可用率",
     "Last active {{time}} · Expires {{expires}}": "最后活跃于 {{time}} · 到期时间 {{expires}}",
@@ -3527,6 +3530,7 @@
     "Personal settings and profile management.": "个人设置和个人资料管理。",
     "Personal use": "个人使用",
     "Personal use mode": "个人使用模式",
+    "Pick a color": "Pick a color",
     "Pick a date": "选择日期",
     "Pick an application from the list to view its parameters and start generating.": "从左侧列表选择一个应用，查看其参数并开始生成。",
     "Pick or create both a store and a product before saving.": "保存前请同时选择或创建店铺和产品。",
@@ -4040,6 +4044,7 @@
     "Reset Stats": "重置统计",
     "Reset subscription quota": "重置订阅额度",
     "Reset the user passkey": "重置了用户的通行密钥",
+    "Reset to auto": "Reset to auto",
     "Reset to default": "重置为默认",
     "Reset to Default": "重置为默认",
     "Reset to default configuration": "已重置为默认配置",
@@ -5498,6 +5503,10 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Ranking": "排序",
+    "Sort updated successfully": "排序更新成功",
+    "Failed to update sort": "更新排序失败",
+    "Double-click to edit ranking": "双击编辑排序"
   }
 }

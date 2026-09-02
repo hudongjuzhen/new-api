@@ -74,29 +74,29 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
   return (
     <div
       className={cn(
-        'hidden w-[132px] grid-cols-[38px_48px_30px] gap-x-2 text-right tabular-nums min-[460px]:grid',
+        'hidden w-[132px] grid-cols-[38px_48px_30px] items-start gap-x-2 text-right tabular-nums min-[460px]:grid',
         props.className
       )}
     >
-      <div title={t('Average latency')} className='min-w-0'>
+      <div title={t('Average latency')} className='min-w-0 overflow-hidden'>
         <div className='text-muted-foreground/55 text-[10px] leading-4'>
           {t('Latency short')}
         </div>
-        <div className='text-muted-foreground/80 font-mono text-xs leading-4 whitespace-nowrap'>
+        <div className='text-muted-foreground/80 truncate font-mono text-xs leading-4 whitespace-nowrap'>
           {formatCompactLatency(avg_latency_ms)}
         </div>
       </div>
-      <div title={t('Throughput')} className='min-w-0'>
+      <div title={t('Throughput')} className='min-w-0 overflow-hidden'>
         <div className='text-muted-foreground/55 truncate text-[10px] leading-4'>
           {t('Throughput short')}
         </div>
-        <div className='text-muted-foreground/80 font-mono text-xs leading-4 whitespace-nowrap'>
+        <div className='text-muted-foreground/80 truncate font-mono text-xs leading-4 whitespace-nowrap'>
           {formatCompactThroughput(avg_tps)}
         </div>
       </div>
       <div
         title={`${t('Success rate')}: ${success_rate.toFixed(1)}%`}
-        className='min-w-0'
+        className='min-w-0 overflow-hidden'
       >
         <div className='text-muted-foreground/55 truncate text-[10px] leading-4'>
           {t('Status short')}

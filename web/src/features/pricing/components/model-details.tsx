@@ -878,8 +878,13 @@ function GroupPricingSection(props: {
   const showRechargePrice = props.showRechargePrice ?? false
 
   const availableGroups = useMemo(
-    () => getAvailableGroups(props.model, props.usableGroup || {}),
-    [props.model, props.usableGroup]
+    () =>
+      getAvailableGroups(
+        props.model,
+        props.usableGroup || {},
+        props.groupRatio
+      ),
+    [props.model, props.usableGroup, props.groupRatio]
   )
 
   const isTokenBased = isTokenBasedModel(props.model)

@@ -183,3 +183,153 @@ export function stringToColor(str: string): SemanticColor {
   const index = sum % TAG_COLORS.length
   return TAG_COLORS[index]
 }
+
+// ----------------------------------------------------------------------------
+// Group color presets
+//
+// Admin-picked HEX colors for pricing groups. The presets mirror the semantic
+// palette above (blue/green/cyan/purple/... /slate) so a picked color blends
+// with the rest of the UI. Explicit colors are rendered via inline styles
+// (Tailwind cannot statically scan runtime HEX values).
+// ----------------------------------------------------------------------------
+
+export const GROUP_COLOR_PRESETS = [
+  '#3B82F6', // blue
+  '#0EA5E9', // light-blue / sky
+  '#06B6D4', // cyan
+  '#10B981', // teal
+  '#22C55E', // green
+  '#84CC16', // lime
+  '#F59E0B', // amber
+  '#F97316', // orange
+  '#EF4444', // red
+  '#EC4899', // pink
+  '#8B5CF6', // violet
+  '#A855F7', // purple
+  '#6366F1', // indigo
+  '#6B7280', // grey
+  '#64748B', // slate
+] as const
+
+/**
+ * Convert a `#RRGGBB` hex color to an `rgba(r, g, b, a)` string. Falls back to
+ * transparent when the input is not a valid 6-digit hex, so callers can safely
+ * tint arbitrary user-provided colors without breaking the layout.
+ */
+export function hexToRgba(hex: string, alpha: number): string {
+  const match = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim())
+  if (!match) return `rgba(0, 0, 0, 0)`
+  const value = Number.parseInt(match[1], 16)
+  const r = (value >> 16) & 0xff
+  const g = (value >> 8) & 0xff
+  const b = value & 0xff
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+// ----------------------------------------------------------------------------
+// Group tone variants
+//
+// Each group tag gets a stable hash color (see avatarColorMap above). The
+// group's discount capsule must match that color family, using depth/boldness
+// only to signal billing state:
+//   - discount (< 1):  stronger fill + bold, highlights the deal
+//   - normal (= 1):    faint fill + muted text, quietly the standard price
+//   - premium (> 1):   deepest fill + bold, highlights the surcharge
+// All class names are hard-coded below (no runtime interpolation) so Tailwind
+// can statically scan and generate them.
+// ----------------------------------------------------------------------------
+
+type GroupToneClasses = {
+  discount: string
+  normal: string
+  premium: string
+}
+
+/** Maps a semantic color name to the shared theme variable used by its group. */
+const semanticToToneVar: Record<SemanticColor, string> = {
+  blue: 'chart-1',
+  indigo: 'chart-1',
+  'light-blue': 'info',
+  green: 'success',
+  'light-green': 'success',
+  lime: 'chart-3',
+  cyan: 'chart-2',
+  teal: 'chart-2',
+  purple: 'chart-4',
+  violet: 'chart-4',
+  pink: 'chart-5',
+  red: 'destructive',
+  orange: 'warning',
+  amber: 'warning',
+  yellow: 'warning',
+  grey: 'grey',
+  slate: 'grey',
+}
+
+const GROUP_TONE_TABLE: Record<string, GroupToneClasses> = {
+  'chart-1': {
+    discount: 'bg-chart-1/25 text-chart-1 font-bold',
+    normal: 'bg-chart-1/5 text-chart-1/60',
+    premium: 'bg-chart-1/30 text-chart-1 font-bold',
+  },
+  'chart-2': {
+    discount: 'bg-chart-2/25 text-chart-2 font-bold',
+    normal: 'bg-chart-2/5 text-chart-2/60',
+    premium: 'bg-chart-2/30 text-chart-2 font-bold',
+  },
+  'chart-3': {
+    discount: 'bg-chart-3/25 text-chart-3 font-bold',
+    normal: 'bg-chart-3/5 text-chart-3/60',
+    premium: 'bg-chart-3/30 text-chart-3 font-bold',
+  },
+  'chart-4': {
+    discount: 'bg-chart-4/25 text-chart-4 font-bold',
+    normal: 'bg-chart-4/5 text-chart-4/60',
+    premium: 'bg-chart-4/30 text-chart-4 font-bold',
+  },
+  'chart-5': {
+    discount: 'bg-chart-5/25 text-chart-5 font-bold',
+    normal: 'bg-chart-5/5 text-chart-5/60',
+    premium: 'bg-chart-5/30 text-chart-5 font-bold',
+  },
+  success: {
+    discount: 'bg-success/25 text-success font-bold',
+    normal: 'bg-success/5 text-success/60',
+    premium: 'bg-success/30 text-success font-bold',
+  },
+  info: {
+    discount: 'bg-info/25 text-info font-bold',
+    normal: 'bg-info/5 text-info/60',
+    premium: 'bg-info/30 text-info font-bold',
+  },
+  warning: {
+    discount: 'bg-warning/25 text-warning font-bold',
+    normal: 'bg-warning/5 text-warning/60',
+    premium: 'bg-warning/30 text-warning font-bold',
+  },
+  destructive: {
+    discount: 'bg-destructive/25 text-destructive font-bold',
+    normal: 'bg-destructive/5 text-destructive/60',
+    premium: 'bg-destructive/30 text-destructive font-bold',
+  },
+  grey: {
+    discount: 'bg-foreground/15 text-foreground font-bold',
+    normal: 'bg-muted/60 text-muted-foreground/70',
+    premium: 'bg-foreground/20 text-foreground font-bold',
+  },
+}
+
+/**
+ * Discount capsule classes for a group, matched to the group's tag color
+ * family. Depth/boldness encodes billing state (see GROUP_TONE_TABLE).
+ */
+export function getGroupDiscountClassName(
+  group: string,
+  ratio: number
+): string {
+  const color = stringToColor(group)
+  const tone = GROUP_TONE_TABLE[semanticToToneVar[color]]
+  if (ratio < 1) return tone.discount
+  if (ratio > 1) return tone.premium
+  return tone.normal
+}

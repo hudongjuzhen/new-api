@@ -43,6 +43,7 @@ import { parseModelTags, formatEndpointsDisplay } from '../lib'
 import type { Model, Vendor } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DescriptionCell } from './description-cell'
+import { SortCell } from './sort-cell'
 
 function getCompactModelIcon(iconKey: string) {
   const baseIconKey = iconKey.split('.')[0]
@@ -134,6 +135,22 @@ export function useModelsColumns(vendors: Vendor[] = []): ColumnDef<Model>[] {
       },
       size: 260,
       minSize: 200,
+    },
+
+    // Sort column — inline editable ranking. Mirrors the model-square sort so
+    // admins can bump priority directly from the list without opening the editor.
+    {
+      id: 'sort',
+      accessorKey: 'sort',
+      header: t('Ranking'),
+      meta: { mobileOrder: 1 },
+      cell: ({ row }) => {
+        const model = row.original
+        return <SortCell id={model.id} sort={model.sort ?? 0} />
+      },
+      size: 96,
+      minSize: 84,
+      enableSorting: false,
     },
 
     // Name Rule column

@@ -149,6 +149,12 @@ export function PricingToolbar(props: PricingToolbarProps) {
   const { t } = useTranslation()
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
   const sortLabels = getSortLabels(t)
+  // Default sort ('' = model-square ranking) renders as a dedicated option so
+  // the user can return to it after picking Name / Price.
+  const activeSortLabel =
+    props.sortBy === ''
+      ? t('Default')
+      : sortLabels[props.sortBy as SortOption] || t('Sort')
 
   const handleTokenUnitChange = useCallback(
     (value: string) => props.onTokenUnitChange(value as TokenUnit),
@@ -232,9 +238,21 @@ export function PricingToolbar(props: PricingToolbarProps) {
               }
             >
               <ArrowUpDown className='size-3.5' />
-              <span>{sortLabels[props.sortBy as SortOption] || t('Sort')}</span>
+              <span>{activeSortLabel}</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align='end' className='w-44'>
+              <DropdownMenuItem
+                onClick={() => props.onSortChange('')}
+                className='gap-2'
+              >
+                <Check
+                  className={cn(
+                    'size-4 shrink-0',
+                    props.sortBy === '' ? 'opacity-100' : 'opacity-0'
+                  )}
+                />
+                {t('Default')}
+              </DropdownMenuItem>
               {Object.entries(sortLabels).map(([value, label]) => (
                 <DropdownMenuItem
                   key={value}

@@ -948,6 +948,7 @@
     "Collapse All": "全部收起",
     "Collect relay latency and success-rate metrics for the model square.": "收集 Relay 延遲和成功率指標，用於模型廣場展示。",
     "Color": "顏色",
+    "Custom color": "Custom color",
     "Color is required": "顏色為必填項",
     "Color preset": "顏色預設",
     "Color:": "顏色：",
@@ -2235,6 +2236,7 @@
     "Group config overrides global limits, shares the same period": "分組設定覆蓋全局限制，共享同一周期",
     "Group deleted. Click \"Save Settings\" to apply.": "組已刪除。點擊「儲存設定」以套用。",
     "Group description": "分組描述",
+    "Group colors": "Group colors",
     "Group details": "分組詳情",
     "Group identifier": "分組標識符",
     "Group is required": "組是必需的",
@@ -2545,6 +2547,7 @@
     "Language preference saved": "語言偏好已儲存",
     "Language Preferences": "語言偏好",
     "Language preferences sync across your signed-in devices and affect API error messages.": "語言偏好會同步到您登入的所有設備，並影響 API 錯誤訊息語言。",
+    "Larger values rank higher in the model square; same values ordered by ID descending.": "數值越大在模型廣場中越靠前；相同時按 ID 倒序排列。",
     "Last 24h usage": "近 24 小時消耗",
     "Last 30 days uptime": "近 30 天可用率",
     "Last active {{time}} · Expires {{expires}}": "最後活動於 {{time}} · 到期時間 {{expires}}",
@@ -3527,6 +3530,7 @@
     "Personal settings and profile management.": "個人設定和個人資料管理。",
     "Personal use": "個人使用",
     "Personal use mode": "個人使用模式",
+    "Pick a color": "Pick a color",
     "Pick a date": "選擇日期",
     "Pick an application from the list to view its parameters and start generating.": "從左側清單選擇一個應用程式，檢視其參數並開始產生。",
     "Pick or create both a store and a product before saving.": "儲存前請同時選擇或建立店鋪和產品。",
@@ -4040,6 +4044,7 @@
     "Reset Stats": "重置統計",
     "Reset subscription quota": "重置訂閱額度",
     "Reset the user passkey": "重設了用戶的通行金鑰",
+    "Reset to auto": "Reset to auto",
     "Reset to default": "重置為預設",
     "Reset to Default": "重置為預設",
     "Reset to default configuration": "已重置為預設設定",
@@ -5498,6 +5503,10 @@
     "Zero retention": "零數據保留",
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "Ranking": "排序",
+    "Sort updated successfully": "排序更新成功",
+    "Failed to update sort": "更新排序失敗",
+    "Double-click to edit ranking": "雙擊編輯排序"
   }
 }

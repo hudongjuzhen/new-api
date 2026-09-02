@@ -195,3 +195,16 @@ export function isModelEnabled(model: Model): boolean {
 export function isModelSyncOfficial(model: Model): boolean {
   return model.sync_official === 1
 }
+
+// ============================================================================
+// Model Ordering
+// ============================================================================
+
+/**
+ * Sort models by the model-square ranking rule: larger `sort` value first,
+ * ties broken by larger `id` first.
+ */
+export function compareModelsByRank(a: Model, b: Model): number {
+  if (a.sort !== b.sort) return b.sort - a.sort
+  return b.id - a.id
+}

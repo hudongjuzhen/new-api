@@ -76,6 +76,7 @@ import {
 } from '@/components/ui/sheet'
 
 import { safeJsonParse } from '../utils/json-parser'
+import { GroupColorPicker } from './group-color-picker'
 
 type GroupRatioVisualEditorProps = {
   groupRatio: string
@@ -85,6 +86,7 @@ type GroupRatioVisualEditorProps = {
   autoGroups: string
   maxTokenAutoGroupsField: ReactNode
   groupSpecialUsableGroup: string
+  groupColor: string
   onChange: (field: string, value: string) => void
 }
 
@@ -95,6 +97,7 @@ type GroupPricingRow = {
   topupRatio: string
   selectable: boolean
   description: string
+  color: string
 }
 
 type RegistryEntry = {
@@ -140,18 +143,33 @@ function parseNestedRatioMap(
   })
 }
 
+function parseColorMap(value: string): Record<string, string> {
+  return safeJsonParse<Record<string, string>>(value, {
+    fallback: {},
+    silent: true,
+  })
+}
+
+function normalizeColor(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toUpperCase() : ''
+}
+
 function buildGroupPricingRows(
   groupRatio: string,
   userUsableGroups: string,
-  topupGroupRatio: string
+  topupGroupRatio: string,
+  groupColor: string
 ): GroupPricingRow[] {
   const ratioMap = parseRatioMap(groupRatio)
   const usableMap = parseUsableMap(userUsableGroups)
   const topupMap = parseRatioMap(topupGroupRatio)
+  const colorMap = parseColorMap(groupColor)
   const names = new Set([
     ...Object.keys(ratioMap),
     ...Object.keys(usableMap),
     ...Object.keys(topupMap),
+    ...Object.keys(colorMap),
   ])
 
   return [...names].map((name) => ({
@@ -161,6 +179,7 @@ function buildGroupPricingRows(
     topupRatio: Object.hasOwn(topupMap, name) ? String(topupMap[name]) : '',
     selectable: Object.hasOwn(usableMap, name),
     description: String(usableMap[name] ?? ''),
+    color: normalizeColor(colorMap[name]),
   }))
 }
 
@@ -168,6 +187,7 @@ function serializeGroupPricingRows(rows: GroupPricingRow[]) {
   const groupRatio: Record<string, number> = {}
   const userUsableGroups: Record<string, string> = {}
   const topupGroupRatio: Record<string, number> = {}
+  const groupColor: Record<string, string> = {}
 
   for (const row of rows) {
     const name = row.name.trim()
@@ -180,12 +200,16 @@ function serializeGroupPricingRows(rows: GroupPricingRow[]) {
     if (topup !== '' && Number.isFinite(Number(topup))) {
       topupGroupRatio[name] = Number(topup)
     }
+    if (row.color) {
+      groupColor[name] = row.color
+    }
   }
 
   return {
     GroupRatio: JSON.stringify(groupRatio, null, 2),
     UserUsableGroups: JSON.stringify(userUsableGroups, null, 2),
     TopupGroupRatio: JSON.stringify(topupGroupRatio, null, 2),
+    GroupColor: JSON.stringify(groupColor, null, 2),
   }
 }
 
@@ -195,20 +219,48 @@ function groupPricingSignature(rows: GroupPricingRow[]): string {
     groupRatio: parseRatioMap(serialized.GroupRatio),
     userUsableGroups: parseUsableMap(serialized.UserUsableGroups),
     topupGroupRatio: parseRatioMap(serialized.TopupGroupRatio),
+    groupColor: parseColorMap(serialized.GroupColor),
   })
 }
 
 function sourceGroupPricingSignature(
   groupRatio: string,
   userUsableGroups: string,
-  topupGroupRatio: string
+  topupGroupRatio: string,
+  groupColor: string
 ): string {
   return JSON.stringify({
     groupRatio: parseRatioMap(groupRatio),
     userUsableGroups: parseUsableMap(userUsableGroups),
     topupGroupRatio: parseRatioMap(topupGroupRatio),
+    groupColor: parseColorMap(groupColor),
   })
 }
+
+/** Test/serialization hook: exposes row building so pure logic is testable. */
+export function buildGroupPricingRowsForTest(
+  groupRatio: string,
+  userUsableGroups: string,
+  topupGroupRatio: string,
+  groupColor: string
+): ReturnType<typeof buildGroupPricingRows> {
+  return buildGroupPricingRows(
+    groupRatio,
+    userUsableGroups,
+    topupGroupRatio,
+    groupColor
+  )
+}
+
+/** Test/serialization hook: exposes row serialization so pure logic is testable. */
+export function serializeGroupPricingRowsForTest(
+  rows: GroupPricingRow[]
+): ReturnType<typeof serializeGroupPricingRows> {
+  return serializeGroupPricingRows(rows)
+}
+
+// eslint-disable-next-line react-refresh/only-export-components
+export type { GroupPricingRow }
 
 function UnknownGroupBadge() {
   const { t } = useTranslation()
@@ -267,6 +319,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   autoGroups,
   maxTokenAutoGroupsField,
   groupSpecialUsableGroup,
+  groupColor,
   onChange,
 }: GroupRatioVisualEditorProps) {
   const { t } = useTranslation()
@@ -338,6 +391,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
         groupRatio={groupRatio}
         userUsableGroups={userUsableGroups}
         topupGroupRatio={topupGroupRatio}
+        groupColor={groupColor}
         onChange={onChange}
         onShowDetail={setDetailGroup}
       />
@@ -430,6 +484,7 @@ type GroupPricingTableProps = {
   groupRatio: string
   userUsableGroups: string
   topupGroupRatio: string
+  groupColor: string
   onChange: (field: string, value: string) => void
   onShowDetail: (name: string) => void
 }
@@ -438,19 +493,21 @@ function GroupPricingTable({
   groupRatio,
   userUsableGroups,
   topupGroupRatio,
+  groupColor,
   onChange,
   onShowDetail,
 }: GroupPricingTableProps) {
   const { t } = useTranslation()
   const [rows, setRows] = useState<GroupPricingRow[]>(() =>
-    buildGroupPricingRows(groupRatio, userUsableGroups, topupGroupRatio)
+    buildGroupPricingRows(groupRatio, userUsableGroups, topupGroupRatio, groupColor)
   )
 
   useEffect(() => {
     const incomingSignature = sourceGroupPricingSignature(
       groupRatio,
       userUsableGroups,
-      topupGroupRatio
+      topupGroupRatio,
+      groupColor
     )
     setRows((currentRows) => {
       if (groupPricingSignature(currentRows) === incomingSignature) {
@@ -459,10 +516,11 @@ function GroupPricingTable({
       return buildGroupPricingRows(
         groupRatio,
         userUsableGroups,
-        topupGroupRatio
+        topupGroupRatio,
+        groupColor
       )
     })
-  }, [groupRatio, userUsableGroups, topupGroupRatio])
+  }, [groupRatio, userUsableGroups, topupGroupRatio, groupColor])
 
   const emitRows = useCallback(
     (nextRows: GroupPricingRow[]) => {
@@ -471,6 +529,7 @@ function GroupPricingTable({
       onChange('GroupRatio', serialized.GroupRatio)
       onChange('UserUsableGroups', serialized.UserUsableGroups)
       onChange('TopupGroupRatio', serialized.TopupGroupRatio)
+      onChange('GroupColor', serialized.GroupColor)
     },
     [onChange]
   )
@@ -505,6 +564,7 @@ function GroupPricingTable({
         topupRatio: '',
         selectable: true,
         description: '',
+        color: '',
       },
     ])
   }, [emitRows, rows])
@@ -635,6 +695,20 @@ function GroupPricingTable({
                       -
                     </span>
                   ),
+              },
+              {
+                id: 'color',
+                header: t('Color'),
+                className: 'w-20',
+                cell: (row) => (
+                  <GroupColorPicker
+                    group={row.name.trim()}
+                    value={row.color}
+                    onChange={(color) =>
+                      updateRow(row._id, 'color', color)
+                    }
+                  />
+                ),
               },
               {
                 id: 'actions',
