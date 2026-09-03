@@ -53,6 +53,9 @@ func TestHookSubmitAppRun(c *gin.Context) { submitAppRun(c) }
 // TestHookGetAppTaskResult exposes the user-side task query handler for tests.
 func TestHookGetAppTaskResult(c *gin.Context) { getAppTaskResult(c) }
 
+// TestHookUploadAppMedia exposes the user-side upload proxy handler for tests.
+func TestHookUploadAppMedia(c *gin.Context) { uploadAppMedia(c) }
+
 // TestHookValidateRunPayload runs the in-memory validation path used by
 // submitAppRun without hitting the relay pipeline. Exported for table-driven
 // unit tests covering the typed schema validator.

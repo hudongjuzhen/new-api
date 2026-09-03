@@ -26,7 +26,23 @@ const (
 	// PathUploadBinary is the file-upload endpoint (multipart/form-data).
 	// Upstream docs promise both fileName (workflow-style) and download_url
 	// (model-style) in the wrapped response.
+	//
+	// The RH docs call this endpoint in two subtly different shapes depending
+	// on the consuming workflow:
+	//
+	//   - Workflow style (what apiCallDemo returns after uploading a file):
+	//     multipart field name "file", response { data: { fileName: "…" }} —
+	//     the fileName is what nodeInfoList[].fieldValue expects.
+	//   - Model API style: multipart field name "text", response
+	//     { data: { download_url: "…" }} — the URL is what the node expects.
+	//
+	// Both flavours accept any binary content; RH does not restrict by mime.
+	// The gateway handler forwards workflow-style uploads (field "file") and
+	// surfaces fileName, which is the value running workflows reference.
 	PathUploadBinary = openAPIV2Prefix + "/media/upload/binary"
+
+	// UploadFieldWorkflow is the multipart field name workflows expect.
+	UploadFieldWorkflow = "file"
 )
 
 // Standard status strings RH uses in response.status.

@@ -321,6 +321,31 @@ export async function runApp(
   return res.data.data
 }
 
+/**
+ * Upload a media file (image/audio/video) to the RunningHub site the given
+ * channel serves. Returns the upstream fileName (e.g. `openapi/xxxx.png`)
+ * which is what image/audio/video node inputs expect as their fieldValue.
+ */
+export async function uploadAppMedia(
+  channelId: number,
+  file: File
+): Promise<{ fileName: string; url: string }> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const res = await api.post<{
+    success: boolean
+    message?: string
+    data?: { fileName: string; url: string }
+  }>(`/api/zsy/rh/upload/${channelId}`, formData, {
+    skipBusinessError: true,
+  })
+  const data = res.data
+  if (!data.success || !data.data?.fileName) {
+    throw new Error(data.message || 'Upload failed')
+  }
+  return data.data
+}
+
 /** Fetch a single task record (TaskDto) by public task_id. */
 export async function getTaskResult(taskId: string): Promise<TaskDto> {
   const res = await api.get<{ success: boolean; data: TaskDto }>(

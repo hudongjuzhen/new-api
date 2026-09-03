@@ -23,8 +23,10 @@ import {
   LoaderCircle,
   CheckCircle2,
   XCircle,
+  UploadCloud,
+  Trash2,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -48,6 +50,7 @@ import {
   getPublicAppDetail,
   runApp,
   listMyRhTasks,
+  uploadAppMedia,
   type AppView,
   type SchemaParam,
   type TaskDto,
@@ -57,17 +60,221 @@ function fieldKey(p: { nodeId: string; fieldName: string }): string {
   return `${p.nodeId || ''}.${p.fieldName || ''}`
 }
 
+/** MIME accept attribute for each media parameter type. */
+const MEDIA_ACCEPT: Record<string, string> = {
+  image: 'image/*',
+  audio: 'audio/*',
+  video: 'video/*',
+}
+
+/** Whether the URL input currently holds a value the user typed/pasted. */
+function isRemoteUrl(v: string): boolean {
+  return typeof v === 'string' && v.trim().startsWith('http')
+}
+
+/**
+ * Upload-capable renderer for image/audio/video parameters. Users can either
+ * pick a local file (forwarded to the RunningHub site the app's channel
+ * serves) or paste a public URL. The uploaded fileName is what the upstream
+ * nodeInfoList fieldValue expects; the fetchable media URL (RH-hosted after an
+ * upload, or the pasted link) is shown as a live preview below.
+ */
+function MediaParamField({
+  param,
+  value,
+  onChange,
+  errors,
+  channelId,
+  onUploadingChange,
+}: {
+  param: SchemaParam
+  value: string
+  onChange: (v: string) => void
+  errors: Record<string, string>
+  channelId: number
+  onUploadingChange: (uploading: boolean) => void
+}) {
+  const { t } = useTranslation()
+  const type = (param.type || 'file').toLowerCase()
+  const err = errors[fieldKey(param)]
+  const [uploading, setUploading] = useState(false)
+  const [uploaded, setUploaded] = useState<{
+    fileName: string
+    url: string
+  } | null>(null)
+
+  // Reset local upload preview whenever the field identity changes (e.g. the
+  // selected app changed and this component instance got reused).
+  useEffect(() => {
+    setUploaded(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [param])
+
+  const handleFile = async (file: File) => {
+    if (!file) return
+    if (channelId <= 0) {
+      toast.error(t('This app has no bound channel yet'))
+      return
+    }
+    setUploading(true)
+    onUploadingChange(true)
+    try {
+      const result = await uploadAppMedia(channelId, file)
+      setUploaded(result)
+      onChange(result.fileName)
+    } catch (e: unknown) {
+      toast.error((e as Error)?.message || t('Upload failed'))
+    } finally {
+      setUploading(false)
+      onUploadingChange(false)
+    }
+  }
+
+  const removeUpload = () => {
+    setUploaded(null)
+    onChange('')
+  }
+
+  const hasFile = uploaded !== null
+  // Prefer the uploaded preview URL; fall back to a pasted public URL so the
+  // media preview stays live as soon as the user types a link.
+  let mediaUrl = ''
+  if (hasFile) {
+    mediaUrl = uploaded.url
+  } else if (isRemoteUrl(value)) {
+    mediaUrl = value.trim()
+  }
+
+  let mediaPreview: ReactNode | null = null
+  if (mediaUrl) {
+    if (type === 'image') {
+      mediaPreview = (
+        <img
+          src={mediaUrl}
+          alt={hasFile ? uploaded.fileName : ''}
+          className='h-24 w-full rounded-md border object-cover'
+        />
+      )
+    } else if (type === 'audio') {
+      mediaPreview = (
+        <audio controls src={mediaUrl} className='h-9 w-full' />
+      )
+    } else if (type === 'video') {
+      mediaPreview = (
+        <video
+          controls
+          src={mediaUrl}
+          className='max-h-44 w-full rounded-md border'
+        />
+      )
+    }
+  }
+
+  return (
+    <div className='space-y-1.5'>
+      <Label className='text-xs'>
+        {param.label || param.fieldName}
+        {param.required ? ' *' : ''}
+      </Label>
+
+      {mediaPreview && (
+        <div className='space-y-1.5'>
+          {mediaPreview}
+          {hasFile && (
+            <div className='flex items-center justify-between gap-2'>
+              <a
+                href={uploaded.url}
+                target='_blank'
+                rel='noreferrer'
+                className='text-muted-foreground hover:text-foreground truncate font-mono text-[11px] underline-offset-2 hover:underline'
+              >
+                {uploaded.fileName}
+              </a>
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon-sm'
+                title={t('Remove')}
+                onClick={removeUpload}
+              >
+                <Trash2 className='size-3.5' />
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!hasFile ? (
+        <label
+          className={`border-border/60 bg-background hover:border-primary/50 hover:bg-primary/5 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-3 py-4 text-center transition-colors ${
+            uploading || channelId <= 0 ? 'pointer-events-none opacity-60' : ''
+          }`}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            const file = e.dataTransfer.files?.[0]
+            if (file) void handleFile(file)
+          }}
+        >
+          {uploading ? (
+            <Loader2 className='text-muted-foreground size-4 animate-spin' />
+          ) : (
+            <UploadCloud className='text-muted-foreground size-4' />
+          )}
+          <span className='text-muted-foreground text-xs'>
+            {t('Click to upload')}
+          </span>
+          <input
+            accept={MEDIA_ACCEPT[type]}
+            className='hidden'
+            type='file'
+            disabled={uploading || channelId <= 0}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void handleFile(file)
+              e.target.value = ''
+            }}
+          />
+        </label>
+      ) : null}
+
+      {channelId <= 0 && (
+        <p className='text-muted-foreground text-xs'>
+          {t('This app has no bound channel yet')}
+        </p>
+      )}
+
+      {!hasFile && (
+        <div className='flex items-center gap-2'>
+          <span className='text-muted-foreground text-xs'>{t('Or')}</span>
+          <Input
+            value={value ?? ''}
+            placeholder={t('Paste a public URL')}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        </div>
+      )}
+
+      {err && <p className='text-destructive text-xs'>{err}</p>}
+    </div>
+  )
+}
+
 /** Render a single schema parameter as the matching control. */
 function ParamField({
   param,
   value,
   onChange,
   errors,
+  channelId,
+  onUploadingChange,
 }: {
   param: SchemaParam
   value: string
   onChange: (v: string) => void
   errors: Record<string, string>
+  channelId: number
+  onUploadingChange: (uploading: boolean) => void
 }) {
   const { t } = useTranslation()
   const type = (param.type || 'text').toLowerCase()
@@ -115,8 +322,11 @@ function ParamField({
               <SelectValue placeholder={param.placeholder || t('Select...')} />
             </SelectTrigger>
             <SelectContent>
-              {(param.options ?? []).map((o, i) => (
-                <SelectItem key={`${o.value}-${i}`} value={o.value || o.label}>
+              {(param.options ?? []).map((o) => (
+                <SelectItem
+                  key={`${o.value}-${o.label}`}
+                  value={o.value || o.label}
+                >
                   {o.label || o.value}
                 </SelectItem>
               ))}
@@ -128,10 +338,13 @@ function ParamField({
       case 'video':
       case 'file':
         return (
-          <Input
+          <MediaParamField
+            param={param}
             value={value ?? ''}
-            placeholder={t('Paste a public URL')}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={onChange}
+            errors={errors}
+            channelId={channelId}
+            onUploadingChange={onUploadingChange}
           />
         )
       case 'boolean':
@@ -174,31 +387,39 @@ function ParamField({
 /** Extract result media URLs from a task's RH data payload. */
 function extractResultUrls(task: TaskDto): string[] {
   const raw = task.data
-  const list = Array.isArray(raw)
-    ? raw
-    : Array.isArray((raw as any)?.results)
-      ? (raw as any).results
-      : []
-  const out: string[] = []
-  for (const it of list) {
-    if (typeof it?.url === 'string') out.push(it.url)
-    else if (typeof it?.value === 'string' && /^https?:\/\//.test(it.value))
-      out.push(it.value)
+  let results: Array<{ url?: unknown; value?: unknown }>
+  if (Array.isArray(raw)) {
+    results = raw
+  } else {
+    const nested = (raw as { results?: unknown } | undefined)?.results
+    results = Array.isArray(nested) ? (nested as Array<{ url?: unknown; value?: unknown }>) : []
   }
-  if (out.length === 0 && task.result_url) out.push(task.result_url)
+  const out: string[] = []
+  for (const it of results) {
+    if (typeof it?.url === 'string') {
+      out.push(it.url)
+    } else if (typeof it?.value === 'string' && /^https?:\/\//.test(it.value)) {
+      out.push(it.value)
+    }
+  }
+  if (out.length === 0 && task.result_url) {
+    out.push(task.result_url)
+  }
   return [...new Set(out)]
 }
 
 function statusBadge(status: string, t: (k: string) => string) {
   const s = (status || '').toLowerCase()
-  if (s === 'success' || s === 'done' || s === 'succeeded')
+  if (s === 'success' || s === 'done' || s === 'succeeded') {
     return (
       <Badge className='bg-emerald-500/15 text-emerald-500'>
         {t('Success')}
       </Badge>
     )
-  if (s === 'failure' || s === 'failed')
+  }
+  if (s === 'failure' || s === 'failed') {
     return <Badge variant='destructive'>{t('Failed')}</Badge>
+  }
   return (
     <Badge variant='outline'>
       <LoaderCircle className='mr-1 size-3 animate-spin' />
@@ -219,34 +440,45 @@ function AppRunForm({
   const schema = app.paramSchema ?? []
   const [values, setValues] = useState<Record<string, string>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [uploadingCount, setUploadingCount] = useState(0)
 
   // Reset the form whenever the selected app changes, pre-filling defaults.
   useEffect(() => {
     const init: Record<string, string> = {}
     for (const p of schema) {
       const k = fieldKey(p)
-      if (p.defaultValue !== undefined && p.defaultValue !== null)
+      if (p.defaultValue !== undefined && p.defaultValue !== null) {
         init[k] = p.defaultValue
-      else if (p.type === 'boolean') init[k] = 'false'
+      } else if (p.type === 'boolean') {
+        init[k] = 'false'
+      }
     }
     setValues(init)
     setErrors({})
+    setUploadingCount(0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.id])
 
   const submit = useMutation({
     mutationFn: async () => {
+      if (uploadingCount > 0) {
+        throw new Error(t('Please wait for the upload to finish'))
+      }
       const cleaned: Record<string, string> = {}
       const errs: Record<string, string> = {}
       for (const p of schema) {
         const k = fieldKey(p)
         const raw = (values[k] ?? '').trim()
-        if (p.required && raw === '') errs[k] = t('This field is required')
-        else cleaned[k] = raw
+        if (p.required && raw === '') {
+          errs[k] = t('This field is required')
+        } else {
+          cleaned[k] = raw
+        }
       }
       setErrors(errs)
-      if (Object.keys(errs).length > 0)
+      if (Object.keys(errs).length > 0) {
         throw new Error(t('Please fix the highlighted fields'))
+      }
       await runApp(app.id, cleaned, 'default')
     },
     onError: (e) => {
@@ -259,8 +491,15 @@ function AppRunForm({
     },
   })
 
-  const label = submit.isPending ? t('Submitting...') : t('Run')
-  const Icon = submit.isPending ? Loader2 : Play
+  let label = t('Run')
+  let Icon = Play
+  if (submit.isPending) {
+    label = t('Submitting...')
+    Icon = Loader2
+  } else if (uploadingCount > 0) {
+    label = t('Uploading...')
+    Icon = Loader2
+  }
 
   return (
     <div className='flex h-full flex-col space-y-4'>
@@ -276,6 +515,10 @@ function AppRunForm({
               param={p}
               value={values[fieldKey(p)] ?? ''}
               errors={errors}
+              channelId={app.channelId}
+              onUploadingChange={(uploading) =>
+                setUploadingCount((prev) => Math.max(0, prev + (uploading ? 1 : -1)))
+              }
               onChange={(v) =>
                 setValues((prev) => ({ ...prev, [fieldKey(p)]: v }))
               }
@@ -285,7 +528,7 @@ function AppRunForm({
       </div>
       <Button
         className='w-full'
-        disabled={submit.isPending}
+        disabled={submit.isPending || uploadingCount > 0}
         onClick={() => submit.mutate()}
       >
         <Icon className='size-4' />
@@ -362,7 +605,7 @@ function GenerationRecords({ appId }: { appId: number }) {
         ) : (
           <div className='space-y-2'>
             {items.map((task) => (
-              <div className={`rounded-md border p-2`}>
+              <div key={task.task_id} className='rounded-md border p-2'>
                 <div className='flex items-center justify-between gap-2'>
                   <span className='text-muted-foreground truncate font-mono text-[11px]'>
                     {task.task_id}
@@ -370,8 +613,8 @@ function GenerationRecords({ appId }: { appId: number }) {
                   {statusBadge(task.status, t)}
                 </div>
                 <div className='mt-2 flex gap-1.5 overflow-x-auto'>
-                  {extractResultUrls(task).map((url, i) => (
-                    <a key={i} href={url} target='_blank' rel='noreferrer'>
+                  {extractResultUrls(task).map((url) => (
+                    <a key={url} href={url} target='_blank' rel='noreferrer'>
                       <img
                         src={url}
                         alt=''

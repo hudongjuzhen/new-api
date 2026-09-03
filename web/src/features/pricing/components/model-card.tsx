@@ -109,11 +109,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       label: formatDiscountLabel(getConfiguredGroupRatio(groupRatioMap, group)),
     }))
     .sort((a, b) => a.ratio - b.ratio)
-  const bottomTags = [...endpoints.slice(0, 2), ...tags.slice(0, 2)]
+  const bottomTags = [...endpoints.slice(0, 1), ...tags.slice(0, 1)]
   const hiddenCount =
     Math.max(groups.length - 1, 0) +
-    Math.max(endpoints.length - 2, 0) +
-    Math.max(tags.length - 2, 0)
+    Math.max(endpoints.length - 1, 0) +
+    Math.max(tags.length - 1, 0)
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation()

@@ -2,8 +2,10 @@ package runninghub
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -83,6 +85,25 @@ type QueryResp = SubmitResp
 // QueryBody is the camelCase body for POST /openapi/v2/query.
 type QueryBody struct {
 	TaskID string `json:"taskId"`
+}
+
+// UploadBinaryResp is the response shape of POST /openapi/v2/media/upload/binary.
+// The wrapped data carries fileName (workflow style) and download_url (the
+// actual fetchable URL on RH's media host); the model-API style may omit
+// fileName. `code` is a JSON number on success (0) but is also reported as a
+// string in some error shapes, so it is typed as json.Number (allowed as a
+// pure type reference; see AGENTS.md) to accept both.
+type UploadBinaryResp struct {
+	Code         json.Number `json:"code"`
+	Msg          string      `json:"msg"`
+	Message      string      `json:"message"`
+	ErrorCode    string      `json:"errorCode"`
+	ErrorMessage string      `json:"errorMessage"`
+	Data         struct {
+		Type        string `json:"type"`
+		FileName    string `json:"fileName"`
+		DownloadURL string `json:"download_url"`
+	} `json:"data"`
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +279,83 @@ func (c *Client) doJSON(method, path string, reqBody any, respOut any) error {
 		}
 	}
 	return nil
+}
+
+// UploadBinary posts one file to RH's media upload endpoint as multipart
+// form-data and returns the processed fileName. The form field name is
+// governed by the consuming workflow (see UploadFieldWorkflow/UploadFieldModel
+// in consts.go); for all current RH endpoint styles `data.fileName` is what
+// flow inputs — UDP nodes, txt2img, and ComfyUI arguments — reference, so it
+// is the value that must be sent into nodeInfoList[].fieldValue.
+func (c *Client) UploadBinary(field, filename string, r io.Reader) (*UploadBinaryResp, error) {
+	if r == nil {
+		return nil, fmt.Errorf("runninghub: empty upload content")
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile(field, filename)
+	if err != nil {
+		return nil, fmt.Errorf("runninghub upload create form file: %w", err)
+	}
+	if _, err := io.Copy(fw, r); err != nil {
+		return nil, fmt.Errorf("runninghub upload copy content: %w", err)
+	}
+	if err := mw.Close(); err != nil {
+		return nil, fmt.Errorf("runninghub upload close form: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+PathUploadBinary, &body)
+	if err != nil {
+		return nil, fmt.Errorf("runninghub upload new request: %w", err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.Key)
+	if ua := c.UserAgent; ua != "" {
+		req.Header.Set("User-Agent", ua)
+	}
+	hc := c.HTTPClient
+	if hc == nil {
+		hc = http.DefaultClient
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("runninghub upload transport: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("runninghub upload read response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var e struct {
+			Code    string `json:"code"`
+			Msg     string `json:"msg"`
+			Message string `json:"message"`
+		}
+		_ = common.Unmarshal(raw, &e)
+		msg := e.Msg
+		if msg == "" {
+			msg = e.Message
+		}
+		if msg == "" {
+			msg = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncateString(string(raw), 240))
+		}
+		return nil, fmt.Errorf("runninghub upload http %d: %s", resp.StatusCode, msg)
+	}
+	out := &UploadBinaryResp{}
+	if len(raw) > 0 {
+		if err := common.Unmarshal(raw, out); err != nil {
+			return nil, fmt.Errorf("runninghub upload decode: %w (body=%s)", err, truncateString(string(raw), 240))
+		}
+	}
+	if out.ErrorCode != "" && out.ErrorMessage != "" {
+		return nil, fmt.Errorf("runninghub upload failed: code=%s msg=%s", out.ErrorCode, out.ErrorMessage)
+	}
+	if out.Data.FileName == "" && out.Data.DownloadURL == "" {
+		return nil, fmt.Errorf("runninghub upload: empty response (raw=%s)", truncateString(string(raw), 240))
+	}
+	return out, nil
 }
 
 func truncateString(s string, n int) string {
