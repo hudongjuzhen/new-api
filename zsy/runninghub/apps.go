@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/zsy/runninghub/rhparser"
@@ -59,6 +60,7 @@ type AppView struct {
 	FixedQuotaPerCall  int64                  `json:"fixedQuotaPerCall"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	ChannelID          int64                  `json:"channelId"`
+	Site               string                 `json:"site"`
 }
 
 // AppCreateDTO / AppUpdateDTO are the write shapes accepted by the admin
@@ -79,6 +81,7 @@ type AppCreateDTO struct {
 	FixedQuotaPerCall  int64                  `json:"fixedQuotaPerCall"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	ChannelID          int64                  `json:"channelId"`
+	Site               string                 `json:"site"`
 }
 
 type AppUpdateDTO = AppCreateDTO // field set identical; alias keeps symmetry
@@ -406,6 +409,7 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 	target.PerCallBilling = dto.PerCallBilling
 	target.FixedQuotaPerCall = dto.FixedQuotaPerCall
 	target.ChannelID = dto.ChannelID
+	target.Site = normalizeSite(strings.TrimSpace(dto.Site))
 	if dto.ModelBaseRateRatio == 0 {
 		// Treat explicit zero same as unset: back to 1.0 default so billing
 		// multipliers are never a flat-rate-zero.
@@ -490,7 +494,48 @@ func appToView(a *App) (*AppView, error) {
 		FixedQuotaPerCall:  a.FixedQuotaPerCall,
 		ModelBaseRateRatio: a.ModelBaseRateRatio,
 		ChannelID:          a.ChannelID,
+		Site:               a.Site,
 	}, nil
+}
+
+// normalizeSite canonicalises the app's site selector to a stable value. It
+// accepts the user-facing labels used on the /channels page (RunningHub,
+// RunningHub Intl) as well as the internal tokens (cn/intl) and maps them to
+// the values this plugin understands. Anything unrecognised collapses to "".
+func normalizeSite(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "cn", "runninghub", "runninghub.cn", "runninghub_cn":
+		return "cn"
+	case "intl", "zh-tw", "runninghub.intl", "runninghubintl", "runninghub.ai", "runninghub-ai", "runninghub_intl", "国际":
+		return "intl"
+	case "liblib", "liblibai":
+		return "intl"
+	}
+	return ""
+}
+
+// siteToChannelType maps an app's site value to the channel type used on the
+// /channels page. The 0 value means the legacy model->channel selection stays
+// untouched.
+func siteToChannelType(site string) int {
+	switch site {
+	case "cn":
+		return constant.ChannelTypeRunningHub
+	case "intl":
+		return constant.ChannelTypeRunningHubIntl
+	}
+	return 0
+}
+
+// siteName returns the display name used in the apps table for a site value.
+func siteName(site string) string {
+	switch site {
+	case "cn":
+		return "RunningHub"
+	case "intl":
+		return "RunningHub Intl"
+	}
+	return ""
 }
 
 // validatePinChannel ensures an optionally-pinned channel exists and is a

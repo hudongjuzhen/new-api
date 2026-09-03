@@ -45,7 +45,10 @@ const newKeys = {
     'Request example parsed': 'Request example parsed',
     'Request example parsed, but some fields were skipped':
       'Request example parsed, but some fields were skipped',
+    'Site': 'Site',
     'Use example': 'Use example',
+    'Which site handles this app':
+      'Which site handles this app',
   },
   zh: {
     'Failed to parse the request example': '解析请求示例失败',
@@ -60,7 +63,9 @@ const newKeys = {
     'Request example parsed': '请求示例解析成功',
     'Request example parsed, but some fields were skipped':
       '请求示例已解析，但部分字段被跳过',
+    'Site': '站点',
     'Use example': '填入示例',
+    'Which site handles this app': '该应用由哪个站点处理',
   },
   'zh-TW': {
     'Failed to parse the request example': '解析請求示例失敗',
@@ -75,7 +80,9 @@ const newKeys = {
     'Request example parsed': '請求示例解析成功',
     'Request example parsed, but some fields were skipped':
       '請求示例已解析，但部分欄位被略過',
+    'Site': '站點',
     'Use example': '填入範例',
+    'Which site handles this app': '此應用由哪個站點處理',
   },
   fr: {
     'Failed to parse the request example': "Échec de l'analyse de l'exemple de requête",
@@ -90,7 +97,10 @@ const newKeys = {
     'Request example parsed': "Exemple de requête analysé",
     'Request example parsed, but some fields were skipped':
       'Exemple de requête analysé, mais certains champs ont été ignorés',
+    'Site': 'Site',
     'Use example': "Utiliser l'exemple",
+    'Which site handles this app':
+      "Site qui gère cette application",
   },
   ja: {
     'Failed to parse the request example': 'リクエスト例の解析に失敗しました',
@@ -105,7 +115,9 @@ const newKeys = {
     'Request example parsed': 'リクエスト例を解析しました',
     'Request example parsed, but some fields were skipped':
       'リクエスト例を解析しましたが、一部のフィールドはスキップされました',
+    'Site': 'サイト',
     'Use example': '例を使用',
+    'Which site handles this app': 'このアプリを処理するサイト',
   },
   ru: {
     'Failed to parse the request example': 'Не удалось разобрать пример запроса',
@@ -120,7 +132,9 @@ const newKeys = {
     'Request example parsed': 'Пример запроса разобран',
     'Request example parsed, but some fields were skipped':
       'Пример запроса разобран, но некоторые поля пропущены',
+    'Site': 'Сайт',
     'Use example': 'Использовать пример',
+    'Which site handles this app': 'Сайт, обрабатывающий это приложение',
   },
   vi: {
     'Failed to parse the request example': 'Không thể phân tích ví dụ yêu cầu',
@@ -135,7 +149,9 @@ const newKeys = {
     'Request example parsed': 'Đã phân tích ví dụ yêu cầu',
     'Request example parsed, but some fields were skipped':
       'Đã phân tích ví dụ yêu cầu, nhưng một số trường bị bỏ qua',
+    'Site': 'Trang web',
     'Use example': 'Dùng ví dụ',
+    'Which site handles this app': 'Trang web xử lý ứng dụng này',
   },
 }
 

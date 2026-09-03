@@ -76,6 +76,11 @@ type App struct {
 	// selection (GetChannelForRelay) as before.
 	ChannelID int64 `gorm:"index"                                     json:"channelId"`
 
+	// Site scopes the submit path to a RunningHub site (cn / intl). Empty
+	// keeps the legacy model->channel selection. It pairs with the channel
+	// types in the /channels page (RunningHub 61 / RunningHub 国际站 62).
+	Site string `gorm:"type:varchar(16);index"                      json:"site"`
+
 	// ParamSchema stores the JSON text of the user-facing parameter list. We
 	// intentionally persist as TEXT (not JSON column) for cross-DB compatibility
 	// with legacy MySQL < 5.7.8 / PostgreSQL < 9.6; see AGENTS.md.

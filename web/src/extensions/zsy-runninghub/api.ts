@@ -48,6 +48,7 @@ export interface AppView {
   fixedQuotaPerCall: number
   modelBaseRateRatio: number
   channelId: number
+  site: string
 }
 
 export interface AppListResult {
@@ -73,6 +74,7 @@ export interface AppCreateDTO {
   fixedQuotaPerCall: number
   modelBaseRateRatio: number
   channelId: number
+  site: string
 }
 
 export interface RhChannel {

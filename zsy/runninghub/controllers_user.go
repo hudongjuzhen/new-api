@@ -248,9 +248,10 @@ func submitAppRun(c *gin.Context) {
 		Retry:       common.GetPointer(0),
 	}
 
-	// If the app pins a specific RunningHub channel, route every attempt
-	// through it (still via RelayTaskSubmit so billing/audit stay intact);
-	// otherwise fall back to the host's model->channel selection below.
+	// The site selector routes every attempt through a channel of the matching
+	// type (RunningHub 61 / RunningHub Intl 62 / Liblib 63), exactly like a pin
+	// but without naming a specific channel. It overrides the legacy
+	// model->channel selection below; a pinned channel still takes priority.
 	var pinnedChannel *model.Channel
 	if app.ChannelID > 0 {
 		pc, pcErr := model.GetChannelById(int(app.ChannelID), false)
@@ -259,6 +260,11 @@ func submitAppRun(c *gin.Context) {
 			return
 		}
 		pinnedChannel = pc
+	}
+	wantSiteType := siteToChannelType(app.Site)
+	if app.Site != "" && wantSiteType == 0 {
+		common.ApiErrorMsg(c, "非法的站点选择: "+app.Site)
+		return
 	}
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
@@ -269,6 +275,17 @@ func submitAppRun(c *gin.Context) {
 				taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_pinned_channel_failed", http.StatusInternalServerError)
 				break
 			}
+		} else if wantSiteType != 0 {
+			// Site-scoped selection: pick a random enabled channel of the site's
+			// type that advertises this app as a model. Kept local (no
+			// request-path filtering) so the existing relay plumbing stays the
+			// selection source of truth.
+			siteChannel, selectErr := selectChannelBySiteType(c, app, wantSiteType, retryParam)
+			if selectErr != nil {
+				taskErr = service.TaskErrorWrapperLocal(selectErr.Err, "get_channel_failed", http.StatusBadRequest)
+				break
+			}
+			channel = siteChannel
 		} else if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
 			channel = lockedCh
 			if retryParam.GetRetry() > 0 {
@@ -619,6 +636,49 @@ func replaceRequestBody(c *gin.Context, body []byte) error {
 	// bytes as the new body (helper stashes once on first call).
 	c.Set("body_storage", body)
 	return nil
+}
+
+// selectChannelBySiteType returns an enabled channel of the given channel type
+// that advertises the app's UpstreamID as a model for the request's group,
+// using the host's weighted random pick so site-scoped apps participate in the
+// normal group/weight distribution instead of bypassing it.
+func selectChannelBySiteType(c *gin.Context, app *AppView, channelType int, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+	if retryParam != nil {
+		ch, err := model.GetRandomSatisfiedChannel(retryParam.TokenGroup, app.UpstreamID, 0, retryParam.RequestPath)
+		if err == nil && ch != nil && ch.Type == channelType {
+			if setupErr := middleware.SetupContextForSelectedChannel(c, ch, app.UpstreamID); setupErr != nil {
+				return nil, setupErr
+			}
+			return ch, nil
+		}
+	}
+	// Fallback: any enabled channel of the site's type that advertises the app
+	// as a model, so site-scoped apps keep working even when the caller's group
+	// is not wired to a channel of that type. Exact model match is checked in Go
+	// (the models column is a comma-separated list; a LIKE could over-match).
+	var cands []model.Channel
+	if err := db().
+		Where("type = ? AND status = ?", channelType, common.ChannelStatusEnabled).
+		Order("weight desc").
+		Limit(100).
+		Find(&cands).Error; err == nil {
+		for i := range cands {
+			ch := &cands[i]
+			for _, m := range ch.GetModels() {
+				if m == app.UpstreamID {
+					if setupErr := middleware.SetupContextForSelectedChannel(c, ch, app.UpstreamID); setupErr != nil {
+						return nil, setupErr
+					}
+					return ch, nil
+				}
+			}
+		}
+	}
+	return nil, types.NewError(
+		fmt.Errorf("站点 %s 下没有可用渠道 (type=%d, model=%s)", siteName(app.Site), channelType, app.UpstreamID),
+		types.ErrorCodeGetChannelFailed,
+		types.ErrOptionWithSkipRetry(),
+	)
 }
 
 func quotaFromResult(r *relay.TaskSubmitResult) int {

@@ -101,6 +101,7 @@ const emptyDTO: AppCreateDTO = {
   fixedQuotaPerCall: 0,
   modelBaseRateRatio: 1.0,
   channelId: 0,
+  site: '',
 }
 
 const CURL_EXAMPLE = `curl --location --request POST 'https://www.runninghub.cn/openapi/v2/run/ai-app/2051268528824700930' \\
@@ -240,6 +241,27 @@ function AppForm({
               onChange={(e) => set('name', e.target.value)}
               required
             />
+          </div>
+          <div className='space-y-1.5'>
+            <Label htmlFor='rh-app-site'>{t('Site')}</Label>
+            <Select
+              value={dto.site}
+              onValueChange={(v) => {
+                if (v != null) set('site', v)
+              }}
+            >
+              <SelectTrigger id='rh-app-site'>
+                <SelectValue placeholder={t('Auto')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value=''>{t('Auto')}</SelectItem>
+                <SelectItem value='cn'>{t('RunningHub')}</SelectItem>
+                <SelectItem value='intl'>{t('RunningHub Intl')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className='text-xs text-muted-foreground'>
+              {t('Which site handles this app')}
+            </p>
           </div>
           <div className='grid grid-cols-2 gap-4'>
             <div className='space-y-1.5'>
@@ -785,6 +807,7 @@ export function RhAppsPage() {
                     fixedQuotaPerCall: editing.fixedQuotaPerCall,
                     modelBaseRateRatio: editing.modelBaseRateRatio,
                     channelId: editing.channelId ?? 0,
+                    site: editing.site ?? '',
                   }
                 : emptyDTO
             }
