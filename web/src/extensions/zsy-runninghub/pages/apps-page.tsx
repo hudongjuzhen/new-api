@@ -8,29 +8,22 @@ parameter-template editor on the right (with a one-click fetch that calls
 RunningHub's apiCallDemo through the selected channel).
 */
 
-import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, RefreshCw, Wand2, Loader2, X, KeyRound } from 'lucide-react'
-import { toast } from 'sonner'
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  RefreshCw,
+  Wand2,
+  Loader2,
+  X,
+  KeyRound,
+} from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { SectionPageLayout } from '@/components/layout'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,9 +34,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -51,6 +51,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 
 import {
   listApps,
@@ -58,13 +67,12 @@ import {
   updateApp,
   deleteApp,
   syncAppsFromChannel,
-  fetchAppTemplate,
+  parseCurlRequest,
   getRhChannels,
   getAppKeypool,
   refreshAppKeypool,
   type AppView,
   type AppCreateDTO,
-  type RhChannel,
   type SchemaParam,
   type AppKeypoolResult,
 } from '../api'
@@ -82,7 +90,7 @@ const TYPE_CHOICES = [
 const emptyDTO: AppCreateDTO = {
   name: '',
   slug: '',
-  kind: 'aic_app',
+  kind: 'ai_app',
   upstreamId: '',
   description: '',
   coverUrl: '',
@@ -94,6 +102,34 @@ const emptyDTO: AppCreateDTO = {
   modelBaseRateRatio: 1.0,
   channelId: 0,
 }
+
+const CURL_EXAMPLE = `curl --location --request POST 'https://www.runninghub.cn/openapi/v2/run/ai-app/2051268528824700930' \\
+--header "Content-Type: application/json" \\
+--header "Authorization: Bearer \${RUNNINGHUB_API_KEY}" \\
+--data-raw '{
+  "nodeInfoList": [
+    {
+      "nodeId": "642",
+      "fieldName": "image",
+      "fieldValue": "4cec23f9fef05cb20ca8b045fdf6daee81016b3d69e3dcc0b99430e1610fa3d3.jpg",
+      "description": "image"
+    },
+    {
+      "nodeId": "641",
+      "fieldName": "text",
+      "fieldValue": "8K高清，人像精修，去除脸上的痘印，专业人像摄影，肤色干净通透，均匀细腻无瑕疵，奶油肌质感，专业影棚精修，柔和影棚光，高清细节，增强头发质感纹理，整个人看起来非常有气色，清晰可见的发丝，超高清的服装，整体色调与原图保持一致",
+      "description": "提示词"
+    },
+    {
+      "nodeId": "755",
+      "fieldName": "value",
+      "fieldValue": "2048",
+      "description": "尺寸"
+    }
+  ],
+  "instanceType": "default",
+  "usePersonalQueue": "false"
+}'`
 
 function parseOptions(raw: string): SchemaParam['options'] {
   try {
@@ -111,17 +147,16 @@ function parseOptions(raw: string): SchemaParam['options'] {
 
 function AppForm({
   initial,
-  channels,
   onSubmit,
   onCancel,
 }: {
   initial: AppCreateDTO
-  channels: RhChannel[]
   onSubmit: (dto: AppCreateDTO) => void
   onCancel: () => void
 }) {
   const { t } = useTranslation()
   const [dto, setDto] = useState<AppCreateDTO>(initial)
+  const [curlInput, setCurlInput] = useState('')
   const [fetching, setFetching] = useState(false)
 
   const set = <K extends keyof AppCreateDTO>(k: K, v: AppCreateDTO[K]) =>
@@ -151,31 +186,31 @@ function AppForm({
     }))
 
   const handleFetch = async () => {
-    if (!dto.channelId) {
-      toast.error(t('Please select a channel first'))
-      return
-    }
-    if (!dto.upstreamId.trim()) {
-      toast.error(t('Upstream ID is required'))
+    if (!curlInput.trim()) {
+      toast.error(t('Please paste a RunningHub request example first'))
       return
     }
     setFetching(true)
     try {
-      const data = await fetchAppTemplate(dto.channelId, dto.upstreamId.trim())
-      if (!data) {
-        toast.error(t('Failed to fetch template'))
+      const res = await parseCurlRequest(curlInput.trim())
+      const data = res.data
+      if (!res.success || !data) {
+        toast.error(res.message || t('Failed to parse the request example'))
         return
       }
+      const schema = data.schema ?? []
+      const errors = data.schemaErrors ?? []
       setDto((prev) => ({
         ...prev,
-        paramSchema: data.schema ?? [],
-        upstreamId: prev.upstreamId.trim() || data.upstreamId,
-        name: prev.name.trim() || data.appName,
+        kind: data.kind || prev.kind,
+        upstreamId: data.upstreamId || prev.upstreamId,
+        name: prev.name.trim() || data.appName || '',
+        paramSchema: schema,
       }))
-      if (data.schemaErrors?.length) {
-        toast.warning(t('Template fetched with some fields skipped'))
+      if (errors.length > 0) {
+        toast.warning(t('Request example parsed, but some fields were skipped'))
       } else {
-        toast.success(t('Template fetched'))
+        toast.success(t('Request example parsed'))
       }
     } catch (e) {
       toast.error(String((e as Error)?.message ?? e))
@@ -192,7 +227,7 @@ function AppForm({
       }}
       className='space-y-4'
     >
-      <div className='grid grid-cols-1 lg:grid-cols-2 gap-6'>
+      <div className='grid grid-cols-1 gap-6 lg:grid-cols-2'>
         {/* ---------- LEFT: basic info ---------- */}
         <div className='space-y-4'>
           <div className='space-y-1.5'>
@@ -217,8 +252,9 @@ function AppForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value='aic_app'>{t('AIC App')}</SelectItem>
+                  <SelectItem value='ai_app'>{t('AIC App')}</SelectItem>
                   <SelectItem value='workflow'>{t('Workflow')}</SelectItem>
+                  <SelectItem value='model'>{t('Model')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -231,28 +267,6 @@ function AppForm({
                 required
               />
             </div>
-          </div>
-          <div className='space-y-1.5'>
-            <Label>{t('RunningHub Channel')}</Label>
-            <Select
-              value={dto.channelId ? String(dto.channelId) : '0'}
-              onValueChange={(v) => set('channelId', Number(v))}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder={t('No channel')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='0'>{t('No channel')}</SelectItem>
-                {channels.map((ch) => (
-                  <SelectItem key={ch.id} value={String(ch.id)}>
-                    {ch.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className='text-xs text-muted-foreground'>
-              {t('Channel used for one-click fetch and optional task pinning')}
-            </p>
           </div>
           <div className='grid grid-cols-2 gap-4'>
             <div className='space-y-1.5'>
@@ -323,14 +337,31 @@ function AppForm({
           </div>
         </div>
 
-        {/* ---------- RIGHT: parameter template ---------- */}
+        {/* ---------- RIGHT: request example + parameter template ---------- */}
         <div className='space-y-3 rounded-md border p-3'>
-          <div className='flex items-center justify-between'>
-            <div className='text-sm font-medium'>{t('Parameter Template')}</div>
+          <div className='space-y-1.5'>
+            <Label htmlFor='rh-app-curl'>{t('Request Example')}</Label>
+            <textarea
+              id='rh-app-curl'
+              className='text-muted-foreground field-sizing-content max-h-72 min-h-40 w-full rounded-md border bg-transparent px-2 py-1 font-mono text-xs'
+              placeholder={t('Paste a RunningHub curl request example…')}
+              value={curlInput}
+              onChange={(e) => setCurlInput(e.target.value)}
+            />
+          </div>
+          <div className='flex items-center justify-between gap-2'>
             <Button
               type='button'
               size='sm'
-              variant='outline'
+              variant='ghost'
+              title={t('Fill with an example')}
+              onClick={() => setCurlInput(CURL_EXAMPLE)}
+            >
+              {t('Use example')}
+            </Button>
+            <Button
+              type='button'
+              size='sm'
               onClick={handleFetch}
               disabled={fetching}
             >
@@ -342,10 +373,13 @@ function AppForm({
               {t('Fetch Template')}
             </Button>
           </div>
+          <div className='flex items-center justify-between'>
+            <div className='text-sm font-medium'>{t('Parameter Template')}</div>
+          </div>
           {dto.paramSchema.length === 0 ? (
-            <p className='text-sm text-muted-foreground'>
+            <p className='text-muted-foreground text-sm'>
               {t(
-                'No parameters yet. Click "Fetch Template" to import from the app, or add manually.'
+                'No parameters yet. Paste a request example above and click "Fetch Template", or add manually.'
               )}
             </p>
           ) : (
@@ -391,16 +425,18 @@ function AppForm({
                 </div>
                 {p.type === 'select' && (
                   <textarea
-                    className='min-h-16 w-full rounded-md border bg-transparent px-2 py-1 text-xs font-mono'
-                    placeholder={t('Options as JSON, e.g. [{"label":"1:1","value":"1:1"}]')}
+                    className='min-h-16 w-full rounded-md border bg-transparent px-2 py-1 font-mono text-xs'
+                    placeholder={t(
+                      'Options as JSON, e.g. [{"label":"1:1","value":"1:1"}]'
+                    )}
                     value={JSON.stringify(p.options ?? [])}
                     onChange={(e) =>
                       setParam(i, { options: parseOptions(e.target.value) })
                     }
                   />
                 )}
-                <div className='flex justify-between items-center'>
-                  <span className='text-xs text-muted-foreground'>
+                <div className='flex items-center justify-between'>
+                  <span className='text-muted-foreground text-xs'>
                     {p.nodeId ? `nodeId=${p.nodeId}` : ''}
                   </span>
                   <Button
@@ -453,7 +489,7 @@ function KeypoolContent({
   return (
     <div className='space-y-4'>
       <div className='flex items-center justify-between'>
-        <div className='text-sm text-muted-foreground'>
+        <div className='text-muted-foreground text-sm'>
           {data
             ? data.channelId
               ? `${data.channelName || `#${data.channelId}`} · ${data.enabled}/${data.total} ${t('keys enabled')}`
@@ -476,9 +512,9 @@ function KeypoolContent({
         </Button>
       </div>
       {loading ? (
-        <p className='text-sm text-muted-foreground'>{t('Loading...')}</p>
+        <p className='text-muted-foreground text-sm'>{t('Loading...')}</p>
       ) : !data || data.keys.length === 0 ? (
-        <p className='text-sm text-muted-foreground'>
+        <p className='text-muted-foreground text-sm'>
           {t('No keys in this app keypool yet')}
         </p>
       ) : (
@@ -625,7 +661,9 @@ export function RhAppsPage() {
   return (
     <>
       <SectionPageLayout fixedContent>
-        <SectionPageLayout.Title>{t('RunningHub Apps')}</SectionPageLayout.Title>
+        <SectionPageLayout.Title>
+          {t('RunningHub Apps')}
+        </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
           <Button
             variant='outline'
@@ -678,7 +716,8 @@ export function RhAppsPage() {
                     </TableCell>
                     <TableCell className='text-xs'>
                       {app.channelId
-                        ? channelNameById[app.channelId] ?? `#${app.channelId}`
+                        ? (channelNameById[app.channelId] ??
+                          `#${app.channelId}`)
                         : '—'}
                     </TableCell>
                     <TableCell>
@@ -721,14 +760,13 @@ export function RhAppsPage() {
       </SectionPageLayout>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className='w-[80vw] max-w-[80vw] max-h-[85vh] overflow-y-auto sm:max-w-[80vw]'>
+        <DialogContent className='max-h-[85vh] w-[80vw] max-w-[80vw] overflow-y-auto sm:max-w-[80vw]'>
           <DialogHeader>
             <DialogTitle>
               {editing ? t('Edit App') : t('Create App')}
             </DialogTitle>
           </DialogHeader>
           <AppForm
-            channels={channels ?? []}
             initial={
               editing
                 ? {

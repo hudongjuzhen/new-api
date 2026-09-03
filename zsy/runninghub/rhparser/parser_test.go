@@ -130,6 +130,49 @@ func TestParseCurl(t *testing.T) {
 	}
 }
 
+// CurlAppName uses the availability of an absolute public site hostname to
+// build a human-readable fallback app name for curl imports.
+func TestCurlAppName(t *testing.T) {
+	cases := []struct {
+		give string
+		want string
+	}{
+		{
+			give: "curl --location 'https://www.runninghub.cn/openapi/v2/run/ai-app/2051268528824700930' " +
+				`-H 'Authorization: Bearer x' ` +
+				`--data '{"nodeInfoList":[{"nodeId":"642","fieldName":"image","fieldValue":"a.jpg"}]}'`,
+			want: "RunningHub App (runninghub.cn) — 2051268528824700930",
+		},
+		{
+			give: "curl --location 'https://www.runninghub.ai/openapi/v2/run/workflow/wf_9F1fAbCd' " +
+				`-H 'Authorization: Bearer x' -d '{"nodeInfoList":[{"nodeId":"prompt","fieldName":"text","fieldValue":"x"}]}'`,
+			want: "RunningHub App (runninghub.ai) — wf_9F1fAbCd",
+		},
+		{
+			// Private / self-hosted host: no suffix, still includes the id.
+			give: "curl --location 'https://rh.example.com/openapi/v2/run/ai-app/42' " +
+				`-H 'Authorization: Bearer x' -d '{}'`,
+			want: "RunningHub App — 42",
+		},
+		{
+			// Model APIs keep the full relative path as the upstream id, which
+			// is a better app-name hint than any single node id.
+			give: "curl 'https://www.runninghub.cn/openapi/v2/rhart-audio/text-to-audio/speech-2.8-turbo' " +
+				`-H 'Authorization: Bearer x' -d '{"text":"hello"}'`,
+			want: "RunningHub App (runninghub.cn) — rhart-audio/text-to-audio/speech-2.8-turbo",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.give, func(t *testing.T) {
+			t.Parallel()
+			got, err := rhparser.ParseCurl(tc.give)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, rhparser.CurlAppName(&got))
+		})
+	}
+}
+
 // Verify ParseCurl round trips RawBody for a body with integer values (JSON
 // number preservation is required for the admin UI's "preview original body"
 // button).

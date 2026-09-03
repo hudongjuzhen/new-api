@@ -11,8 +11,8 @@ find-missing-keys) covers them like any other UI string.
 
 import { Boxes, Sparkles } from 'lucide-react'
 
-import { ROLE } from '@/lib/roles'
 import { EXT_MENU_GROUPS } from '@/extensions/menus'
+import { ROLE } from '@/lib/roles'
 
 // Register sidebar menu group. "RH App Center" is available to every
 // authenticated user; "RH Apps" (management) is admin-only.

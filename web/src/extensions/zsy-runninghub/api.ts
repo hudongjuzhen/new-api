@@ -87,6 +87,23 @@ export interface FetchTemplateResult {
   schemaErrors?: { field: string; message: string }[]
 }
 
+/** Parser output of a pasted RunningHub curl request example. */
+export interface ParseCurlResult {
+  kind: string
+  upstreamId: string
+  baseUrl?: string
+  appName?: string
+  nodeInfoList?: Array<{
+    nodeId: string
+    fieldName: string
+    field: string
+    fieldValue: string
+    description?: string
+  }>
+  schema: SchemaParam[]
+  schemaErrors?: { field: string; message: string }[]
+}
+
 export interface KeyPoolEntry {
   id: number
   key: string
@@ -177,6 +194,23 @@ export async function fetchAppTemplate(channelId: number, upstreamId: string) {
   return res.data.data
 }
 
+/**
+ * Parse a pasted RunningHub curl request example and draft the app fields
+ * (kind, upstream id, app name) plus the parameter schema. Reuses the admin
+ * curl-parser endpoint so admins do not have to copy node ids by hand.
+ *
+ * Business errors (success:false) are surfaced by the caller instead of the
+ * global interceptor so the message can be i18n'd in the form.
+ */
+export async function parseCurlRequest(curl: string) {
+  const res = await api.post<{
+    success: boolean
+    data?: ParseCurlResult
+    message?: string
+  }>('/dashboard/zsy/rh/apps/parse-curl', { curl }, { skipBusinessError: true })
+  return res.data
+}
+
 // ---------------------------------------------------------------------------
 // App keypool API
 // ---------------------------------------------------------------------------
@@ -205,7 +239,9 @@ export async function getRhChannels(): Promise<RhChannel[]> {
   const res = await api.get<{
     success: boolean
     data?: { items?: RhChannel[] }
-  }>('/api/channel', { params: { type: [61, 62, 63].join(','), page: 1, pageSize: 100 } })
+  }>('/api/channel', {
+    params: { type: [61, 62, 63].join(','), page: 1, pageSize: 100 },
+  })
   return res.data.data?.items ?? []
 }
 

@@ -218,6 +218,63 @@ func extractNodeInfo(body []byte) ([]NodeInfo, error) {
 	return out, nil
 }
 
+// curlBasePublicHostname returns the public site hostname of the curl URL,
+// or "" when the URL is not one of the public RunningHub endpoints, so callers
+// can derive a human-readable app name.
+func curlBasePublicHostname(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	switch {
+	case host == "www.runninghub.cn" || strings.HasSuffix(host, ".runninghub.cn"):
+		return "runninghub.cn"
+	case host == "www.runninghub.ai" || strings.HasSuffix(host, ".runninghub.ai"):
+		return "runninghub.ai"
+	case host == "www.runninghub.com" || strings.HasSuffix(host, ".runninghub.com"):
+		return "runninghub.com"
+	}
+	return ""
+}
+
+// CurlAppName derives a human-readable app name from a parsed curl,
+// e.g. "RunningHub App (runninghub.cn) — 642". hostOf is the site hostname
+// extractor, injectable so tests can pin down the formatting.
+func CurlAppName(p *ParsedCurl, hostOf ...func(*url.URL) string) string {
+	if p == nil {
+		return ""
+	}
+	site := ""
+	if u, err := url.Parse(p.BaseURL); err == nil {
+		extract := curlBasePublicHostname
+		if len(hostOf) > 0 && hostOf[0] != nil {
+			extract = hostOf[0]
+		}
+		site = extract(u)
+	}
+	var id string
+	if p.UpstreamID != "" {
+		id = p.UpstreamID
+	} else if len(p.NodeInfoList) > 0 {
+		// No top-level id (e.g. a namespace-less path): use the first labelled
+		// node id as the best identifier we have.
+		for _, n := range p.NodeInfoList {
+			if n.NodeID != "" {
+				id = n.NodeID
+				break
+			}
+		}
+	}
+	name := "RunningHub App"
+	if site != "" {
+		name += " (" + site + ")"
+	}
+	if id != "" {
+		name += " — " + id
+	}
+	return name
+}
+
 // isIgnoredCurlTopLevelKey drops structural fields present in the upstream
 // body that are not end-user-editable parameters. Keeping them would produce
 // misleading form fields in the admin UI.
