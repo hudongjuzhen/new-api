@@ -107,13 +107,13 @@ func buildSchemaFromDemoNodes(nodes []DemoNode) ([]rhparser.SchemaParam, []rhpar
 
 	plain := make([]rhparser.NodeInfo, 0, len(nodes))
 	for _, n := range nodes {
-		if opts, ok := parseSelectOptions(n.FieldData); ok {
+		if opts, def, ok := rhparser.SelectOptionsFromFieldData(n.FieldData); ok {
 			schema = append(schema, rhparser.SchemaParam{
 				NodeID:    n.NodeID,
 				FieldName: n.FieldName,
 				Label:     labelForDemoNode(&n),
 				Type:      "select",
-				Default:   n.FieldValue,
+				Default:   def,
 				Required:  true,
 				Options:   opts,
 			})
@@ -123,6 +123,7 @@ func buildSchemaFromDemoNodes(nodes []DemoNode) ([]rhparser.SchemaParam, []rhpar
 			NodeID:        n.NodeID,
 			FieldName:     n.FieldName,
 			FieldValue:    n.FieldValue,
+			FieldData:     n.FieldData,
 			Description:   n.Description,
 			DescriptionEn: n.DescriptionEn,
 		})
@@ -133,43 +134,6 @@ func buildSchemaFromDemoNodes(nodes []DemoNode) ([]rhparser.SchemaParam, []rhpar
 		warnings = append(warnings, summary.Errors...)
 	}
 	return schema, warnings
-}
-
-// parseSelectOptions parses a RunningHub fieldData JSON array into select
-// options. A non-enumerated (or unparseable) fieldData returns ok=false so the
-// caller falls back to the text/image/... heuristics.
-func parseSelectOptions(fieldData string) ([]rhparser.SchemaParamOption, bool) {
-	ft := strings.TrimSpace(fieldData)
-	if ft == "" || ft == "[]" || !strings.HasPrefix(ft, "[") {
-		return nil, false
-	}
-	var raw []struct {
-		Name        string `json:"name"`
-		Index       string `json:"index"`
-		Description string `json:"description"`
-	}
-	if err := common.Unmarshal([]byte(ft), &raw); err != nil || len(raw) == 0 {
-		return nil, false
-	}
-	opts := make([]rhparser.SchemaParamOption, 0, len(raw))
-	for _, r := range raw {
-		value := r.Index
-		if value == "" {
-			value = r.Name
-		}
-		if value == "" {
-			continue
-		}
-		label := r.Name
-		if label == "" {
-			label = r.Description
-		}
-		if label == "" {
-			label = value
-		}
-		opts = append(opts, rhparser.SchemaParamOption{Label: label, Value: value})
-	}
-	return opts, len(opts) > 0
 }
 
 // labelForDemoNode returns the best human-readable label for a demo node.

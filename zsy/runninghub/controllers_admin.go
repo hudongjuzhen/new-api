@@ -227,7 +227,7 @@ func parseCurlEndpoint(c *gin.Context) {
 		Kind:         parsed.Kind,
 		UpstreamID:   parsed.UpstreamID,
 		BaseURL:      parsed.BaseURL,
-		AppName:      rhparser.CurlAppName(&parsed),
+		Slug:         rhparser.CurlSlug(&parsed),
 		NodeInfoList: parsed.NodeInfoList,
 		Schema:       summary.Params,
 		Errors:       summary.Errors,

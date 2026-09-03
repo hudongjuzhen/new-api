@@ -130,45 +130,48 @@ func TestParseCurl(t *testing.T) {
 	}
 }
 
-// CurlAppName uses the availability of an absolute public site hostname to
-// build a human-readable fallback app name for curl imports.
-func TestCurlAppName(t *testing.T) {
+// CurlSlug keeps the upstream id as a compact, unique identifier for the app's
+// slug field, falling back to the first node id when the URL carries none.
+func TestCurlSlug(t *testing.T) {
 	cases := []struct {
-		give string
+		name string
+		curl string
 		want string
 	}{
 		{
-			give: "curl --location 'https://www.runninghub.cn/openapi/v2/run/ai-app/2051268528824700930' " +
-				`-H 'Authorization: Bearer x' ` +
-				`--data '{"nodeInfoList":[{"nodeId":"642","fieldName":"image","fieldValue":"a.jpg"}]}'`,
-			want: "RunningHub App (runninghub.cn) — 2051268528824700930",
+			name: "numeric app id becomes the slug",
+			curl: "curl --location 'https://www.runninghub.cn/openapi/v2/run/ai-app/2027211316242423809' " +
+				`-H 'Authorization: Bearer x' -d '{"nodeInfoList":[{"nodeId":"16","fieldName":"prompt","fieldValue":"x"}]}'`,
+			want: "2027211316242423809",
 		},
 		{
-			give: "curl --location 'https://www.runninghub.ai/openapi/v2/run/workflow/wf_9F1fAbCd' " +
-				`-H 'Authorization: Bearer x' -d '{"nodeInfoList":[{"nodeId":"prompt","fieldName":"text","fieldValue":"x"}]}'`,
-			want: "RunningHub App (runninghub.ai) — wf_9F1fAbCd",
+			name: "workflow id with empty nodes keeps its prefix",
+			curl: "curl --location 'https://www.runninghub.ai/openapi/v2/run/workflow/wf_9F1fAbCd' " +
+				`-H 'Authorization: Bearer x' -d '{"nodeInfoList":[]}'`,
+			want: "wf_9f1fabcd",
 		},
 		{
-			// Private / self-hosted host: no suffix, still includes the id.
-			give: "curl --location 'https://rh.example.com/openapi/v2/run/ai-app/42' " +
-				`-H 'Authorization: Bearer x' -d '{}'`,
-			want: "RunningHub App — 42",
+			name: "node list fallback used only when URL has no id (model path keeps id)",
+			curl: "curl 'https://www.runninghub.cn/openapi/v2/rhart-audio/text-to-audio/speech-2.8-turbo' " +
+				`-H 'Authorization: Bearer x' -d '{"nodeInfoList":[]}'`,
+			want: "rhart-audio-text-to-audio-speech-2-8-turbo",
 		},
 		{
-			// Model APIs keep the full relative path as the upstream id, which
-			// is a better app-name hint than any single node id.
-			give: "curl 'https://www.runninghub.cn/openapi/v2/rhart-audio/text-to-audio/speech-2.8-turbo' " +
-				`-H 'Authorization: Bearer x' -d '{"text":"hello"}'`,
-			want: "RunningHub App (runninghub.cn) — rhart-audio/text-to-audio/speech-2.8-turbo",
+			// A node id is never used as the slug when the URL already carries
+			// the upstream id (the app id is the stable unique key).
+			name: "node id does not override the URL upstream id",
+			curl: "curl 'https://www.runninghub.cn/openapi/v2/run/ai-app/42' " +
+				`-H 'Authorization: Bearer x' -d '{"nodeInfoList":[{"nodeId":"16","fieldName":"prompt","fieldValue":"x"}]}'`,
+			want: "42",
 		},
 	}
 	for _, tc := range cases {
 		tc := tc
-		t.Run(tc.give, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := rhparser.ParseCurl(tc.give)
+			got, err := rhparser.ParseCurl(tc.curl)
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, rhparser.CurlAppName(&got))
+			assert.Equal(t, tc.want, rhparser.CurlSlug(&got))
 		})
 	}
 }

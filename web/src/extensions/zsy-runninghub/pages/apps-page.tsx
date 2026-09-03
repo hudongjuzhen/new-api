@@ -204,7 +204,9 @@ function AppForm({
         ...prev,
         kind: data.kind || prev.kind,
         upstreamId: data.upstreamId || prev.upstreamId,
-        name: prev.name.trim() || data.appName || '',
+        // The upstream id goes into the slug (标识) so names stay human-chosen
+        // and unique; a curl cannot know the human-readable app name.
+        slug: prev.slug.trim() || data.slug || '',
         paramSchema: schema,
       }))
       if (errors.length > 0) {

@@ -88,7 +88,7 @@ type ParseCurlResponse struct {
 	Kind         string                     `json:"kind"`
 	UpstreamID   string                     `json:"upstreamId"`
 	BaseURL      string                     `json:"baseUrl,omitempty"`
-	AppName      string                     `json:"appName,omitempty"`
+	Slug         string                     `json:"slug,omitempty"`
 	NodeInfoList []rhparser.NodeInfo        `json:"nodeInfoList"`
 	Schema       []rhparser.SchemaParam     `json:"schema"`
 	Errors       []rhparser.ErrSchemaReport `json:"schemaErrors,omitempty"`

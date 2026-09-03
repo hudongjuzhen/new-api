@@ -19,12 +19,14 @@ import (
 // NodeInfo is the shared shape produced by the curl parser and consumed by the
 // upstream request builder. FieldValue is kept as string per §3.4: explicit
 // zeroes and numeric precision strings (e.g. "1.0000000000000002") pass
-// through untouched.
+// through untouched. FieldData carries the upstream's enum/metadata blob for
+// fields that render as select in the admin UI.
 type NodeInfo struct {
 	NodeID         string `json:"nodeId,omitempty"`
 	FieldName      string `json:"fieldName,omitempty"`
 	Field          string `json:"field,omitempty"`
 	FieldValue     string `json:"fieldValue,omitempty"`
+	FieldData      string `json:"fieldData,omitempty"`
 	Description    string `json:"description,omitempty"`
 	DescriptionEn  string `json:"descriptionEn,omitempty"`
 }
@@ -59,9 +61,9 @@ var (
 	// reCurlMethod captures -X POST / -X GET. Defaults to POST when absent.
 	reCurlMethod = regexp.MustCompile(`(?:^|\s)-X\s+([A-Z]+)`)
 
-	// reCurlDataArg captures --data/-d <data>. Matches '...' , "..." , or
-	// @file-syntax.
-	reCurlDataArg = regexp.MustCompile(`(?:^|\s)(?:--data\b|-d\b)\s+(?:'([^']*)'|"([^"]*)"|(\S+))`)
+	// reCurlDataArg captures --data/-d/--data-raw/--data-urlencode <data>.
+	// Matches '...' , "..." , or bareword syntax.
+	reCurlDataArg = regexp.MustCompile(`(?:^|\s)(?:--data-raw\b|--data-urlencode\b|--data\b|-d\b)\s+(?:'([^']*)'|"([^"]*)"|(\S+))`)
 
 	// reAICAppId extracts the id from /run/ai-app/<id>
 	reAICAppId = regexp.MustCompile(`/run/ai-app/([A-Za-z0-9_-]+)`)
@@ -192,6 +194,7 @@ func extractNodeInfo(body []byte) ([]NodeInfo, error) {
 				FieldName:     asString(entry["fieldName"]),
 				Field:         asString(entry["field"]),
 				FieldValue:    asString(entry["fieldValue"]),
+				FieldData:     asString(entry["fieldData"]),
 				Description:   asString(entry["description"]),
 				DescriptionEn: asString(entry["descriptionEn"]),
 			}
@@ -218,61 +221,131 @@ func extractNodeInfo(body []byte) ([]NodeInfo, error) {
 	return out, nil
 }
 
-// curlBasePublicHostname returns the public site hostname of the curl URL,
-// or "" when the URL is not one of the public RunningHub endpoints, so callers
-// can derive a human-readable app name.
-func curlBasePublicHostname(u *url.URL) string {
-	if u == nil {
-		return ""
+// SelectOptionsFromFieldData parses a RunningHub fieldData blob into a select
+// option list plus an optional default value. Three shapes are accepted:
+//
+//  1. List + default object: [["1k","2k","4k"],{"default":"1k"}]
+//  2. Plain string list:     ["1:1","16:9","9:16"]
+//  3. Demo / enum objects:   [{"name":"1k","index":"1k",...}, ...]
+//
+// ok=false when the blob is not a usable enumeration so callers can fall back
+// to the text/image/... heuristics.
+func SelectOptionsFromFieldData(fieldData string) (opts []SchemaParamOption, def string, ok bool) {
+	ft := strings.TrimSpace(fieldData)
+	if ft == "" || !strings.HasPrefix(ft, "[") {
+		return nil, "", false
 	}
-	host := strings.ToLower(u.Hostname())
-	switch {
-	case host == "www.runninghub.cn" || strings.HasSuffix(host, ".runninghub.cn"):
-		return "runninghub.cn"
-	case host == "www.runninghub.ai" || strings.HasSuffix(host, ".runninghub.ai"):
-		return "runninghub.ai"
-	case host == "www.runninghub.com" || strings.HasSuffix(host, ".runninghub.com"):
-		return "runninghub.com"
+	var raw any
+	if err := json.Unmarshal([]byte(ft), &raw); err != nil {
+		return nil, "", false
 	}
-	return ""
+	list, ok := raw.([]any)
+	if !ok || len(list) == 0 {
+		return nil, "", false
+	}
+	// Case 1: [["a","b"],{"default":"a"}]
+	if names, isNested := list[0].([]any); isNested {
+		for _, item := range names {
+			s, err := asStringPreserveNumbers(item)
+			if err != nil || s == "" {
+				continue
+			}
+			opts = append(opts, SchemaParamOption{Label: s, Value: s})
+		}
+		if len(list) > 1 {
+			if m, ok3 := list[1].(map[string]any); ok3 {
+				def, _ = asStringPreserveNumbers(m["default"])
+			}
+		}
+		if len(opts) == 0 {
+			return nil, "", false
+		}
+		return opts, def, true
+	}
+	// Case 2: plain string list.
+	if _, isString := list[0].(string); isString {
+		for _, item := range list {
+			s, err := asStringPreserveNumbers(item)
+			if err != nil || s == "" {
+				continue
+			}
+			opts = append(opts, SchemaParamOption{Label: s, Value: s})
+		}
+		if len(opts) == 0 {
+			return nil, "", false
+		}
+		return opts, "", true
+	}
+	// Case 3: demo / enum objects.
+	for _, item := range list {
+		m, ok2 := item.(map[string]any)
+		if !ok2 {
+			continue
+		}
+		value := asString(m["index"])
+		if value == "" {
+			value = asString(m["name"])
+		}
+		if value == "" {
+			continue
+		}
+		label := asString(m["name"])
+		if label == "" {
+			label = asString(m["description"])
+		}
+		if label == "" {
+			label = value
+		}
+		opts = append(opts, SchemaParamOption{Label: label, Value: value})
+	}
+	if len(opts) == 0 {
+		return nil, "", false
+	}
+	return opts, "", true
 }
 
-// CurlAppName derives a human-readable app name from a parsed curl,
-// e.g. "RunningHub App (runninghub.cn) — 642". hostOf is the site hostname
-// extractor, injectable so tests can pin down the formatting.
-func CurlAppName(p *ParsedCurl, hostOf ...func(*url.URL) string) string {
+// CurlSlug derives a compact, unique identifier suitable for the app's slug
+// (标识) field from a parsed curl. It uses the upstream id (or the first node
+// id as a fallback), sanitised to a URL-friendly token. Empty when the curl
+// carries no usable id — the caller leaves the slug field empty for the admin
+// to fill in by hand.
+func CurlSlug(p *ParsedCurl) string {
 	if p == nil {
 		return ""
 	}
-	site := ""
-	if u, err := url.Parse(p.BaseURL); err == nil {
-		extract := curlBasePublicHostname
-		if len(hostOf) > 0 && hostOf[0] != nil {
-			extract = hostOf[0]
-		}
-		site = extract(u)
-	}
-	var id string
-	if p.UpstreamID != "" {
-		id = p.UpstreamID
-	} else if len(p.NodeInfoList) > 0 {
-		// No top-level id (e.g. a namespace-less path): use the first labelled
-		// node id as the best identifier we have.
+	id := strings.TrimSpace(p.UpstreamID)
+	if id == "" {
 		for _, n := range p.NodeInfoList {
-			if n.NodeID != "" {
-				id = n.NodeID
+			if strings.TrimSpace(n.NodeID) != "" {
+				id = strings.TrimSpace(n.NodeID)
 				break
 			}
 		}
 	}
-	name := "RunningHub App"
-	if site != "" {
-		name += " (" + site + ")"
+	return slugify(id)
+}
+
+// slugify reduces s to lowercase [a-z0-9_-] runs joined by single dashes,
+// trimmed and capped at the DB column limit (191). Empty input or an input
+// with no usable characters yields "".
+func slugify(s string) string {
+	var b strings.Builder
+	lastSep := false
+	for _, r := range strings.ToLower(s) {
+		isAlphaNum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_'
+		if isAlphaNum {
+			b.WriteRune(r)
+			lastSep = false
+		} else if !lastSep {
+			b.WriteByte('-')
+			lastSep = true
+		}
 	}
-	if id != "" {
-		name += " — " + id
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 191 {
+		out = out[:191]
 	}
-	return name
+	return out
 }
 
 // isIgnoredCurlTopLevelKey drops structural fields present in the upstream
@@ -415,7 +488,18 @@ func BuildSchemaFromNodes(nodes []NodeInfo) SchemaSummary {
 			Label:     labelFromFieldName(n.FieldName, n.Description, n.DescriptionEn),
 			Type:      inferParamType(n),
 			Default:   n.FieldValue,
-			Required:  true,
+			Required:  false,
+		}
+		if opts, def, ok := SelectOptionsFromFieldData(n.FieldData); ok {
+			// An enumerable fieldData from a curl import becomes a real select;
+			// "选填" (optional) fields with an enum set still render a dropdown.
+			param.Type = "select"
+			param.Default = def
+			param.Options = opts
+		}
+		required := !strings.Contains(strings.ToLower(n.Description), "选填")
+		if required {
+			param.Required = true
 		}
 		if param.Type == "number" {
 			if min, max, ok := inferRangeHint(n.FieldValue); ok {

@@ -92,12 +92,13 @@ export interface ParseCurlResult {
   kind: string
   upstreamId: string
   baseUrl?: string
-  appName?: string
+  slug?: string
   nodeInfoList?: Array<{
     nodeId: string
     fieldName: string
     field: string
     fieldValue: string
+    fieldData?: string
     description?: string
   }>
   schema: SchemaParam[]
