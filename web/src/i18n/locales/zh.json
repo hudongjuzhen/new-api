@@ -5530,5 +5530,8 @@
   "Dynamic Billing": "动态计费",
   "Per-Second Billing": "按秒计费",
   "Quota Per Second": "每秒额度",
-  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "按秒计费按 seconds/duration 参数的值扣费；按次计费每次执行扣取固定额度。"
+  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "按秒计费按 seconds/duration 参数的值扣费；按次计费每次执行扣取固定额度。",
+  "Billing API Key": "计费 API Key",
+  "Select an API key to bill this run": "选择用于本次计费的 API Key",
+  "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one.": "本次运行将使用所选 API Key 计费。请选择有额度的已启用 Key，或使用无限额度 Key。"
 }

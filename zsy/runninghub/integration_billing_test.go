@@ -41,6 +41,7 @@ const (
 	itestChannelID  = 9101
 	itestUserID     = 9101
 	itestTokenID    = 9101
+	itestTokenID2   = 9102
 	itestInitQuota  = 2_000_000
 	itestChannelKey = "rh-key-itest"
 	itestTokenKey   = "sk-rh-itest"
@@ -241,6 +242,13 @@ func newRHITestEnv(t *testing.T, upstreamID string) *rhITestEnv {
 	})
 	router.POST("/api/zsy/rh/apps/:id/run", runninghub.TestHookSubmitAppRun)
 	router.GET("/api/zsy/rh/apps/task/:task_id", runninghub.TestHookGetAppTaskResult)
+
+	// A second token belonging to the same user, so the "select a token for
+	// this run" path can be exercised (billed against it, not the default).
+	require.NoError(t, db.Create(&model.Token{
+		Id: itestTokenID2, UserId: itestUserID, Key: "sk-rh-itest-2", Name: "rh_itest_token_2",
+		Status: common.TokenStatusEnabled, RemainQuota: 0,
+	}).Error)
 
 	return &rhITestEnv{t: t, db: db, rh: rh, router: router}
 }
@@ -691,6 +699,117 @@ func TestIntegration_FailureRefund_IsIdempotent(t *testing.T) {
 		"CAS re-poll must not refund twice")
 	task = env.taskByTaskID(publicTaskID)
 	assert.Equal(t, model.TaskStatusFailure, string(task.Status))
+}
+
+// ---------------------------------------------------------------------------
+// 4. Selected-token billing: when the caller passes tokenId, the task bills
+// against that token (pre-consume + settle + refund), and a token that does
+// not belong to the user is rejected before any billing.
+// ---------------------------------------------------------------------------
+
+func TestIntegration_SelectedToken_BillsAgainstChosenToken(t *testing.T) {
+	const upstreamID = "9005-tokenselect-app"
+	const quotaPerSecond = int64(10_000)
+	const seconds = 30
+	const preConsumed = quotaPerSecond * seconds // 300000
+	env := newRHITestEnv(t, upstreamID)
+
+	appID := env.createAppWithSchema("itest-tokenselect", upstreamID, []rhparser.SchemaParam{
+		{NodeID: "122", FieldName: "prompt", Label: "提示词", Type: "text", Required: true},
+		{NodeID: "77", FieldName: "seconds", Label: "时长(秒)", Type: "seconds", Required: true},
+	})
+	// Give the second token enough quota for the pre-charge so the picked-token
+	// semantics are observable (the default itestToken keeps its own quota).
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", itestTokenID2).
+		Update("remain_quota", int(preConsumed)).Error)
+
+	upstreamTaskID := "rh-task-tokenselect-1"
+	env.rh.submitResp = func(string) (int, any) {
+		return http.StatusOK, runninghub.SubmitResp{TaskID: upstreamTaskID, Status: runninghub.StatusRunning}
+	}
+	pollResponses := []runninghub.QueryResp{
+		{TaskID: upstreamTaskID, Status: runninghub.StatusRunning},
+		{
+			TaskID:  upstreamTaskID,
+			Status:  runninghub.StatusSuccess,
+			Results: []runninghub.TaskResult{{URL: "https://img.rh-itest.local/sel.png"}},
+		},
+	}
+	env.rh.queryResp = func(string) (int, any) {
+		require.NotEmpty(t, pollResponses, "unexpected extra poll")
+		next := pollResponses[0]
+		pollResponses = pollResponses[1:]
+		return http.StatusOK, next
+	}
+
+	// Submit with tokenId=itestTokenID2 pinned; the run must pre-charge from
+	// the picked token instead of the default one.
+	w, raw := doJSON(t, env.router, http.MethodPost, fmt.Sprintf("/api/zsy/rh/apps/%d/run", appID),
+		map[string]any{
+			"values": map[string]any{
+				"122.prompt": "a window",
+				"77.seconds": fmt.Sprintf("%d", seconds),
+			},
+			"tokenId": itestTokenID2,
+		})
+	envResp := parseAPIEnvelope(t, raw)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.True(t, envResp.Success, "submit failed: %s", envResp.Message)
+	data, _ := envResp.Data.(map[string]any)
+	publicTaskID, _ := data["taskId"].(string)
+	require.NotEmpty(t, publicTaskID)
+
+	// Wallet is pre-charged as usual; the picked token was drawn down too.
+	assert.Equal(t, itestInitQuota-int(preConsumed), env.userQuota())
+	var tok2 model.Token
+	require.NoError(t, model.DB.First(&tok2, "id = ?", itestTokenID2).Error)
+	assert.Equal(t, 0, tok2.RemainQuota, "selected token 2 must have been fully pre-charged")
+
+	// The task must record the picked token on PrivateData so the billing log
+	// attributes the charge to the right API key.
+	task := env.taskByTaskID(publicTaskID)
+	assert.Equal(t, itestTokenID2, task.PrivateData.TokenId)
+	var tok1 model.Token
+	require.NoError(t, model.DB.First(&tok1, "id = ?", itestTokenID).Error)
+	assert.Equal(t, itestInitQuota, tok1.RemainQuota, "default token must be untouched")
+
+	env.pollOnce() // RUNNING
+	env.pollOnce() // SUCCESS with no consumeCoins → keep the pre-charge.
+
+	task = env.taskByTaskID(publicTaskID)
+	assert.Equal(t, model.TaskStatusSuccess, string(task.Status))
+	assert.Equal(t, int(preConsumed), task.Quota)
+	var tok2b model.Token
+	require.NoError(t, model.DB.First(&tok2b, "id = ?", itestTokenID2).Error)
+	assert.Equal(t, 0, tok2b.RemainQuota)
+	require.NoError(t, model.DB.First(&tok1, "id = ?", itestTokenID).Error)
+	assert.Equal(t, itestInitQuota, tok1.RemainQuota, "default token must stay untouched")
+}
+
+// TestIntegration_SelectedToken_RejectsForeignToken covers the ownership
+// guard: tokenId pointing at a token of another user is rejected before any
+// billing happens.
+func TestIntegration_SelectedToken_RejectsForeignToken(t *testing.T) {
+	const upstreamID = "9006-tokenreject-app"
+	env := newRHITestEnv(t, upstreamID)
+	appID := env.createApp("itest-tokenreject", upstreamID, false, 0, 1.0)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(fmt.Sprintf(`{%q: 2}`, upstreamID)))
+
+	// A token owned by a different user.
+	require.NoError(t, model.DB.Create(&model.Token{
+		Id: 9999, UserId: itestUserID + 1, Key: "sk-other-user", Name: "other",
+		Status: common.TokenStatusEnabled, RemainQuota: 1_000_000,
+	}).Error)
+
+	w, raw := doJSON(t, env.router, http.MethodPost, fmt.Sprintf("/api/zsy/rh/apps/%d/run", appID),
+		map[string]any{
+			"values":  map[string]any{"122.prompt": "hi"},
+			"tokenId": 9999,
+		})
+	envResp := parseAPIEnvelope(t, raw)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.False(t, envResp.Success)
+	assert.Contains(t, envResp.Message, "不属于当前用户")
 }
 
 // pollOnceLoop runs polling passes that see no unfinished tasks (the task is

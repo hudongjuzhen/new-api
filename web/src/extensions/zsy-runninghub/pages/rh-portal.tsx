@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { getApiKeys } from '@/features/keys/api'
 
 import {
   listPublicApps,
@@ -440,6 +441,20 @@ function AppRunForm({
   const [values, setValues] = useState<Record<string, string>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [uploadingCount, setUploadingCount] = useState(0)
+  const [selectedTokenId, setSelectedTokenId] = useState<number | null>(null)
+
+  // The current user's API keys, so the run can be billed against a chosen
+  // token instead of the dashboard session default (TokenId=0). Only enabled
+  // tokens are offered; a token with a positive quota (or unlimited) is
+  // required for the pre-consume step to pass.
+  const { data: keysData } = useQuery({
+    queryKey: ['rh-my-api-keys'],
+    queryFn: () => getApiKeys({ p: 1, size: 100 }),
+  })
+  const enabledKeys = (keysData?.data?.items ?? []).filter(
+    (k) => k.status === 1
+  )
+  const selectedToken = enabledKeys.find((k) => k.id === selectedTokenId) ?? null
 
   // Reset the form whenever the selected app changes, pre-filling defaults.
   useEffect(() => {
@@ -478,7 +493,7 @@ function AppRunForm({
       if (Object.keys(errs).length > 0) {
         throw new Error(t('Please fix the highlighted fields'))
       }
-      await runApp(app.id, cleaned, 'default')
+      await runApp(app.id, cleaned, { tokenId: selectedTokenId || undefined })
     },
     onError: (e) => {
       toast.error(String((e as Error)?.message ?? e))
@@ -525,9 +540,47 @@ function AppRunForm({
           ))
         )}
       </div>
+      <div className='space-y-1.5'>
+        <Label htmlFor='rh-run-token'>{t('Billing API Key')}</Label>
+        <Select
+          value={selectedToken ? String(selectedToken.id) : ''}
+          onValueChange={(v) => {
+            if (v == null || v === '') {
+              setSelectedTokenId(null)
+            } else {
+              const id = Number(v)
+              if (enabledKeys.some((k) => k.id === id)) {
+                setSelectedTokenId(id)
+              }
+            }
+          }}
+        >
+          <SelectTrigger id='rh-run-token'>
+            <SelectValue>
+              {selectedToken
+                ? `${selectedToken.name}${
+                    selectedToken.unlimited_quota ? ` (${t('Unlimited')})` : ''
+                  }`
+                : t('Select an API key to bill this run')}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            {enabledKeys.map((key) => (
+              <SelectItem key={key.id} value={String(key.id)}>
+                {key.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one.'
+          )}
+        </p>
+      </div>
       <Button
         className='w-full'
-        disabled={submit.isPending || uploadingCount > 0}
+        disabled={submit.isPending || uploadingCount > 0 || !selectedToken}
         onClick={() => submit.mutate()}
       >
         <Icon className='size-4' />

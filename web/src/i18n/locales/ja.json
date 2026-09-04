@@ -5530,5 +5530,8 @@
   "Dynamic Billing": "Dynamic Billing",
   "Per-Second Billing": "Per-Second Billing",
   "Quota Per Second": "Quota Per Second",
-  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run."
+  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.",
+  "Billing API Key": "Billing API Key",
+  "Select an API key to bill this run": "Select an API key to bill this run",
+  "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one.": "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one."
 }

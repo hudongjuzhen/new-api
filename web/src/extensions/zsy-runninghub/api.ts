@@ -316,11 +316,15 @@ export async function getPublicAppDetail(id: number): Promise<AppView> {
 export async function runApp(
   id: number,
   values: Record<string, unknown>,
-  instanceType?: string
+  opts: { instanceType?: string; tokenId?: number } = {}
 ): Promise<RunAppResult> {
   const res = await api.post<{ success: boolean; data: RunAppResult }>(
     `/api/zsy/rh/apps/${id}/run`,
-    { values, instanceType }
+    {
+      values,
+      instanceType: opts.instanceType ?? 'default',
+      tokenId: opts.tokenId,
+    }
   )
   return res.data.data
 }

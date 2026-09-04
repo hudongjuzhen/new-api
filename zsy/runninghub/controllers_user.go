@@ -106,6 +106,10 @@ type AppRunPayload struct {
 	InstanceType string `json:"instanceType"`
 	// WebhookURL optionally receives RH completion hooks.
 	WebhookURL string `json:"webhookUrl"`
+	// TokenId optionally pins the API key (token) this task bills against.
+	// Zero means the host picks the user's default token, which is the
+	// standard path for requests that carry their own Authorization header.
+	TokenId int64 `json:"tokenId,omitempty"`
 }
 
 // submitAppRun validates the form payload against the published app's
@@ -209,6 +213,17 @@ func submitAppRun(c *gin.Context) {
 	if err := replaceRequestBody(c, data); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	// When the caller selected an API key for this run, bind the token's
+	// billing context (id/key/unlimited/group/quota) onto the request before
+	// GenRelayInfo snapshots it into RelayInfo. The host's dashboard
+	// UserAuth path never sets token_* keys, so without this the task would
+	// bill against TokenId=0.
+	if payload.TokenId > 0 {
+		if err := applySelectedToken(c, payload.TokenId); err != nil {
+			common.ApiErrorMsg(c, err.Error())
+			return
+		}
 	}
 	c.Set("platform", rhPlatform)
 
@@ -483,6 +498,39 @@ func missingFieldLabel(p *rhparser.SchemaParam, fallbackKey string) string {
 		return p.Label
 	}
 	return fallbackKey
+}
+
+// applySelectedToken binds a caller-chosen API key onto the request so the
+// task bills against that token (id/key/unlimited/group/quota) instead of the
+// default TokenId=0 that the dashboard UserAuth path leaves behind. The token
+// must belong to the logged-in user and be enabled; otherwise the request is
+// rejected before any billing happens.
+func applySelectedToken(c *gin.Context, tokenID int64) error {
+	if tokenID <= 0 {
+		return fmt.Errorf("非法的令牌 ID")
+	}
+	userId := c.GetInt("id")
+	token, err := model.GetTokenByIds(int(tokenID), userId)
+	if err != nil || token == nil {
+		return fmt.Errorf("令牌不存在或不属于当前用户")
+	}
+	if token.Status != common.TokenStatusEnabled {
+		return fmt.Errorf("所选令牌不可用（状态非启用）")
+	}
+	c.Set(string(constant.ContextKeyTokenId), token.Id)
+	c.Set(string(constant.ContextKeyTokenKey), token.Key)
+	c.Set(string(constant.ContextKeyTokenUnlimited), token.UnlimitedQuota)
+	if !token.UnlimitedQuota {
+		c.Set("token_quota", token.RemainQuota)
+	}
+	if token.Group != "" {
+		c.Set(string(constant.ContextKeyTokenGroup), token.Group)
+	}
+	if token.ModelLimitsEnabled {
+		c.Set(string(constant.ContextKeyTokenModelLimitEnabled), true)
+		c.Set(string(constant.ContextKeyTokenModelLimit), token.GetModelLimitsMap())
+	}
+	return nil
 }
 
 // schemaFieldKey returns the stable identifier used as the Values map key.
