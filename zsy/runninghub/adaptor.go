@@ -312,7 +312,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// RH can return 200 OK with a flat protocol-level error code when the
 	// submit itself failed (e.g. 1014 enterprise-shared key required). Those
 	// are surfaced as task errors so the relay layer can refund the user.
-	if rhResp.ErrorCode != "" && (rhResp.TaskID == "" || rhResp.Status == StatusFailed || rhResp.FailedReason != "") {
+	if rhResp.ErrorCode != "" && (rhResp.TaskID == "" || rhResp.Status == StatusFailed || common.JsonRawMessageToString(rhResp.FailedReason) != "") {
 		taskErr = service.TaskErrorWrapper(
 			fmt.Errorf("code=%s msg=%s", rhResp.ErrorCode, rhResp.ErrorMessage),
 			mapErrorCodeToTaskCode(rhResp.ErrorCode, rhResp.ErrorMessage),
@@ -549,8 +549,8 @@ func mapRHStatus(s string) string {
 
 func pickFailureReason(rh *QueryResp) string {
 	switch {
-	case rh.FailedReason != "":
-		return rh.FailedReason
+	case common.JsonRawMessageToString(rh.FailedReason) != "":
+		return common.JsonRawMessageToString(rh.FailedReason)
 	case rh.ErrorMessage != "":
 		return fmt.Sprintf("[%s] %s", rh.ErrorCode, rh.ErrorMessage)
 	}

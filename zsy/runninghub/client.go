@@ -39,11 +39,13 @@ type SubmitBody struct {
 
 // SubmitResp is the flat V2 response shape returned by a successful submit.
 type SubmitResp struct {
-	TaskID        string           `json:"taskId"`
-	Status        string           `json:"status"`
-	ClientID      string           `json:"clientId,omitempty"`
-	PromptTips    string           `json:"promptTips,omitempty"`
-	FailedReason  string           `json:"failedReason,omitempty"`
+	TaskID     string `json:"taskId"`
+	Status     string `json:"status"`
+	ClientID   string `json:"clientId,omitempty"`
+	PromptTips string `json:"promptTips,omitempty"`
+	// FailedReason can be a plain string or an object depending on the
+	// endpoint; keep it raw and stringify via common.JsonRawMessageToString.
+	FailedReason  json.RawMessage  `json:"failedReason,omitempty"`
 	ErrorCode     string           `json:"errorCode,omitempty"`
 	ErrorMessage  string           `json:"errorMessage,omitempty"`
 	Usage         *TaskUsage       `json:"usage,omitempty"`
