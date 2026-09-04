@@ -55,8 +55,21 @@ func init() {
 	// relay/channel.TaskAdaptor; the host performs a checked type-assertion
 	// before use. Passing a typed TaskAdaptor here keeps the implicit
 	// satisfaction compile-time checked.
-	platform := strconv.Itoa(pluginChannelType)
-	extcore.RegisterTaskAdaptor(platform, func() any { return &TaskAdaptor{} })
+	//
+	// The platform string is the decimal form of the *channel type* the request
+	// routed through (relay.GetTaskPlatform strconv's channel_type). The
+	// RunningHub family spans three channel types (国内站 / 国际站 / LiblibAI),
+	// so every one of them must resolve to the same adaptor — otherwise a run
+	// through an Intl (62) or Liblib (63) channel fails with
+	// "invalid_api_platform" even though the base RunningHub (61) works.
+	for _, channelType := range []int{
+		constant.ChannelTypeRunningHub,
+		constant.ChannelTypeRunningHubIntl,
+		constant.ChannelTypeLiblib,
+	} {
+		platform := strconv.Itoa(channelType)
+		extcore.RegisterTaskAdaptor(platform, func() any { return &TaskAdaptor{} })
+	}
 
 	// HTTP routes (public / management / user). RegisterRouteMounters calls
 	// into mountRoutes which conditionally skips auth-gated paths when the
