@@ -204,45 +204,44 @@ function MediaParamField({
         </div>
       )}
 
-      {!hasFile ? (
-        <label
-          className={`border-border/60 bg-background hover:border-primary/50 hover:bg-primary/5 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-3 py-4 text-center transition-colors ${
-            uploading || channelId <= 0 ? 'pointer-events-none opacity-60' : ''
-          }`}
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault()
-            const file = e.dataTransfer.files?.[0]
-            if (file) void handleFile(file)
-          }}
-        >
-          {uploading ? (
-            <Loader2 className='text-muted-foreground size-4 animate-spin' />
-          ) : (
-            <UploadCloud className='text-muted-foreground size-4' />
-          )}
-          <span className='text-muted-foreground text-xs'>
-            {t('Click to upload')}
-          </span>
-          <input
-            accept={MEDIA_ACCEPT[type]}
-            className='hidden'
-            type='file'
-            disabled={uploading || channelId <= 0}
-            onChange={(e) => {
-              const file = e.target.files?.[0]
+      {!hasFile &&
+        (channelId > 0 ? (
+          <label
+            className={`border-border/60 bg-background hover:border-primary/50 hover:bg-primary/5 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-3 py-4 text-center transition-colors ${
+              uploading || channelId <= 0 ? 'pointer-events-none opacity-60' : ''
+            }`}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              const file = e.dataTransfer.files?.[0]
               if (file) void handleFile(file)
-              e.target.value = ''
             }}
-          />
-        </label>
-      ) : null}
-
-      {channelId <= 0 && (
-        <p className='text-muted-foreground text-xs'>
-          {t('This app has no bound channel yet')}
-        </p>
-      )}
+          >
+            {uploading ? (
+              <Loader2 className='text-muted-foreground size-4 animate-spin' />
+            ) : (
+              <UploadCloud className='text-muted-foreground size-4' />
+            )}
+            <span className='text-muted-foreground text-xs'>
+              {t('Click to upload')}
+            </span>
+            <input
+              accept={MEDIA_ACCEPT[type]}
+              className='hidden'
+              type='file'
+              disabled={uploading || channelId <= 0}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) void handleFile(file)
+                e.target.value = ''
+              }}
+            />
+          </label>
+        ) : (
+          <p className='text-muted-foreground text-xs'>
+            {t('This app has no bound channel yet')}
+          </p>
+        ))}
 
       {!hasFile && (
         <div className='flex items-center gap-2'>
