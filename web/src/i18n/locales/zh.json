@@ -5526,5 +5526,9 @@
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放"
-  }
+  },
+  "Dynamic Billing": "动态计费",
+  "Per-Second Billing": "按秒计费",
+  "Quota Per Second": "每秒额度",
+  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "按秒计费按 seconds/duration 参数的值扣费；按次计费每次执行扣取固定额度。"
 }

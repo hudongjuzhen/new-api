@@ -58,6 +58,8 @@ type AppView struct {
 	ParamSchema        []rhparser.SchemaParam `json:"paramSchema"`
 	PerCallBilling     bool                   `json:"perCallBilling"`
 	FixedQuotaPerCall  int64                  `json:"fixedQuotaPerCall"`
+	PerSecondBilling   bool                   `json:"perSecondBilling"`
+	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	ChannelID          int64                  `json:"channelId"`
 	Site               string                 `json:"site"`
@@ -79,6 +81,8 @@ type AppCreateDTO struct {
 	ParamSchema        []rhparser.SchemaParam `json:"paramSchema"`
 	PerCallBilling     bool                   `json:"perCallBilling"`
 	FixedQuotaPerCall  int64                  `json:"fixedQuotaPerCall"`
+	PerSecondBilling   bool                   `json:"perSecondBilling"`
+	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	ChannelID          int64                  `json:"channelId"`
 	Site               string                 `json:"site"`
@@ -341,16 +345,23 @@ func appPerCallModelPrice(fixedQuota int64) float64 {
 	return float64(fixedQuota) / common.QuotaPerUnit
 }
 
-// syncAppBillingPrice keeps ratio_setting's per-call model price table aligned
-// with the app's billing config. The submit path bills the app under its
-// UpstreamID as the model name, and RelayTaskSubmit rebuilds PriceData from
-// that table — so a per-call app without a synced price entry would fail with
-// "model price not configured", and a stale entry on a switched app would
-// silently re-enable per-call settlement.
+// syncAppBillingPrice keeps ratio_setting's model price table aligned with the
+// app's billing config. The submit path bills the app under its UpstreamID as
+// the model name, and RelayTaskSubmit rebuilds PriceData from that table — so
+// an app without a synced price entry would fail with "model price not
+// configured", and a stale entry on a switched app would silently re-enable
+// the wrong settlement mode.
 //
-//   - PerCallBilling=true  → upsert price = FixedQuotaPerCall / QuotaPerUnit
-//   - switch to dynamic    → drop the entry only while it still equals the
+//   - PerCallBilling=true    → upsert price = FixedQuotaPerCall / QuotaPerUnit
+//   - PerSecondBilling=true  → upsert price = QuotaPerSecond / QuotaPerUnit
+//   - switch to dynamic      → drop the entry only while it still equals the
 //     previously synced value (an admin-edited price is left untouched)
+//
+// Both mutations persist the whole model-price table through
+// model.UpdateOption("ModelPrice", …) so the entry survives a restart
+// (UpdateModelPriceByJSONString alone only refreshes memory, and the boot-time
+// option reload would otherwise wipe it — the root cause of the
+// model_price_error the app center hits after a deploy).
 //
 // A deleted app leaves its price entry behind on purpose: the entry is
 // harmless once no channel routes the model name, and the same UpstreamID
@@ -361,18 +372,33 @@ func syncAppBillingPrice(old *App, updated *App) {
 	}
 	prices := ratio_setting.GetModelPriceCopy()
 	changed := false
+
+	syncing := updated.PerCallBilling || updated.PerSecondBilling
+	var want float64
 	if updated.PerCallBilling {
-		want := appPerCallModelPrice(updated.FixedQuotaPerCall)
+		want = appPerCallModelPrice(updated.FixedQuotaPerCall)
+	} else if updated.PerSecondBilling {
+		want = appPerCallModelPrice(updated.QuotaPerSecond)
+	}
+
+	if syncing {
 		if cur, ok := prices[updated.UpstreamID]; !ok || cur != want {
 			prices[updated.UpstreamID] = want
 			changed = true
 		}
-	} else if old != nil && old.PerCallBilling && old.UpstreamID == updated.UpstreamID {
-		if cur, ok := prices[old.UpstreamID]; ok && cur == appPerCallModelPrice(old.FixedQuotaPerCall) {
+	} else if old != nil && (old.PerCallBilling || old.PerSecondBilling) && old.UpstreamID == updated.UpstreamID {
+		var prev float64
+		if old.PerCallBilling {
+			prev = appPerCallModelPrice(old.FixedQuotaPerCall)
+		} else {
+			prev = appPerCallModelPrice(old.QuotaPerSecond)
+		}
+		if cur, ok := prices[old.UpstreamID]; ok && cur == prev {
 			delete(prices, old.UpstreamID)
 			changed = true
 		}
 	}
+
 	if !changed {
 		return
 	}
@@ -383,6 +409,10 @@ func syncAppBillingPrice(old *App, updated *App) {
 	}
 	if err := ratio_setting.UpdateModelPriceByJSONString(string(data)); err != nil {
 		common.SysError("runninghub: sync app model price failed: " + err.Error())
+		return
+	}
+	if err := model.UpdateOption("ModelPrice", ratio_setting.ModelPrice2JSONString()); err != nil {
+		common.SysError("runninghub: persist app model price failed: " + err.Error())
 	}
 }
 
@@ -408,6 +438,8 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 	target.AdminOnly = dto.AdminOnly
 	target.PerCallBilling = dto.PerCallBilling
 	target.FixedQuotaPerCall = dto.FixedQuotaPerCall
+	target.PerSecondBilling = dto.PerSecondBilling
+	target.QuotaPerSecond = dto.QuotaPerSecond
 	target.ChannelID = dto.ChannelID
 	target.Site = normalizeSite(strings.TrimSpace(dto.Site))
 	if dto.ModelBaseRateRatio == 0 {
@@ -492,6 +524,8 @@ func appToView(a *App) (*AppView, error) {
 		ParamSchema:        parserSchema,
 		PerCallBilling:     a.PerCallBilling,
 		FixedQuotaPerCall:  a.FixedQuotaPerCall,
+		PerSecondBilling:   a.PerSecondBilling,
+		QuotaPerSecond:     a.QuotaPerSecond,
 		ModelBaseRateRatio: a.ModelBaseRateRatio,
 		ChannelID:          a.ChannelID,
 		Site:               a.Site,
@@ -698,10 +732,18 @@ func validateApp(a *App) error {
 	if a.Slug != "" && len(a.Slug) > 191 {
 		return fmt.Errorf("slug 过长 (上限 191 字符)")
 	}
-	// Billing invariants.
+	// Billing invariants. The per-call / per-second / dynamic modes are
+	// mutually exclusive; enforce it here so the store layer can never persist
+	// a contradictory config.
 	switch {
+	case a.PerCallBilling && a.PerSecondBilling:
+		return fmt.Errorf("按次计费与按秒计费互斥，只能选择一种")
 	case a.FixedQuotaPerCall < 0:
 		return fmt.Errorf("fixedQuotaPerCall 不能为负数")
+	case a.PerSecondBilling && a.QuotaPerSecond <= 0:
+		return fmt.Errorf("按秒计费必须设置正数的每单位秒额度 (quotaPerSecond)")
+	case a.QuotaPerSecond < 0:
+		return fmt.Errorf("quotaPerSecond 不能为负数")
 	case a.ModelBaseRateRatio <= 0:
 		return fmt.Errorf("modelBaseRateRatio 必须为正数 (当前 %v)", a.ModelBaseRateRatio)
 	}

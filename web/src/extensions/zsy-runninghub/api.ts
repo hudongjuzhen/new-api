@@ -46,6 +46,8 @@ export interface AppView {
   paramSchema: SchemaParam[]
   perCallBilling: boolean
   fixedQuotaPerCall: number
+  perSecondBilling: boolean
+  quotaPerSecond: number
   modelBaseRateRatio: number
   channelId: number
   site: string
@@ -72,6 +74,8 @@ export interface AppCreateDTO {
   paramSchema: SchemaParam[]
   perCallBilling: boolean
   fixedQuotaPerCall: number
+  perSecondBilling: boolean
+  quotaPerSecond: number
   modelBaseRateRatio: number
   channelId: number
   site: string

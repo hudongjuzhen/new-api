@@ -146,6 +146,10 @@ func newRHITestEnv(t *testing.T, upstreamID string) *rhITestEnv {
 	origPrices := ratio_setting.GetModelPriceCopy()
 	origRatios := ratio_setting.GetModelRatioCopy()
 	origGetAdaptor := service.GetTaskAdaptorFunc
+	// model.UpdateOption writes into common.OptionMap; the test binary never
+	// runs InitOptionMap, so back it up and install a fresh (non-nil) map.
+	origOptionMap := common.OptionMap
+	common.OptionMap = make(map[string]string)
 
 	common.RedisEnabled = false
 	common.MemoryCacheEnabled = false
@@ -173,6 +177,7 @@ func newRHITestEnv(t *testing.T, upstreamID string) *rhITestEnv {
 		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(mustJSON(t, origPrices)))
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(mustJSON(t, origRatios)))
 		service.GetTaskAdaptorFunc = origGetAdaptor
+		common.OptionMap = origOptionMap
 	})
 
 	rh := newPseudoRH(t)
@@ -194,11 +199,12 @@ func newRHITestEnv(t *testing.T, upstreamID string) *rhITestEnv {
 	require.NoError(t, model.InitLogDB())
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
-	require.NoError(t, db.AutoMigrate(
+	_ = db.AutoMigrate(
 		&model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Ability{},
 		&model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.UserSubscription{},
+		&model.Option{},
 		&runninghub.App{}, &runninghub.AppKeyPool{}, &runninghub.KeypoolPending{},
-	))
+	)
 
 	// Seed user / token / channel / ability wired to the fake upstream.
 	require.NoError(t, db.Create(&model.User{
@@ -282,6 +288,24 @@ func (e *rhITestEnv) createApp(name, upstreamID string, perCall bool, fixedQuota
 		PerCallBilling:     perCall,
 		FixedQuotaPerCall:  fixedQuota,
 		ModelBaseRateRatio: rate,
+	})
+	require.NoError(e.t, err)
+	return view.ID
+}
+
+// createAppWithSchema is createApp with an explicit parameter schema, used by
+// the per-second billing tests whose schema must carry a seconds parameter.
+func (e *rhITestEnv) createAppWithSchema(name, upstreamID string, schema []rhparser.SchemaParam) uint {
+	e.t.Helper()
+	view, err := runninghub.AppInsert(&runninghub.AppCreateDTO{
+		Name:               name,
+		Kind:               runninghub.AppKindAICApp,
+		UpstreamID:         upstreamID,
+		Published:          true,
+		ParamSchema:        schema,
+		PerSecondBilling:   true,
+		QuotaPerSecond:     10_000,
+		ModelBaseRateRatio: 1.0,
 	})
 	require.NoError(e.t, err)
 	return view.ID
@@ -493,6 +517,98 @@ func TestIntegration_PerCallBilling_SuccessKeepsFlatCharge(t *testing.T) {
 	var logCount int64
 	require.NoError(t, model.DB.Model(&model.Log{}).Where("user_id = ?", itestUserID).Count(&logCount).Error)
 	assert.Zero(t, logCount)
+}
+
+// ---------------------------------------------------------------------------
+// 2b. Per-second billing: pre-charge = QuotaPerSecond × seconds, then diff
+// settle against RH usage.consumeCoins on SUCCESS (dynamic-billing semantics).
+// ---------------------------------------------------------------------------
+
+func TestIntegration_PerSecondBilling_PrechargeAndDiffSettle(t *testing.T) {
+	const upstreamID = "9004-persecond-app"
+	const quotaPerSecond = int64(10_000)
+	const seconds = 30
+	const preConsumed = quotaPerSecond * seconds // 300000
+	env := newRHITestEnv(t, upstreamID)
+
+	appID := env.createAppWithSchema("itest-persecond", upstreamID, []rhparser.SchemaParam{
+		{NodeID: "122", FieldName: "prompt", Label: "提示词", Type: "text", Required: true},
+		{NodeID: "77", FieldName: "seconds", Label: "时长(秒)", Type: "seconds", Required: true},
+	})
+
+	// AppInsert must sync the per-second base price (QuotaPerSecond/QuotaPerUnit)
+	// into both the in-memory price table AND the persisted ModelPrice option —
+	// otherwise a restart reloads a stale table and the next submit regresses to
+	// the model_price_error this feature is meant to fix.
+	prices := ratio_setting.GetModelPriceCopy()
+	require.Contains(t, prices, upstreamID)
+	require.Equal(t, float64(quotaPerSecond)/common.QuotaPerUnit, prices[upstreamID])
+	var opt model.Option
+	require.NoError(t, model.DB.First(&opt, "key = ?", "ModelPrice").Error)
+	stored := map[string]float64{}
+	require.NoError(t, json.Unmarshal([]byte(opt.Value), &stored))
+	require.Contains(t, stored, upstreamID)
+
+	upstreamTaskID := "rh-task-per-sec-1"
+	env.rh.submitResp = func(string) (int, any) {
+		return http.StatusOK, runninghub.SubmitResp{TaskID: upstreamTaskID, Status: runninghub.StatusRunning}
+	}
+	pollResponses := []runninghub.QueryResp{
+		{TaskID: upstreamTaskID, Status: runninghub.StatusRunning},
+		{
+			TaskID:       upstreamTaskID,
+			Status:       runninghub.StatusSuccess,
+			Usage:        &runninghub.TaskUsage{ConsumeCoins: "123000"},
+			Results:      []runninghub.TaskResult{{URL: "https://img.rh-itest.local/sec.png"}},
+		},
+	}
+	env.rh.queryResp = func(string) (int, any) {
+		require.NotEmpty(t, pollResponses, "unexpected extra poll")
+		next := pollResponses[0]
+		pollResponses = pollResponses[1:]
+		return http.StatusOK, next
+	}
+
+	w, raw := doJSON(t, env.router, http.MethodPost, fmt.Sprintf("/api/zsy/rh/apps/%d/run", appID),
+		map[string]any{"values": map[string]any{
+			"122.prompt":  "a beating heart",
+			"77.seconds":  fmt.Sprintf("%d", seconds),
+		}})
+	envResp := parseAPIEnvelope(t, raw)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.True(t, envResp.Success, "submit failed: %s", envResp.Message)
+	data, _ := envResp.Data.(map[string]any)
+	publicTaskID, _ := data["taskId"].(string)
+	require.NotEmpty(t, publicTaskID)
+
+	// Pre-charge = QuotaPerSecond × seconds × groupRatio(1).
+	assert.Equal(t, itestInitQuota-int(preConsumed), env.userQuota())
+	assert.Equal(t, itestInitQuota-int(preConsumed), env.tokenRemain())
+	task := env.taskByTaskID(publicTaskID)
+	require.NotNil(t, task.PrivateData.BillingContext)
+	assert.False(t, task.PrivateData.BillingContext.PerCallBilling,
+		"per-second billing must keep settlement enabled (not per-call)")
+	assert.Equal(t, int(preConsumed), task.Quota)
+
+	env.pollOnce() // RUNNING
+	env.pollOnce() // SUCCESS → diff settle against consumeCoins 123000
+
+	assert.Equal(t, itestInitQuota-123000, env.userQuota())
+	task = env.taskByTaskID(publicTaskID)
+	assert.Equal(t, model.TaskStatusSuccess, string(task.Status))
+	assert.Equal(t, 123000, task.Quota)
+
+	// The seconds ratio must be visible in the submitted node fields too — the
+	// schema says the seconds-bearing node goes upstream verbatim.
+	require.Len(t, env.rh.submits, 1)
+	var sentBody runninghub.SubmitBody
+	require.NoError(t, json.Unmarshal([]byte(env.rh.submits[0].Body), &sentBody))
+	fields := map[string]string{}
+	for _, n := range sentBody.NodeInfoList {
+		fields[n.NodeID] = n.FieldValue
+	}
+	assert.Equal(t, fmt.Sprintf("%d", seconds), fields["77"])
+	assert.Equal(t, "a beating heart", fields["122"])
 }
 
 // ---------------------------------------------------------------------------

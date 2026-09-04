@@ -97,6 +97,17 @@ type App struct {
 	// decimal arithmetic drift.
 	FixedQuotaPerCall int64 `gorm:"default:0;not null"                       json:"fixedQuotaPerCall"`
 
+	// PerSecondBilling charges the task by the value of the schema's
+	// seconds/duration parameter: pre-charge = QuotaPerSecond × seconds, then
+	// the completion poll diff-settles against RH usage.consumeCoins when the
+	// upstream reports it (dynamic-billing semantics; settle is NOT skipped).
+	// Mutually exclusive with PerCallBilling — enforced by validateApp.
+	PerSecondBilling bool `gorm:"index"                                 json:"perSecondBilling"`
+
+	// QuotaPerSecond is the quota charged per one second when
+	// PerSecondBilling=true. Stored as an integer quota unit.
+	QuotaPerSecond int64 `gorm:"default:0;not null"                        json:"quotaPerSecond"`
+
 	// ModelBaseRateRatio is the multiplier applied against the *channel's*
 	// base model price when PerCallBilling is off. 1.0 means "1× standard
 	// base rate". Any non-positive ratio is rejected by the validator so the

@@ -99,9 +99,31 @@ const emptyDTO: AppCreateDTO = {
   paramSchema: [],
   perCallBilling: false,
   fixedQuotaPerCall: 0,
+  perSecondBilling: false,
+  quotaPerSecond: 0,
   modelBaseRateRatio: 1.0,
   channelId: 0,
   site: '',
+}
+
+/** Billing mode selector value → the two mutually-exclusive flags. */
+type BillingMode = 'dynamic' | 'per-call' | 'per-second'
+
+const BILLING_MODE_CHOICES: BillingMode[] = ['dynamic', 'per-call', 'per-second']
+
+const BILLING_MODE_LABEL: Record<BillingMode, string> = {
+  dynamic: 'Dynamic Billing',
+  'per-call': 'Per-Call Billing',
+  'per-second': 'Per-Second Billing',
+}
+
+function billingModeOf(d: {
+  perCallBilling: boolean
+  perSecondBilling: boolean
+}): BillingMode {
+  if (d.perCallBilling) return 'per-call'
+  if (d.perSecondBilling) return 'per-second'
+  return 'dynamic'
 }
 
 const CURL_EXAMPLE = `curl --location --request POST 'https://www.runninghub.cn/openapi/v2/run/ai-app/2051268528824700930' \\
@@ -292,7 +314,32 @@ function AppForm({
               />
             </div>
           </div>
-          <div className='grid grid-cols-2 gap-4'>
+          <div className='space-y-1.5'>
+            <Label htmlFor='rh-app-billing-mode'>{t('Billing Mode')}</Label>
+            <Select
+              value={billingModeOf(dto)}
+              onValueChange={(v) => {
+                const mode = v as BillingMode
+                set('perCallBilling', mode === 'per-call')
+                set('perSecondBilling', mode === 'per-second')
+              }}
+            >
+              <SelectTrigger id='rh-app-billing-mode'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {BILLING_MODE_CHOICES.map((m) => (
+                  <SelectItem key={m} value={m}>
+                    {t(BILLING_MODE_LABEL[m])}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className='text-xs text-muted-foreground'>
+              {t('Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.')}
+            </p>
+          </div>
+          {billingModeOf(dto) === 'dynamic' && (
             <div className='space-y-1.5'>
               <Label htmlFor='rh-app-ratio'>{t('Model Base Rate Ratio')}</Label>
               <Input
@@ -306,6 +353,8 @@ function AppForm({
                 }
               />
             </div>
+          )}
+          {billingModeOf(dto) === 'per-call' && (
             <div className='space-y-1.5'>
               <Label htmlFor='rh-app-fixed'>{t('Fixed Quota')}</Label>
               <Input
@@ -316,10 +365,23 @@ function AppForm({
                 onChange={(e) =>
                   set('fixedQuotaPerCall', parseInt(e.target.value) || 0)
                 }
-                disabled={!dto.perCallBilling}
               />
             </div>
-          </div>
+          )}
+          {billingModeOf(dto) === 'per-second' && (
+            <div className='space-y-1.5'>
+              <Label htmlFor='rh-app-per-second'>{t('Quota Per Second')}</Label>
+              <Input
+                id='rh-app-per-second'
+                type='number'
+                min='0'
+                value={dto.quotaPerSecond}
+                onChange={(e) =>
+                  set('quotaPerSecond', parseInt(e.target.value) || 0)
+                }
+              />
+            </div>
+          )}
           <div className='space-y-1.5'>
             <Label htmlFor='rh-app-slug'>{t('Slug')}</Label>
             <Input
@@ -350,13 +412,6 @@ function AppForm({
                 onCheckedChange={(v) => set('adminOnly', v as boolean)}
               />
               <span className='text-sm'>{t('Admin Only')}</span>
-            </label>
-            <label className='flex items-center gap-2'>
-              <Switch
-                checked={dto.perCallBilling}
-                onCheckedChange={(v) => set('perCallBilling', v as boolean)}
-              />
-              <span className='text-sm'>{t('Per-Call Billing')}</span>
             </label>
           </div>
         </div>
@@ -805,6 +860,8 @@ export function RhAppsPage() {
                     paramSchema: editing.paramSchema,
                     perCallBilling: editing.perCallBilling,
                     fixedQuotaPerCall: editing.fixedQuotaPerCall,
+                    perSecondBilling: editing.perSecondBilling,
+                    quotaPerSecond: editing.quotaPerSecond,
                     modelBaseRateRatio: editing.modelBaseRateRatio,
                     channelId: editing.channelId ?? 0,
                     site: editing.site ?? '',

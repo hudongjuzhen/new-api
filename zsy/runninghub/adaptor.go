@@ -436,11 +436,20 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	return out, nil
 }
 
-// EstimateBilling contributes the app's dynamic rate multiplier as the
-// "app_rate_ratio" OtherRatio. Per-call apps return nil: their fixed price
-// lives in the host model price table (kept in sync by syncAppBillingPrice)
-// and flows through PriceData.UsePrice, with diff settlement skipped by the
-// task's PerCallBilling flag.
+// EstimateBilling returns the app-specific OtherRatios that scale the base
+// model price:
+//
+//   - per-call apps      → nil. The flat price lives in the host model price
+//     table (kept in sync by syncAppBillingPrice) and flows through
+//     PriceData.UsePrice, with diff settlement skipped by the task's
+//     PerCallBilling flag.
+//   - per-second apps    → {"seconds": N} where N is the customer-chosen
+//     seconds/duration parameter (stashed into metadata.rh.seconds by the
+//     submit controller, default 1). Pre-charge becomes
+//     QuotaPerSecond × N × groupRatio; the completion poll then diff-settles
+//     against RH usage.consumeCoins (dynamic-billing semantics).
+//   - dynamic apps       → {"app_rate_ratio": ModelBaseRateRatio} (skipped at
+//     1.0).
 //
 // The app is stashed in the gin context by the plugin's submit controller;
 // submissions that bypass the plugin controller (raw task API) get the plain
@@ -454,10 +463,50 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 		return nil
 	}
 	app, ok := v.(*AppView)
-	if !ok || app == nil || app.PerCallBilling || app.ModelBaseRateRatio == 1.0 {
+	if !ok || app == nil {
+		return nil
+	}
+	if app.PerCallBilling {
+		return nil
+	}
+	if app.PerSecondBilling {
+		req, err := relaycommon.GetTaskRequest(c)
+		if err != nil {
+			return map[string]float64{"seconds": 1}
+		}
+		n := secondsFromMetadata(req.Metadata)
+		if n < 1 {
+			n = 1
+		}
+		return map[string]float64{"seconds": n}
+	}
+	if app.ModelBaseRateRatio == 1.0 {
 		return nil
 	}
 	return map[string]float64{"app_rate_ratio": app.ModelBaseRateRatio}
+}
+
+// secondsFromMetadata reads the bounded seconds/duration value the submit
+// controller stored under metadata.rh.seconds. Values already outside
+// [1, MaxTaskDurationSeconds] are re-clamped here so a raw task-API caller
+// (which bypasses the controller) can never feed an unbounded multiplier into
+// the billing chain.
+func secondsFromMetadata(m map[string]any) float64 {
+	if m == nil {
+		return 0
+	}
+	rh, ok := m["rh"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	raw, ok := rh["seconds"].(float64)
+	if !ok || raw < 1 {
+		return 0
+	}
+	if raw > float64(relaycommon.MaxTaskDurationSeconds) {
+		return float64(relaycommon.MaxTaskDurationSeconds)
+	}
+	return raw
 }
 
 // AdjustBillingOnComplete returns the actual quota derived from RH's reported

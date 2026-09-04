@@ -167,6 +167,15 @@ func submitAppRun(c *gin.Context) {
 	if strings.TrimSpace(payload.WebhookURL) != "" {
 		metadata["rh"].(map[string]any)["webhookUrl"] = strings.TrimSpace(payload.WebhookURL)
 	}
+	// Per-second billing reads the seconds/duration schema parameter value and
+	// carries it in metadata so the adaptor's EstimateBilling can apply it as
+	// the "seconds" billing multiplier. The value is already validated and
+	// bounded by coerceValueByType (MaxTaskDurationSeconds); default to 1 when
+	// the app declares no seconds parameter.
+	if app.PerSecondBilling {
+		seconds := resolveSecondsParam(schema, payload.Values)
+		metadata["rh"].(map[string]any)["seconds"] = seconds
+	}
 	// The host's task validation (ValidateBasicTaskRequest) requires a
 	// non-empty prompt even for schema-driven apps. Derive it from the first
 	// non-empty string field value; the upstream payload itself is carried by
@@ -358,7 +367,7 @@ func submitAppRun(c *gin.Context) {
 					ModelRatio:      relayInfo.PriceData.ModelRatio,
 					OtherRatios:     relayInfo.PriceData.OtherRatios(),
 					OriginModelName: relayInfo.OriginModelName,
-					PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+					PerCallBilling: (common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice) && !app.PerSecondBilling,
 				},
 			},
 		}
@@ -481,6 +490,34 @@ func missingFieldLabel(p *rhparser.SchemaParam, fallbackKey string) string {
 // when the same fieldName appears across nodes.
 func schemaFieldKey(nodeID, fieldName string) string {
 	return strings.TrimSpace(nodeID) + "." + strings.TrimSpace(fieldName)
+}
+
+// resolveSecondsParam returns the seconds/duration parameter value for
+// per-second billing, bounded to [1, MaxTaskDurationSeconds] so the value can
+// never grow into a quota multiplier that overflows (the same bound
+// coerceValueByType applies during node validation). Apps whose schema has no
+// seconds parameter fall back to 1 second.
+func resolveSecondsParam(schema []rhparser.SchemaParam, values map[string]any) float64 {
+	for _, p := range schema {
+		switch strings.ToLower(strings.TrimSpace(p.Type)) {
+		case "seconds", "duration":
+		default:
+			continue
+		}
+		v, ok := values[schemaFieldKey(p.NodeID, p.FieldName)]
+		if !ok {
+			continue
+		}
+		n, ok := asNumber(v)
+		if !ok || n <= 0 {
+			continue
+		}
+		if n > float64(relaycommon.MaxTaskDurationSeconds) {
+			n = float64(relaycommon.MaxTaskDurationSeconds)
+		}
+		return n
+	}
+	return 1
 }
 
 // coerceValueByType enforces type bounds and returns the stringified value

@@ -56,6 +56,40 @@ func TestValidateApp_Invariants(t *testing.T) {
 			wantErr: "modelBaseRateRatio 必须为正数",
 		},
 		{
+			name: "per-call and per-second mutually exclusive",
+			mutator: func(d *runninghub.AppCreateDTO) {
+				d.PerSecondBilling = true
+				d.QuotaPerSecond = 100
+			},
+			wantErr: "互斥",
+		},
+		{
+			name: "per-second without positive quota rejected",
+			mutator: func(d *runninghub.AppCreateDTO) {
+				d.PerCallBilling = false
+				d.PerSecondBilling = true
+				d.QuotaPerSecond = 0
+			},
+			wantErr: "每单位秒额度",
+		},
+		{
+			name: "negative per-second quota rejected",
+			mutator: func(d *runninghub.AppCreateDTO) {
+				d.PerCallBilling = false
+				d.QuotaPerSecond = -5
+			},
+			wantErr: "quotaPerSecond 不能为负数",
+		},
+		{
+			name: "valid per-second passes",
+			mutator: func(d *runninghub.AppCreateDTO) {
+				d.PerCallBilling = false
+				d.PerSecondBilling = true
+				d.QuotaPerSecond = 2_000
+			},
+			wantErr: "",
+		},
+		{
 			name:    "name 200 chars rejected",
 			mutator: func(d *runninghub.AppCreateDTO) { d.Name = strings.Repeat("x", 200) },
 			wantErr: "名称过长",

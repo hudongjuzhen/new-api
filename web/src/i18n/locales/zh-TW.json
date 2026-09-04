@@ -5526,5 +5526,9 @@
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
     "Zoom": "縮放"
-  }
+  },
+  "Dynamic Billing": "Dynamic Billing",
+  "Per-Second Billing": "Per-Second Billing",
+  "Quota Per Second": "Quota Per Second",
+  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run."
 }
