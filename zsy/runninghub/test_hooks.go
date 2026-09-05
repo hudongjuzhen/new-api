@@ -1,6 +1,7 @@
 package runninghub
 
 import (
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/zsy/runninghub/rhparser"
 	"github.com/gin-gonic/gin"
 )
@@ -43,6 +44,21 @@ func TestHookValidateAppCreate(dto *AppCreateDTO) error {
 
 // TestHookListPublicApps exposes the user-side list handler for tests.
 func TestHookListPublicApps(c *gin.Context) { listPublicApps(c) }
+
+// TestHookSiteToChannelType exercises the site→channel-type mapping table used
+// by submitAppRun / selectChannelBySiteType. Exported so the routing decision
+// (site=cn ↔ type 61, site=intl ↔ type 62) is pinned in a unit test.
+func TestHookSiteToChannelType(t interface {
+	Errorf(format string, args ...any)
+	Helper()
+}) {
+	if got := siteToChannelType("cn"); got != constant.ChannelTypeRunningHub {
+		t.Errorf("siteToChannelType(cn)=%d, want %d", got, constant.ChannelTypeRunningHub)
+	}
+	if got := siteToChannelType("intl"); got != constant.ChannelTypeRunningHubIntl {
+		t.Errorf("siteToChannelType(intl)=%d, want %d", got, constant.ChannelTypeRunningHubIntl)
+	}
+}
 
 // TestHookGetPublicAppDetail exposes the user-side detail handler for tests.
 func TestHookGetPublicAppDetail(c *gin.Context) { getPublicAppDetail(c) }

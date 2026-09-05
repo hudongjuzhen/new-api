@@ -65,6 +65,15 @@ func sweepTimedOutTasks(ctx context.Context) {
 	timedOutCount := 0
 
 	for _, task := range tasks {
+		// Platform-exempt tasks are never marked timed out: their lifecycle is
+		// driven entirely by the upstream result (SUCCESS/FAILED/CANCELED) and
+		// the poller keeps querying until the upstream says so. The UI must
+		// reflect the upstream state rather than our local wall-clock.
+		if skipTimeoutForPlatform(task.Platform) {
+			logger.LogDebug(ctx, fmt.Sprintf("sweepTimedOutTasks: platform %s is exempt from timeout, keep task %s in-flight", task.Platform, task.TaskID))
+			continue
+		}
+
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < model.TaskRefundLegacyCutoff
 
 		oldStatus := task.Status
@@ -98,6 +107,32 @@ func sweepTimedOutTasks(ctx context.Context) {
 	if timedOutCount > 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("sweepTimedOutTasks: timed out %d tasks", timedOutCount))
 	}
+}
+
+// skipTimeoutForPlatform reports whether tasks of this platform must never be
+// auto-marked as timed out. Each channel type is its own platform string
+// (strconv.Itoa(channelType)) and each is declared here explicitly — new
+// channel types are NOT implicitly exempt just because they share an upstream
+// vendor. RunningHub 国内站 (61) and RunningHub 国际站 (62) are therefore
+// two independent entries; when a future channel type (e.g. 65) should be
+// timeout-protected it gets its own case, and a type that SHOULD time out
+// simply has no case here.
+//
+// RunningHub tasks are exempt because the upstream reports the authoritative
+// status (SUCCESS/FAILED/CANCELED) and can take a long time (e.g. image/video
+// generation minutes to hours); the poller keeps querying them until the
+// upstream returns a terminal state, and the UI shows whatever the upstream
+// says instead of a local "timeout" guess.
+func skipTimeoutForPlatform(platform constant.TaskPlatform) bool {
+	switch platform {
+	case constant.TaskPlatform("61"): // RunningHub 国内站 (channel type 61)
+		return true
+	case constant.TaskPlatform("62"): // RunningHub 国际站 (channel type 62)
+		return true
+	case constant.TaskPlatform("63"): // LiblibAI (channel type 63)
+		return true
+	}
+	return false
 }
 
 // TaskPollSummary is the result recorded on an async_task_poll system task row,

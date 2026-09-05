@@ -202,6 +202,8 @@ func AppSyncKeypool(appID uint) (*KeypoolRefreshResult, error) {
 	if app.ChannelID <= 0 {
 		return nil, errors.New("当前应用尚未绑定 RunningHub 渠道，无法同步 keypool")
 	}
+	// The keypool needs the channel's raw key list to reconcile pool entries,
+	// so the full row (including `key`) must be loaded — never Omit it here.
 	ch, err := model.GetChannelById(int(app.ChannelID), true)
 	if err != nil {
 		return nil, fmt.Errorf("load channel %d: %w", app.ChannelID, err)

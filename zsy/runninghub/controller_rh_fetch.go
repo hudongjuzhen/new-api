@@ -183,7 +183,7 @@ func fetchAppTemplate(c *gin.Context) {
 		return
 	}
 
-	ch, err := model.GetChannelById(int(req.ChannelID), false)
+	ch, err := model.GetChannelById(int(req.ChannelID), true)
 	if err != nil {
 		common.ApiError(c, fmt.Errorf("加载 RunningHub 渠道失败: %w", err))
 		return

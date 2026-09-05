@@ -396,13 +396,17 @@ function extractResultUrls(task: TaskDto): string[] {
   }
   const out: string[] = []
   for (const it of results) {
-    if (typeof it?.url === 'string') {
+    // Only absolute http(s) URLs are renderable media. Anything else (e.g. a
+    // relative "/任务超时（1440分钟）" that slipped into data.results[].url)
+    // must never become an <img src> — the browser would treat it as a
+    // navigation and hit the SPA fallback.
+    if (typeof it?.url === 'string' && /^https?:\/\//i.test(it.url)) {
       out.push(it.url)
-    } else if (typeof it?.value === 'string' && /^https?:\/\//.test(it.value)) {
+    } else if (typeof it?.value === 'string' && /^https?:\/\//i.test(it.value)) {
       out.push(it.value)
     }
   }
-  if (out.length === 0 && task.result_url) {
+  if (out.length === 0 && task.result_url && /^https?:\/\//i.test(task.result_url)) {
     out.push(task.result_url)
   }
   return [...new Set(out)]
@@ -685,9 +689,20 @@ function GenerationRecords({ appId }: { appId: number }) {
                     task.fail_reason && (
                       <span className='text-destructive flex items-center gap-1 text-[11px]'>
                         <XCircle className='size-3.5' />
-                        <span className='min-w-0 truncate'>
-                          {task.fail_reason}
-                        </span>
+                        {/^https?:\/\//.test(task.fail_reason) ? (
+                          <a
+                            href={task.fail_reason}
+                            target='_blank'
+                            rel='noreferrer'
+                            className='min-w-0 truncate underline-offset-2 hover:underline'
+                          >
+                            {task.fail_reason}
+                          </a>
+                        ) : (
+                          <span className='min-w-0 truncate'>
+                            {task.fail_reason}
+                          </span>
+                        )}
                       </span>
                     )}
                 </div>

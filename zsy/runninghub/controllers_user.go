@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -26,6 +27,16 @@ import (
 // adaptor. It matches ChannelTypeRunningHub (61) cast as a platform string
 // which is what relay.GetTaskAdaptor consults for plugin registrations.
 var rhPlatform = constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeRunningHub))
+
+// channelTypePlatform maps a RunningHub-family channel type to the platform
+// string the task is recorded under. Each site (61 国内站 / 62 国际站 / 63
+// LiblibAI) is its own independent TaskPlatform — tasks never collapse to a
+// single "61" regardless of the actual channel they ran on. The poller's
+// per-platform rules (timeout exemption, etc.) read this exact value, so it
+// must be the channel's own type.
+func channelTypePlatform(channelType int) constant.TaskPlatform {
+	return constant.TaskPlatform(strconv.Itoa(channelType))
+}
 
 // ---------------------------------------------------------------------------
 // Public listing
@@ -273,22 +284,50 @@ func submitAppRun(c *gin.Context) {
 	}
 
 	// The site selector routes every attempt through a channel of the matching
-	// type (RunningHub 61 / RunningHub Intl 62 / Liblib 63), exactly like a pin
-	// but without naming a specific channel. It overrides the legacy
-	// model->channel selection below; a pinned channel still takes priority.
-	var pinnedChannel *model.Channel
+	// site's channel type (RunningHub 61 / RunningHub Intl 62). It overrides
+	// the legacy model->channel selection below.
+	//
+	// The site field (site=cn | intl) is the authoritative routing input: the
+	// channel actually used MUST be of the same site family. So the pinned
+	// channel is only honored when its type matches the site's channel type;
+	// a site=cn app can never run through an Intl (62) / Liblib (63) channel,
+	// and a site=intl app can never run through a cn (61) channel. When an app
+	// has NO site configured, the pinned channel (if any) drives the routing
+	// (legacy behavior). When a site IS configured but the pinned channel's
+	// type does not match it, the pin is ignored and routing falls back to the
+	// site selector — returning a clear error if no channel of that site type
+	// advertises the app as a model.
+	var pointedChannel *model.Channel
 	if app.ChannelID > 0 {
-		pc, pcErr := model.GetChannelById(int(app.ChannelID), false)
+		// Fetch the pinned channel WITH its key (selectAll=true). The plugin's
+		// submit path is the only consumer that needs the raw RH key — the
+		// admin UI and keypool listing intentionally Omit it — so we must opt
+		// into the full row here or the adaptor receives an empty ApiKey and
+		// upstream auth silently fails.
+		pc, pcErr := model.GetChannelById(int(app.ChannelID), true)
 		if pcErr != nil {
 			common.ApiErrorMsg(c, "应用绑定渠道无效: "+pcErr.Error())
 			return
 		}
-		pinnedChannel = pc
+		pointedChannel = pc
 	}
 	wantSiteType := siteToChannelType(app.Site)
 	if app.Site != "" && wantSiteType == 0 {
 		common.ApiErrorMsg(c, "非法的站点选择: "+app.Site)
 		return
+	}
+
+	// When the app has a site configured, the pin is dropped (falls back to the
+	// site selector) whenever the pinned channel's type is not the site's type;
+	// the site selector below is the routing source of truth for site-scoped
+	// apps, so a site=cn app can never run through an Intl (62) channel and vice
+	// versa. A pinned channel is honored when its type matches the site's type,
+	// or when the app has no site at all (legacy behavior).
+	var pinnedChannel *model.Channel
+	if pointedChannel != nil {
+		if wantSiteType == 0 || pointedChannel.Type == wantSiteType {
+			pinnedChannel = pointedChannel
+		}
 	}
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
@@ -362,15 +401,28 @@ func submitAppRun(c *gin.Context) {
 	if result != nil && publicTaskID != "" {
 		userId, _ := c.Get("id")
 		userIdInt, _ := userId.(int)
+		// The task is recorded under the platform string of the channel it
+		// actually ran on (61 国内站 / 62 国际站 / 63 LiblibAI), not a shared
+		// "61". The poller's per-platform rules and the tasks list both key
+		// off this value.
+		taskPlatform := rhPlatform
+		if channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType); channelType > 0 {
+			taskPlatform = channelTypePlatform(channelType)
+		}
 		task := &model.Task{
 			TaskID:     publicTaskID,
 			UserId:     userIdInt,
-			Platform:   rhPlatform,
+			Platform:   taskPlatform,
 			Quota:      quotaFromResult(result),
 			Action:     relayInfo.Action,
 			Status:     model.TaskStatusInProgress,
 			Data:       dataFromResult(result),
 			ChannelId:  c.GetInt("channel_id"),
+			// submit_time is what the timeout sweep's cutoff compares against;
+			// without it (0) the task is immediately past every cutoff and would
+			// be a timeout candidate on the very next sweep. It's also the
+			// "任务提交时间" shown in the UI.
+			SubmitTime: time.Now().Unix(),
 			Properties: model.Properties{OriginModelName: relayInfo.OriginModelName},
 			PrivateData: model.TaskPrivateData{
 				UpstreamTaskID: upstreamFromResult(result),
@@ -398,15 +450,27 @@ func submitAppRun(c *gin.Context) {
 	})
 }
 
+// rhFamilyPlatforms is the set of TaskPlatform strings the RunningHub family
+// can record tasks under (61 国内站 / 62 国际站 / 63 LiblibAI). The user-facing
+// "generation records" list filters by this family so it sees tasks from every
+// site regardless of which channel type they ran on.
+var rhFamilyPlatforms = []constant.TaskPlatform{
+	channelTypePlatform(constant.ChannelTypeRunningHub),     // "61"
+	channelTypePlatform(constant.ChannelTypeRunningHubIntl), // "62"
+	channelTypePlatform(constant.ChannelTypeLiblib),         // "63"
+}
+
 // listMyRhTasks returns the current user's RunningHub tasks (paginated). It
-// reuses the host task query filtered to the RH platform so the "generation
-// records" panel renders the same TaskDto envelope as the submit path.
+// reuses the host task query filtered to the RunningHub family (`"61"`, `"62"`,
+// `"63"`) so the "generation records" panel renders tasks submitted through
+// any of the three sites, each recorded under its own platform string.
 func listMyRhTasks(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	userId := c.GetInt("id")
 
 	status := strings.TrimSpace(c.Query("status"))
-	params := model.SyncTaskQueryParams{Platform: rhPlatform, Status: status}
+	// Platform filter: only the RunningHub family platforms, never "all".
+	params := model.SyncTaskQueryParams{Platforms: rhFamilyPlatforms, Status: status}
 
 	items := model.TaskGetAllUserTask(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), params)
 	total := model.TaskCountAllUserTask(userId, params)
@@ -723,11 +787,38 @@ func replaceRequestBody(c *gin.Context, body []byte) error {
 	return nil
 }
 
+// siteNameOrEmpty returns the human-readable site label for error messages,
+// tolerating a nil AppView (used by the selector's defensive error paths).
+func siteNameOrEmpty(app *AppView) string {
+	if app == nil {
+		return ""
+	}
+	return siteName(app.Site)
+}
+
+// SelectChannelBySiteTypeForTest is the test-only entry point into
+// selectChannelBySiteType. It forwards to the production selector with a
+// nil AppView (only Site/UpstreamID are consulted, both empty) so callers can
+// assert the site-type guard without a database.
+func SelectChannelBySiteTypeForTest(c *gin.Context, app *AppView, channelType int, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+	return selectChannelBySiteType(c, app, channelType, retryParam)
+}
+
 // selectChannelBySiteType returns an enabled channel of the given channel type
 // that advertises the app's UpstreamID as a model for the request's group,
 // using the host's weighted random pick so site-scoped apps participate in the
-// normal group/weight distribution instead of bypassing it.
+// normal group/weight distribution instead of bypassing it. It NEVER returns a
+// channel whose type differs from `channelType` — the caller guarantees the
+// site's channel type before calling, and the type check here is the last
+// safety net against routing an app to the wrong site's upstream.
 func selectChannelBySiteType(c *gin.Context, app *AppView, channelType int, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+	if channelType == 0 {
+		return nil, types.NewError(
+			fmt.Errorf("站点 %s 未配置 (channelType=0)", siteNameOrEmpty(app)),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	if retryParam != nil {
 		ch, err := model.GetRandomSatisfiedChannel(retryParam.TokenGroup, app.UpstreamID, 0, retryParam.RequestPath)
 		if err == nil && ch != nil && ch.Type == channelType {

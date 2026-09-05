@@ -288,12 +288,38 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	if action := c.GetString("action"); action != "" && info != nil {
 		info.Action = action
 	}
-	return channel.DoTaskApiRequest(a, c, info, requestBody)
+	resp, err := channel.DoTaskApiRequest(a, c, info, requestBody)
+	if resp != nil && resp.Request != nil && resp.Request.URL != nil {
+		common.SysLog(fmt.Sprintf(
+			"[rh-debug] submit called url=%s key=%s body=model=%s",
+			resp.Request.URL.String(), debugMaskedKey(info), info.OriginModelName,
+		))
+	}
+	return resp, err
+}
+
+// debugMaskedKey exposes the bearer key actually sent to RunningHub for the
+// temporary debug run: first 6 + last 4 chars, middle replaced with "…". This
+// lets us correlate the exact key to the 90x response without leaking the full
+// secret into the log.
+func debugMaskedKey(info *relaycommon.RelayInfo) string {
+	if info == nil || info.ApiKey == "" {
+		return "(no channel key)"
+	}
+	k := info.ApiKey
+	if len(k) <= 12 {
+		return k[:2] + "…" + k[len(k)-2:]
+	}
+	return k[:6] + "…" + k[len(k)-4:]
 }
 
 // DoResponse parses the V2 submit response, returns (upstream taskId, raw
 // bytes). The host already writes the response body to the client via the
 // surrounding relay handler; this only extracts task bookkeeping data.
+//
+// Temporary debug: when the upstream returned an error tuple, the exact URL
+// and raw response body are logged via common.SysLog so a 90x
+// ("webapp not exists", "app not found", …) can be correlated to the submit.
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *taskdto.TaskError) {
 	if resp == nil {
 		taskErr = service.TaskErrorWrapperLocal(fmt.Errorf("nil response"), "nil_response", http.StatusBadGateway)
@@ -309,10 +335,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		taskErr = service.TaskErrorWrapper(err, "decode_rh_response", http.StatusInternalServerError)
 		return
 	}
-	// RH can return 200 OK with a flat protocol-level error code when the
-	// submit itself failed (e.g. 1014 enterprise-shared key required). Those
-	// are surfaced as task errors so the relay layer can refund the user.
 	if rhResp.ErrorCode != "" && (rhResp.TaskID == "" || rhResp.Status == StatusFailed || common.JsonRawMessageToString(rhResp.FailedReason) != "") {
+		common.SysLog(fmt.Sprintf(
+			"[rh-debug] submit FAILED url=%s code=%s msg=%s raw=%s",
+			debugResolvedURL(resp, info), rhResp.ErrorCode, rhResp.ErrorMessage, string(raw),
+		))
 		taskErr = service.TaskErrorWrapper(
 			fmt.Errorf("code=%s msg=%s", rhResp.ErrorCode, rhResp.ErrorMessage),
 			mapErrorCodeToTaskCode(rhResp.ErrorCode, rhResp.ErrorMessage),
@@ -322,6 +349,19 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return rhResp.TaskID, raw, taskErr
 	}
 	return rhResp.TaskID, raw, nil
+}
+
+// debugResolvedURL returns the full URL the submit was dispatched to, or a
+// best-effort reconstruction from the relay info when the response's tripped
+// URL is missing.
+func debugResolvedURL(resp *http.Response, info *relaycommon.RelayInfo) string {
+	if resp != nil && resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.String() != "" {
+		return resp.Request.URL.String()
+	}
+	if info == nil {
+		return "(no relay info)"
+	}
+	return fmt.Sprintf("channel_type=%d origin_model=%s base_url=%s", info.ChannelType, info.OriginModelName, info.ChannelBaseUrl)
 }
 
 // mapErrorCodeToTaskCode translates RH errorCode strings into stable codes
