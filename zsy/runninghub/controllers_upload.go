@@ -3,7 +3,6 @@ package runninghub
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,33 +19,45 @@ import (
 // upstream RunningHub endpoint documents.
 const maxUploadBytes = 50 << 20 // 50MB
 
-// uploadAppMedia (POST /api/zsy/rh/upload/:channelId) — forwards one
-// multipart file to the RunningHub site the bound channel serves and returns
-// the upstream fileName (e.g. "openapi/xxxx.png"), which callers then send
-// back as nodeInfoList[].fieldValue for image/video/audio inputs.
+// resolveUploadChannel picks the RunningHub channel that serves the app's
+// site. Apps no longer pin a channel: the site field (cn/intl) is the routing
+// source of truth, so the first enabled channel of the site's type wins. A
+// nil result with a nil error means no enabled channel exists for the site.
+func resolveUploadChannel(site string) (*model.Channel, error) {
+	channelType := siteToChannelType(site)
+	if channelType == 0 {
+		return nil, fmt.Errorf("非法的站点选择: %q", site)
+	}
+	ch, err := model.GetFirstEnabledChannelByType(channelType)
+	if err != nil {
+		return nil, fmt.Errorf("查询站点渠道失败: %w", err)
+	}
+	return ch, nil
+}
+
+// uploadAppMedia (POST /api/zsy/rh/upload) — forwards one multipart file to
+// the RunningHub site the app's `site` field declares and returns the upstream
+// fileName (e.g. "openapi/xxxx.png"), which callers then send back as
+// nodeInfoList[].fieldValue for image/video/audio inputs.
 //
-//   - The channel id comes from the route path, not from any user-supplied URL
-//     field, so the request can only reach channels the admin configured.
 //   - The upstream target is {base_url}/openapi/v2/media/upload/binary derived
-//     from the channel's own base URL — never from the request body. This keeps
-//     the SSRF surface closed (dev plan §3.6).
+//     from the resolved channel's base URL — never from the request body. This
+//     keeps the SSRF surface closed (dev plan §3.6).
+//   - The caller passes ?site=cn|intl; the first enabled channel of that
+//     site's type is used (apps do not bind channels any more).
 //   - Only RunningHub-family channel types (61/62/63) are accepted.
 //
 // Response: { fileName, url } where url is the fetchable URL on the same RH
 // host (RH media files are not reachable through this gateway).
 func uploadAppMedia(c *gin.Context) {
-	channelID, err := strconv.ParseInt(strings.TrimSpace(c.Param("channelId")), 10, 64)
-	if err != nil || channelID <= 0 {
-		common.ApiErrorMsg(c, "非法的渠道 ID")
-		return
-	}
-	ch, err := model.GetChannelById(int(channelID), true)
+	site := strings.TrimSpace(c.Query("site"))
+	ch, err := resolveUploadChannel(site)
 	if err != nil {
-		common.ApiErrorMsg(c, "加载渠道失败: "+err.Error())
+		common.ApiErrorMsg(c, err.Error())
 		return
 	}
-	if !pluginChannelTypes[ch.Type] {
-		common.ApiErrorMsg(c, fmt.Sprintf("渠道 %d 不是 RunningHub 渠道 (type=%d)", channelID, ch.Type))
+	if ch == nil {
+		common.ApiErrorMsg(c, "该站点暂无可用渠道，无法上传")
 		return
 	}
 
@@ -79,5 +90,27 @@ func uploadAppMedia(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"fileName": fileName,
 		"url":      downloadURL,
+	})
+}
+
+// getUploadChannelStatus (GET /api/zsy/rh/upload-channel?site=cn|intl) —
+// reports whether at least one enabled RunningHub channel exists for the
+// site, so the portal can enable the media upload zone without probing a
+// per-app channel binding.
+func getUploadChannelStatus(c *gin.Context) {
+	site := strings.TrimSpace(c.Query("site"))
+	channelType := siteToChannelType(site)
+	if channelType == 0 {
+		common.ApiErrorMsg(c, fmt.Sprintf("非法的站点选择: %q", site))
+		return
+	}
+	count, err := model.CountEnabledChannelsByType(channelType)
+	if err != nil {
+		common.ApiError(c, fmt.Errorf("查询站点渠道失败: %w", err))
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"available": count > 0,
+		"count":     count,
 	})
 }

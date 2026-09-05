@@ -4811,6 +4811,7 @@
     "This announcement will be removed from the list.": "Это объявление будет удалено из списка.",
     "This API shortcut will be removed from the list.": "Этот ярлык API будет удален из списка.",
     "This app has no bound channel yet": "У этого приложения пока нет привязанного канала",
+    "This site has no available channel for upload": "На этом сайте нет доступного канала для загрузки",
     "This app has no configurable parameters.": "В этом приложении нет настраиваемых параметров.",
     "This application has no configurable parameters yet.": "У этого приложения пока нет настраиваемых параметров.",
     "This callback URL updates from the slug field and is the value to register with your provider.": "Этот URL обратного вызова обновляется на основе поля slug; зарегистрируйте его у провайдера.",

@@ -4811,6 +4811,7 @@
     "This announcement will be removed from the list.": "Cette annonce sera retirée de la liste.",
     "This API shortcut will be removed from the list.": "Ce raccourci API sera retiré de la liste.",
     "This app has no bound channel yet": "Cette application n'a pas encore de canal lié",
+    "This site has no available channel for upload": "Ce site n'a aucun canal disponible pour l'envoi",
     "This app has no configurable parameters.": "Cette application n’a aucun paramètre configurable.",
     "This application has no configurable parameters yet.": "Cette application n'a pas encore de paramètres configurables.",
     "This callback URL updates from the slug field and is the value to register with your provider.": "Cette URL de rappel se met à jour à partir du champ slug et doit être enregistrée auprès de votre fournisseur.",

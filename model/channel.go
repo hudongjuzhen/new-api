@@ -1134,6 +1134,30 @@ func CountChannelsByType(channelType int) (int64, error) {
 	return count, err
 }
 
+// GetFirstEnabledChannelByType returns the lowest-id enabled channel of the
+// given type, or nil when none is enabled. Used by plugins that route by
+// channel type (site) instead of a pinned channel id and need the channel's
+// raw key, so the full row is loaded (no Omit("key")).
+func GetFirstEnabledChannelByType(channelType int) (*Channel, error) {
+	var channel Channel
+	err := DB.Where("type = ? AND status = ?", channelType, common.ChannelStatusEnabled).
+		Order("id asc").First(&channel).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &channel, nil
+}
+
+// CountEnabledChannelsByType counts enabled channels of the given type.
+func CountEnabledChannelsByType(channelType int) (int64, error) {
+	var count int64
+	err := DB.Model(&Channel{}).Where("type = ? AND status = ?", channelType, common.ChannelStatusEnabled).Count(&count).Error
+	return count, err
+}
+
 // Return map[type]count for all channels
 func CountChannelsGroupByType() (map[int64]int64, error) {
 	type result struct {

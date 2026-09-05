@@ -4811,6 +4811,7 @@
     "This announcement will be removed from the list.": "此公告将从列表中移除。",
     "This API shortcut will be removed from the list.": "此 API 快捷方式将从列表中移除。",
     "This app has no bound channel yet": "该应用尚未绑定渠道",
+    "This site has no available channel for upload": "该站点暂无可用渠道，无法上传",
     "This app has no configurable parameters.": "该应用没有可配置的参数。",
     "This application has no configurable parameters yet.": "该应用暂无可配置的参数。",
     "This callback URL updates from the slug field and is the value to register with your provider.": "此回调 URL 会根据 slug 字段实时更新，请将它注册到你的提供商。",

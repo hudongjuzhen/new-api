@@ -4811,6 +4811,7 @@
     "This announcement will be removed from the list.": "Thông báo này sẽ bị xóa khỏi danh sách.",
     "This API shortcut will be removed from the list.": "Lối tắt API này sẽ bị xóa khỏi danh sách.",
     "This app has no bound channel yet": "Ứng dụng này chưa có kênh liên kết",
+    "This site has no available channel for upload": "Trang này không có kênh khả dụng để tải lên",
     "This app has no configurable parameters.": "Ứng dụng này không có tham số cấu hình.",
     "This application has no configurable parameters yet.": "Ứng dụng này chưa có tham số nào có thể cấu hình.",
     "This callback URL updates from the slug field and is the value to register with your provider.": "URL callback này cập nhật theo trường slug và là giá trị cần đăng ký với nhà cung cấp.",

@@ -45,13 +45,15 @@ func mountRoutes(router *gin.Engine) {
 			apps.GET("/tasks", requireUserAuth, listMyRhTasks)
 		}
 		// Media upload proxy: forwards user files to the RunningHub site the
-		// selected channel serves (SSRF-safe: the target /openapi/v2/media/
-		// upload/binary is derived from the channel's configured base URL, never
-		// from anything the caller sends). Consumers that reach back with the
-		// returned fileName (e.g. image/video node inputs) do so by calling the
-		// public file endpoint of the *matching* site (cn vs ai), which the
-		// harness does not filter — making fileName round-trips work as-is.
-		api.POST("/upload/:channelId", requireUserAuth, uploadAppMedia)
+		// app's `site` field declares (SSRF-safe: the target
+		// /openapi/v2/media/upload/binary is derived from the resolved
+		// channel's configured base URL, never from anything the caller sends).
+		// Consumers that reach back with the returned fileName (e.g.
+		// image/video node inputs) do so by calling the public file endpoint of
+		// the *matching* site (cn vs ai), which the harness does not filter —
+		// making fileName round-trips work as-is.
+		api.POST("/upload", requireUserAuth, uploadAppMedia)
+		api.GET("/upload-channel", requireUserAuth, getUploadChannelStatus)
 	}
 
 	admin := router.Group("/dashboard/zsy/rh")

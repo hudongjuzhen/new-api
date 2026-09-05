@@ -4811,6 +4811,7 @@
     "This announcement will be removed from the list.": "このお知らせはリストから削除されます。",
     "This API shortcut will be removed from the list.": "この API ショートカットはリストから削除されます。",
     "This app has no bound channel yet": "このアプリにはまだチャネルが紐付けられていません",
+    "This site has no available channel for upload": "このサイトにはアップロード可能なチャンネルがありません",
     "This app has no configurable parameters.": "このアプリには設定可能なパラメータはありません。",
     "This application has no configurable parameters yet.": "このアプリには設定可能なパラメータがまだありません。",
     "This callback URL updates from the slug field and is the value to register with your provider.": "このコールバック URL は slug フィールドに合わせて更新されます。プロバイダーに登録する値です。",

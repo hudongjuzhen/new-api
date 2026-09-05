@@ -330,12 +330,29 @@ export async function runApp(
 }
 
 /**
- * Upload a media file (image/audio/video) to the RunningHub site the given
- * channel serves. Returns the upstream fileName (e.g. `openapi/xxxx.png`)
+ * Check whether the RunningHub site has at least one enabled channel that can
+ * accept media uploads. `site` is the app's site value ('' | 'cn' | 'intl');
+ * '' resolves to the default domestic site.
+ */
+export async function getUploadChannelStatus(site: string): Promise<{
+  available: boolean
+  count: number
+}> {
+  const res = await api.get<{
+    success: boolean
+    data?: { available: boolean; count: number }
+  }>('/api/zsy/rh/upload-channel', { params: { site } })
+  return res.data.data ?? { available: false, count: 0 }
+}
+
+/**
+ * Upload a media file (image/audio/video) to the RunningHub site the app's
+ * `site` field declares. The backend picks the first enabled channel of the
+ * site's type and returns the upstream fileName (e.g. `openapi/xxxx.png`)
  * which is what image/audio/video node inputs expect as their fieldValue.
  */
 export async function uploadAppMedia(
-  channelId: number,
+  site: string,
   file: File
 ): Promise<{ fileName: string; url: string }> {
   const formData = new FormData()
@@ -344,7 +361,8 @@ export async function uploadAppMedia(
     success: boolean
     message?: string
     data?: { fileName: string; url: string }
-  }>(`/api/zsy/rh/upload/${channelId}`, formData, {
+  }>('/api/zsy/rh/upload', formData, {
+    params: { site },
     skipBusinessError: true,
   })
   const data = res.data

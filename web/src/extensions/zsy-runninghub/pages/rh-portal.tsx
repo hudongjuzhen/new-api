@@ -52,6 +52,7 @@ import {
   runApp,
   listMyRhTasks,
   uploadAppMedia,
+  getUploadChannelStatus,
   type AppView,
   type SchemaParam,
   type TaskDto,
@@ -68,31 +69,35 @@ const MEDIA_ACCEPT: Record<string, string> = {
   video: 'video/*',
 }
 
-/** Whether the URL input currently holds a value the user typed/pasted. */
-function isRemoteUrl(v: string): boolean {
-  return typeof v === 'string' && v.trim().startsWith('http')
-}
-
 /**
- * Upload-capable renderer for image/audio/video parameters. Users can either
- * pick a local file (forwarded to the RunningHub site the app's channel
- * serves) or paste a public URL. The uploaded fileName is what the upstream
- * nodeInfoList fieldValue expects; the fetchable media URL (RH-hosted after an
- * upload, or the pasted link) is shown as a live preview below.
+ * Upload-capable renderer for image/audio/video parameters.
+ *
+ * Apps no longer bind a channel: both the submit and the upload paths route to
+ * the RunningHub site the app's `site` field declares (cn → 国内站, intl →
+ * 国际站). The backend picks the first enabled channel of the site's type; the
+ * portal only checks that such a channel exists (uploadAvailable) before
+ * offering the dropzone.
+ *
+ * File upload is the input for media parameters, so no separate URL input is
+ * rendered here — pasting a public URL manually is not needed when uploads are
+ * available and avoids confusing the user with a second input on the same
+ * field. The uploaded fileName is what the upstream nodeInfoList fieldValue
+ * expects; the fetchable media URL (RH-hosted after an upload) is shown as a
+ * live preview below.
  */
 function MediaParamField({
   param,
-  value,
   onChange,
   errors,
-  channelId,
+  site,
+  uploadAvailable,
   onUploadingChange,
 }: {
   param: SchemaParam
-  value: string
   onChange: (v: string) => void
   errors: Record<string, string>
-  channelId: number
+  site: string
+  uploadAvailable: boolean
   onUploadingChange: (uploading: boolean) => void
 }) {
   const { t } = useTranslation()
@@ -113,14 +118,14 @@ function MediaParamField({
 
   const handleFile = async (file: File) => {
     if (!file) return
-    if (channelId <= 0) {
-      toast.error(t('This app has no bound channel yet'))
+    if (!uploadAvailable) {
+      toast.error(t('This site has no available channel for upload'))
       return
     }
     setUploading(true)
     onUploadingChange(true)
     try {
-      const result = await uploadAppMedia(channelId, file)
+      const result = await uploadAppMedia(site, file)
       setUploaded(result)
       onChange(result.fileName)
     } catch (e: unknown) {
@@ -137,14 +142,10 @@ function MediaParamField({
   }
 
   const hasFile = uploaded !== null
-  // Prefer the uploaded preview URL; fall back to a pasted public URL so the
-  // media preview stays live as soon as the user types a link.
-  let mediaUrl = ''
-  if (hasFile) {
-    mediaUrl = uploaded.url
-  } else if (isRemoteUrl(value)) {
-    mediaUrl = value.trim()
-  }
+  // The media preview only ever reflects an uploaded file now: removes the
+  // "two inputs per media field" confusion (the duplicate-label symptom came
+  // from the separate paste-URL row sharing the field with the dropzone).
+  const mediaUrl = hasFile ? uploaded.url : ''
 
   let mediaPreview: ReactNode | null = null
   if (mediaUrl) {
@@ -205,54 +206,40 @@ function MediaParamField({
         </div>
       )}
 
-      {!hasFile &&
-        (channelId > 0 ? (
-          <label
-            className={`border-border/60 bg-background hover:border-primary/50 hover:bg-primary/5 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-3 py-4 text-center transition-colors ${
-              uploading || channelId <= 0 ? 'pointer-events-none opacity-60' : ''
-            }`}
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault()
-              const file = e.dataTransfer.files?.[0]
-              if (file) void handleFile(file)
-            }}
-          >
-            {uploading ? (
-              <Loader2 className='text-muted-foreground size-4 animate-spin' />
-            ) : (
-              <UploadCloud className='text-muted-foreground size-4' />
-            )}
-            <span className='text-muted-foreground text-xs'>
-              {t('Click to upload')}
-            </span>
-            <input
-              accept={MEDIA_ACCEPT[type]}
-              className='hidden'
-              type='file'
-              disabled={uploading || channelId <= 0}
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) void handleFile(file)
-                e.target.value = ''
-              }}
-            />
-          </label>
-        ) : (
-          <p className='text-muted-foreground text-xs'>
-            {t('This app has no bound channel yet')}
-          </p>
-        ))}
-
       {!hasFile && (
-        <div className='flex items-center gap-2'>
-          <span className='text-muted-foreground text-xs'>{t('Or')}</span>
-          <Input
-            value={value ?? ''}
-            placeholder={t('Paste a public URL')}
-            onChange={(e) => onChange(e.target.value)}
+        <label
+          className={`border-border/60 bg-background hover:border-primary/50 hover:bg-primary/5 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed px-3 py-4 text-center transition-colors ${
+            uploading || !uploadAvailable ? 'pointer-events-none opacity-60' : ''
+          }`}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            const file = e.dataTransfer.files?.[0]
+            if (file) void handleFile(file)
+          }}
+        >
+          {uploading ? (
+            <Loader2 className='text-muted-foreground size-4 animate-spin' />
+          ) : (
+            <UploadCloud className='text-muted-foreground size-4' />
+          )}
+          <span className='text-muted-foreground text-xs'>
+            {uploadAvailable
+              ? t('Click to upload')
+              : t('This site has no available channel for upload')}
+          </span>
+          <input
+            accept={MEDIA_ACCEPT[type]}
+            className='hidden'
+            type='file'
+            disabled={uploading || !uploadAvailable}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) void handleFile(file)
+              e.target.value = ''
+            }}
           />
-        </div>
+        </label>
       )}
 
       {err && <p className='text-destructive text-xs'>{err}</p>}
@@ -266,20 +253,37 @@ function ParamField({
   value,
   onChange,
   errors,
-  channelId,
+  site,
+  uploadAvailable,
   onUploadingChange,
 }: {
   param: SchemaParam
   value: string
   onChange: (v: string) => void
   errors: Record<string, string>
-  channelId: number
+  site: string
+  uploadAvailable: boolean
   onUploadingChange: (uploading: boolean) => void
 }) {
   const { t } = useTranslation()
   const type = (param.type || 'text').toLowerCase()
   const requiredMark = param.required ? ' *' : ''
   const err = errors[fieldKey(param)]
+
+  // Media params render their own Label inside MediaParamField; returning here
+  // skips the generic label wrapper below so the title never shows twice.
+  if (type === 'image' || type === 'audio' || type === 'video' || type === 'file') {
+    return (
+      <MediaParamField
+        param={param}
+        onChange={onChange}
+        errors={errors}
+        site={site}
+        uploadAvailable={uploadAvailable}
+        onUploadingChange={onUploadingChange}
+      />
+    )
+  }
 
   const control = (() => {
     switch (type) {
@@ -332,20 +336,6 @@ function ParamField({
               ))}
             </SelectContent>
           </Select>
-        )
-      case 'image':
-      case 'audio':
-      case 'video':
-      case 'file':
-        return (
-          <MediaParamField
-            param={param}
-            value={value ?? ''}
-            onChange={onChange}
-            errors={errors}
-            channelId={channelId}
-            onUploadingChange={onUploadingChange}
-          />
         )
       case 'boolean':
       case 'bool':
@@ -460,6 +450,17 @@ function AppRunForm({
   )
   const selectedToken = enabledKeys.find((k) => k.id === selectedTokenId) ?? null
 
+  // Media uploads route through the RunningHub channel pool of the app's
+  // site (cn → 国内站 61, intl → 国际站 62); the app itself no longer binds a
+  // channel. One shared check gates every media dropzone on the form.
+  const appSite = app.site ?? ''
+  const { data: uploadChannel } = useQuery({
+    queryKey: ['rh-upload-channel', appSite],
+    queryFn: () => getUploadChannelStatus(appSite),
+    staleTime: 60_000,
+  })
+  const uploadAvailable = uploadChannel?.available ?? false
+
   // Reset the form whenever the selected app changes, pre-filling defaults.
   useEffect(() => {
     const init: Record<string, string> = {}
@@ -533,7 +534,8 @@ function AppRunForm({
               param={p}
               value={values[fieldKey(p)] ?? ''}
               errors={errors}
-              channelId={app.channelId}
+              site={appSite}
+              uploadAvailable={uploadAvailable}
               onUploadingChange={(uploading) =>
                 setUploadingCount((prev) => Math.max(0, prev + (uploading ? 1 : -1)))
               }

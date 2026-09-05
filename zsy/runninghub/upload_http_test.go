@@ -14,13 +14,13 @@ import (
 )
 
 // newUploadTestRouter builds a gin router exposing only the upload proxy
-// handler. The proxy reads the pinned channel from the DB only *after* the
-// route parameter parses; a malformed channel id short-circuits before any
-// store or upstream access, keeping this test DB-free.
+// handler. The proxy resolves the site's channel from the DB only after the
+// site query param validates; an invalid site short-circuits before any store
+// or upstream access, keeping this test DB-free.
 func newUploadTestRouter() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.POST("/api/zsy/rh/upload/:channelId", runninghub.TestHookUploadAppMedia)
+	r.POST("/api/zsy/rh/upload", runninghub.TestHookUploadAppMedia)
 	return r
 }
 
@@ -37,13 +37,13 @@ func multipartBody(t *testing.T, field, filename, value string) (*bytes.Buffer, 
 	return &b, mw.FormDataContentType()
 }
 
-// TestUploadAppMediaRejectsMalformedChannelID verifies the route's first
-// guard: a non-numeric channel id is rejected with a business error before any
-// channel lookup or upstream connection.
-func TestUploadAppMediaRejectsMalformedChannelID(t *testing.T) {
+// TestUploadAppMediaRejectsInvalidSite verifies the route's first guard: an
+// unknown site value is rejected with a business error before any channel
+// lookup or upstream connection.
+func TestUploadAppMediaRejectsInvalidSite(t *testing.T) {
 	r := newUploadTestRouter()
 	body, contentType := multipartBody(t, "file", "a.png", "payload")
-	req := httptest.NewRequest(http.MethodPost, "/api/zsy/rh/upload/not-a-number", body)
+	req := httptest.NewRequest(http.MethodPost, "/api/zsy/rh/upload?site=not-a-site", body)
 	req.Header.Set("Content-Type", contentType)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
