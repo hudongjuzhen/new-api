@@ -60,6 +60,12 @@ func TestHookSiteToChannelType(t interface {
 	}
 }
 
+// TestHookSiteToChannelTypeValue returns the channel type for a site value,
+// mirroring the first decision of selectChannelBySiteType.
+func TestHookSiteToChannelTypeValue(site string) int {
+	return siteToChannelType(site)
+}
+
 // TestHookGetPublicAppDetail exposes the user-side detail handler for tests.
 func TestHookGetPublicAppDetail(c *gin.Context) { getPublicAppDetail(c) }
 
@@ -79,11 +85,3 @@ func TestHookValidateRunPayload(schema []rhparser.SchemaParam, values map[string
 	_, err := validateAndBuildNodeInfoList(schema, values)
 	return err
 }
-
-// --- App keypool admin hooks ----------------------------------------------
-
-// TestHookGetAppKeypool exposes the getAppKeypool handler for tests.
-func TestHookGetAppKeypool(c *gin.Context) { getAppKeypool(c) }
-
-// TestHookRefreshAppKeypool exposes the refreshAppKeypool handler for tests.
-func TestHookRefreshAppKeypool(c *gin.Context) { refreshAppKeypool(c) }

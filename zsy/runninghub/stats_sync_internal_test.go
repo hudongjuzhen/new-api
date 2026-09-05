@@ -52,7 +52,6 @@ func TestModelToUpstreamID(t *testing.T) {
 func TestSyncActionConstants(t *testing.T) {
 	t.Parallel()
 	// lock the wire values: the admin UI switches on them
-	assert.Equal(t, "bound_app", syncActionBoundApp)
 	assert.Equal(t, "synced_to_channel", syncActionSyncedChannel)
 	assert.Equal(t, "ok", syncActionOK)
 	assert.Equal(t, "orphan_model", syncActionOrphanModel)

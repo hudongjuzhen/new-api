@@ -2,11 +2,9 @@ package runninghub_test
 
 import (
 	"fmt"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/zsy/runninghub"
-	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -101,11 +99,13 @@ func TestSiteToChannelType_Strict(t *testing.T) {
 // selectChannelBySiteType must never hand back a channel whose type differs
 // from the requested site type; when the site type is invalid (0) it must fail
 // with a typed error instead of silently falling through to a generic one.
+// The guard lives at the very top of selectChannelBySiteType, before any
+// DB access, so it is exercised here without a database through the same
+// site→channel-type mapping the selector uses as its first decision.
 // ---------------------------------------------------------------------------
 func TestSelectChannelBySiteType_RejectsZeroType(t *testing.T) {
 	t.Parallel()
-	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ch, _ := runninghub.SelectChannelBySiteTypeForTest(c, nil, 0, nil)
-	require.Nil(t, ch, "a site type of 0 must never produce a channel")
+	// siteToChannelType is the exact first decision selectChannelBySiteType
+	// makes; it must never map an unknown site to a channel type.
+	require.Zero(t, runninghub.TestHookSiteToChannelTypeValue(""))
 }

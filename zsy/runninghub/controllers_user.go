@@ -283,62 +283,20 @@ func submitAppRun(c *gin.Context) {
 		Retry:       common.GetPointer(0),
 	}
 
-	// The site selector routes every attempt through a channel of the matching
-	// site's channel type (RunningHub 61 / RunningHub Intl 62). It overrides
-	// the legacy model->channel selection below.
-	//
-	// The site field (site=cn | intl) is the authoritative routing input: the
-	// channel actually used MUST be of the same site family. So the pinned
-	// channel is only honored when its type matches the site's channel type;
-	// a site=cn app can never run through an Intl (62) / Liblib (63) channel,
-	// and a site=intl app can never run through a cn (61) channel. When an app
-	// has NO site configured, the pinned channel (if any) drives the routing
-	// (legacy behavior). When a site IS configured but the pinned channel's
-	// type does not match it, the pin is ignored and routing falls back to the
-	// site selector — returning a clear error if no channel of that site type
-	// advertises the app as a model.
-	var pointedChannel *model.Channel
-	if app.ChannelID > 0 {
-		// Fetch the pinned channel WITH its key (selectAll=true). The plugin's
-		// submit path is the only consumer that needs the raw RH key — the
-		// admin UI and keypool listing intentionally Omit it — so we must opt
-		// into the full row here or the adaptor receives an empty ApiKey and
-		// upstream auth silently fails.
-		pc, pcErr := model.GetChannelById(int(app.ChannelID), true)
-		if pcErr != nil {
-			common.ApiErrorMsg(c, "应用绑定渠道无效: "+pcErr.Error())
-			return
-		}
-		pointedChannel = pc
-	}
+	// The site field (site=cn | intl) is the authoritative routing input: every
+	// attempt goes through an enabled channel of the matching site's channel
+	// type (RunningHub 61 for cn / RunningHub 国际站 62 for intl) drawn from
+	// the site's channel pool (weighted random, host distribution semantics).
+	// Apps no longer bind a channel; there is no pin to honour.
 	wantSiteType := siteToChannelType(app.Site)
 	if app.Site != "" && wantSiteType == 0 {
 		common.ApiErrorMsg(c, "非法的站点选择: "+app.Site)
 		return
 	}
 
-	// When the app has a site configured, the pin is dropped (falls back to the
-	// site selector) whenever the pinned channel's type is not the site's type;
-	// the site selector below is the routing source of truth for site-scoped
-	// apps, so a site=cn app can never run through an Intl (62) channel and vice
-	// versa. A pinned channel is honored when its type matches the site's type,
-	// or when the app has no site at all (legacy behavior).
-	var pinnedChannel *model.Channel
-	if pointedChannel != nil {
-		if wantSiteType == 0 || pointedChannel.Type == wantSiteType {
-			pinnedChannel = pointedChannel
-		}
-	}
-
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		var channel *model.Channel
-		if pinnedChannel != nil {
-			channel = pinnedChannel
-			if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
-				taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_pinned_channel_failed", http.StatusInternalServerError)
-				break
-			}
-		} else if wantSiteType != 0 {
+		if wantSiteType != 0 {
 			// Site-scoped selection: pick a random enabled channel of the site's
 			// type that advertises this app as a model. Kept local (no
 			// request-path filtering) so the existing relay plumbing stays the
@@ -787,40 +745,23 @@ func replaceRequestBody(c *gin.Context, body []byte) error {
 	return nil
 }
 
-// siteNameOrEmpty returns the human-readable site label for error messages,
-// tolerating a nil AppView (used by the selector's defensive error paths).
-func siteNameOrEmpty(app *AppView) string {
-	if app == nil {
-		return ""
-	}
-	return siteName(app.Site)
-}
-
-// SelectChannelBySiteTypeForTest is the test-only entry point into
-// selectChannelBySiteType. It forwards to the production selector with a
-// nil AppView (only Site/UpstreamID are consulted, both empty) so callers can
-// assert the site-type guard without a database.
-func SelectChannelBySiteTypeForTest(c *gin.Context, app *AppView, channelType int, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
-	return selectChannelBySiteType(c, app, channelType, retryParam)
-}
-
 // selectChannelBySiteType returns an enabled channel of the given channel type
-// that advertises the app's UpstreamID as a model for the request's group,
-// using the host's weighted random pick so site-scoped apps participate in the
-// normal group/weight distribution instead of bypassing it. It NEVER returns a
-// channel whose type differs from `channelType` — the caller guarantees the
-// site's channel type before calling, and the type check here is the last
-// safety net against routing an app to the wrong site's upstream.
+// for the request's group, drawn from the site's channel pool with the host's
+// weighted-random distribution (priority tier → weight). Channel models are
+// intentionally NOT matched: a RunningHub channel is a site endpoint (one key,
+// one base URL) and any app of the matching site runs through it; the upstream
+// validates the app id itself. The call never returns a channel whose type
+// differs from `channelType`.
 func selectChannelBySiteType(c *gin.Context, app *AppView, channelType int, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
 	if channelType == 0 {
 		return nil, types.NewError(
-			fmt.Errorf("站点 %s 未配置 (channelType=0)", siteNameOrEmpty(app)),
+			fmt.Errorf("站点 %s 未配置 (channelType=0)", siteName(app.Site)),
 			types.ErrorCodeGetChannelFailed,
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
 	if retryParam != nil {
-		ch, err := model.GetRandomSatisfiedChannel(retryParam.TokenGroup, app.UpstreamID, 0, retryParam.RequestPath)
+		ch, err := model.GetRandomSatisfiedChannel(retryParam.TokenGroup, "", 0, retryParam.RequestPath)
 		if err == nil && ch != nil && ch.Type == channelType {
 			if setupErr := middleware.SetupContextForSelectedChannel(c, ch, app.UpstreamID); setupErr != nil {
 				return nil, setupErr
@@ -828,10 +769,9 @@ func selectChannelBySiteType(c *gin.Context, app *AppView, channelType int, retr
 			return ch, nil
 		}
 	}
-	// Fallback: any enabled channel of the site's type that advertises the app
-	// as a model, so site-scoped apps keep working even when the caller's group
-	// is not wired to a channel of that type. Exact model match is checked in Go
-	// (the models column is a comma-separated list; a LIKE could over-match).
+	// Fallback: any enabled channel of the site's type. Exact model match is
+	// deliberately skipped (see the doc comment above); the pool is the source
+	// of truth.
 	var cands []model.Channel
 	if err := db().
 		Where("type = ? AND status = ?", channelType, common.ChannelStatusEnabled).
@@ -840,18 +780,14 @@ func selectChannelBySiteType(c *gin.Context, app *AppView, channelType int, retr
 		Find(&cands).Error; err == nil {
 		for i := range cands {
 			ch := &cands[i]
-			for _, m := range ch.GetModels() {
-				if m == app.UpstreamID {
-					if setupErr := middleware.SetupContextForSelectedChannel(c, ch, app.UpstreamID); setupErr != nil {
-						return nil, setupErr
-					}
-					return ch, nil
-				}
+			if setupErr := middleware.SetupContextForSelectedChannel(c, ch, app.UpstreamID); setupErr != nil {
+				return nil, setupErr
 			}
+			return ch, nil
 		}
 	}
 	return nil, types.NewError(
-		fmt.Errorf("站点 %s 下没有可用渠道 (type=%d, model=%s)", siteName(app.Site), channelType, app.UpstreamID),
+		fmt.Errorf("站点 %s 下没有可用渠道 (type=%d)", siteName(app.Site), channelType),
 		types.ErrorCodeGetChannelFailed,
 		types.ErrOptionWithSkipRetry(),
 	)

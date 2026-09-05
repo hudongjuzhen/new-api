@@ -70,15 +70,10 @@ type App struct {
 	Published   bool    `gorm:"index"                                     json:"published"`
 	AdminOnly   bool    `gorm:"index"                                     json:"adminOnly"`
 
-	// ChannelID optionally pins the app to a specific RunningHub channel; the
-	// admin chooses it in the app form and the submit path locks that channel.
-	// When zero, the submit path falls back to the host's model->channel
-	// selection (GetChannelForRelay) as before.
-	ChannelID int64 `gorm:"index"                                     json:"channelId"`
-
-	// Site scopes the submit path to a RunningHub site (cn / intl). Empty
-	// keeps the legacy model->channel selection. It pairs with the channel
-	// types in the /channels page (RunningHub 61 / RunningHub 国际站 62).
+	// Site scopes the submit path to a RunningHub site (cn / intl). The site is
+	// the authoritative routing input: submit picks an enabled channel from the
+	// site's channel-type pool (RunningHub 61 for cn, RunningHub 国际站 62 for
+	// intl). It pairs with the channel types in the /channels page.
 	Site string `gorm:"type:varchar(16);index"                      json:"site"`
 
 	// ParamSchema stores the JSON text of the user-facing parameter list. We
@@ -141,40 +136,4 @@ func (a *App) SetParamSchema(schema []FieldParam) error {
 	}
 	a.ParamSchemaText = string(data)
 	return nil
-}
-
-// AppKeyPool is the per-app keypool, synced from the app's bound channel key
-// list (App.ChannelID). This was merged up from the old per-instance keypool
-// when the instance concept was removed; pending entries on KeypoolPending
-// keep the quota-leak auditing of §7.6 in the dev plan intact.
-//
-// A key is unique per app (app_id + key): the same RH key may legitimately be
-// shared by several apps bound to the same channel.
-type AppKeyPool struct {
-	ID        uint           `gorm:"primarykey"                                    json:"id"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
-	DeletedAt gorm.DeletedAt `gorm:"index"                                        json:"-"`
-
-	AppID   uint   `gorm:"not null;uniqueIndex:udx_app_key"              json:"appId"`
-	Key     string `gorm:"type:varchar(255);not null;uniqueIndex:udx_app_key" json:"key"`
-	Enabled bool   `gorm:"default:true;index"                            json:"enabled"`
-	Remark  string `gorm:"type:varchar(768)"                             json:"remark"`
-}
-
-// KeypoolPending records one in-flight submit for auditing quota-safety
-// invariants (§7.6). Records are soft-deleted after settlement so the admin
-// UI can inspect crashes / partial-write scenarios.
-type KeypoolPending struct {
-	ID        uint           `gorm:"primarykey"                                  json:"id"`
-	CreatedAt time.Time      `json:"createdAt"`
-	UpdatedAt time.Time      `json:"updatedAt"`
-	DeletedAt gorm.DeletedAt `gorm:"index"                                      json:"-"`
-
-	PoolID         uint   `gorm:"index;not null"                              json:"poolId"`
-	NewApiTaskID   string `gorm:"type:varchar(128);not null;index"           json:"newApiTaskId"`
-	UpstreamTaskID string `gorm:"type:varchar(128);index"                     json:"upstreamTaskId"`
-	EstimatedQuota int64  `gorm:"default:0;not null"                          json:"estimatedQuota"`
-	State          string `gorm:"type:varchar(32);index;default:'pending'"   json:"state"`
-	FailureReason  string `gorm:"type:text"                                   json:"failureReason,omitempty"`
 }

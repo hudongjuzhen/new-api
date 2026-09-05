@@ -13,11 +13,9 @@ import {
   Plus,
   Pencil,
   Trash2,
-  RefreshCw,
   Wand2,
   Loader2,
   X,
-  KeyRound,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -66,15 +64,10 @@ import {
   createApp,
   updateApp,
   deleteApp,
-  syncAppsFromChannel,
   parseCurlRequest,
-  getRhChannels,
-  getAppKeypool,
-  refreshAppKeypool,
   type AppView,
   type AppCreateDTO,
   type SchemaParam,
-  type AppKeypoolResult,
 } from '../api'
 
 const TYPE_CHOICES = [
@@ -102,7 +95,6 @@ const emptyDTO: AppCreateDTO = {
   perSecondBilling: false,
   quotaPerSecond: 0,
   modelBaseRateRatio: 1.0,
-  channelId: 0,
   site: '',
 }
 
@@ -553,97 +545,12 @@ function AppForm({
   )
 }
 
-function KeypoolContent({
-  data,
-  loading,
-  refreshing,
-  onRefresh,
-}: {
-  data: AppKeypoolResult | undefined
-  loading: boolean
-  refreshing: boolean
-  onRefresh: () => void
-}) {
-  const { t } = useTranslation()
-  return (
-    <div className='space-y-4'>
-      <div className='flex items-center justify-between'>
-        <div className='text-muted-foreground text-sm'>
-          {data
-            ? data.channelId
-              ? `${data.channelName || `#${data.channelId}`} · ${data.enabled}/${data.total} ${t('keys enabled')}`
-              : t('No channel bound — keypool cannot sync')
-            : ''}
-        </div>
-        <Button
-          type='button'
-          size='sm'
-          variant='outline'
-          onClick={onRefresh}
-          disabled={refreshing || loading}
-        >
-          {refreshing ? (
-            <Loader2 className='size-4 animate-spin' />
-          ) : (
-            <RefreshCw className='size-4' />
-          )}
-          {t('Refresh Keypool')}
-        </Button>
-      </div>
-      {loading ? (
-        <p className='text-muted-foreground text-sm'>{t('Loading...')}</p>
-      ) : !data || data.keys.length === 0 ? (
-        <p className='text-muted-foreground text-sm'>
-          {t('No keys in this app keypool yet')}
-        </p>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{t('Key')}</TableHead>
-              <TableHead>{t('Status')}</TableHead>
-              <TableHead className='text-right'>{t('In-flight')}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {data.keys.map((k) => (
-              <TableRow key={k.id}>
-                <TableCell className='font-mono text-xs'>{k.key}</TableCell>
-                <TableCell>
-                  {k.enabled ? (
-                    <Badge>{t('Enabled')}</Badge>
-                  ) : (
-                    <Badge variant='outline'>{t('Disabled')}</Badge>
-                  )}
-                </TableCell>
-                <TableCell className='text-right'>{k.occupancy}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </div>
-  )
-}
-
 export function RhAppsPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<AppView | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
-
-  const { data: channels } = useQuery({
-    queryKey: ['rh-channels'],
-    queryFn: getRhChannels,
-  })
-  const channelNameById = (channels ?? []).reduce<Record<number, string>>(
-    (m, ch) => {
-      m[ch.id] = ch.name
-      return m
-    },
-    {}
-  )
 
   const { data, isLoading } = useQuery({
     queryKey: ['rh-apps'],
@@ -687,38 +594,6 @@ export function RhAppsPage() {
     },
   })
 
-  const syncMutation = useMutation({
-    mutationFn: (channelId: number) => syncAppsFromChannel(channelId),
-    onSuccess: () => {
-      toast.success(t('Synced from channel'))
-      queryClient.invalidateQueries({ queryKey: ['rh-apps'] })
-    },
-    onError: (e: unknown) => {
-      toast.error(String((e as Error)?.message ?? e))
-    },
-  })
-
-  const [keypoolAppId, setKeypoolAppId] = useState<number | null>(null)
-
-  const keypoolQuery = useQuery({
-    queryKey: ['rh-app-keypool', keypoolAppId],
-    queryFn: () => getAppKeypool(keypoolAppId as number),
-    enabled: keypoolAppId !== null,
-  })
-
-  const refreshKeypoolMutation = useMutation({
-    mutationFn: (id: number) => refreshAppKeypool(id),
-    onSuccess: () => {
-      toast.success(t('Keypool refreshed'))
-      queryClient.invalidateQueries({
-        queryKey: ['rh-app-keypool', keypoolAppId],
-      })
-    },
-    onError: (e: unknown) => {
-      toast.error(String((e as Error)?.message ?? e))
-    },
-  })
-
   const openCreate = () => {
     setEditing(null)
     setDialogOpen(true)
@@ -744,15 +619,6 @@ export function RhAppsPage() {
           {t('RunningHub Apps')}
         </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
-          <Button
-            variant='outline'
-            size='sm'
-            onClick={() => syncMutation.mutate(0)}
-            disabled={syncMutation.isPending}
-          >
-            <RefreshCw className='size-4' />
-            {t('Sync from Channel')}
-          </Button>
           <Button size='sm' onClick={openCreate}>
             <Plus className='size-4' />
             {t('Create App')}
@@ -766,7 +632,7 @@ export function RhAppsPage() {
                 <TableHead>{t('App Name')}</TableHead>
                 <TableHead>{t('Kind')}</TableHead>
                 <TableHead>{t('Upstream ID')}</TableHead>
-                <TableHead>{t('Channel')}</TableHead>
+                <TableHead>{t('Site')}</TableHead>
                 <TableHead>{t('Per-Call Billing')}</TableHead>
                 <TableHead className='text-right'>{t('Actions')}</TableHead>
               </TableRow>
@@ -794,10 +660,11 @@ export function RhAppsPage() {
                       {app.upstreamId}
                     </TableCell>
                     <TableCell className='text-xs'>
-                      {app.channelId
-                        ? (channelNameById[app.channelId] ??
-                          `#${app.channelId}`)
-                        : '—'}
+                      {app.site === 'cn'
+                        ? 'RunningHub'
+                        : app.site === 'intl'
+                          ? 'RunningHub Intl'
+                          : '—'}
                     </TableCell>
                     <TableCell>
                       {app.perCallBilling ? (
@@ -807,14 +674,6 @@ export function RhAppsPage() {
                       )}
                     </TableCell>
                     <TableCell className='text-right'>
-                      <Button
-                        variant='ghost'
-                        size='icon-sm'
-                        title={t('Keypool')}
-                        onClick={() => setKeypoolAppId(app.id)}
-                      >
-                        <KeyRound className='size-3.5' />
-                      </Button>
                       <Button
                         variant='ghost'
                         size='icon-sm'
@@ -863,7 +722,6 @@ export function RhAppsPage() {
                     perSecondBilling: editing.perSecondBilling,
                     quotaPerSecond: editing.quotaPerSecond,
                     modelBaseRateRatio: editing.modelBaseRateRatio,
-                    channelId: editing.channelId ?? 0,
                     site: editing.site ?? '',
                   }
                 : emptyDTO
@@ -871,25 +729,6 @@ export function RhAppsPage() {
             onSubmit={handleSubmit}
             onCancel={() => setDialogOpen(false)}
           />
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={keypoolAppId !== null}
-        onOpenChange={(v) => !v && setKeypoolAppId(null)}
-      >
-        <DialogContent className='max-w-2xl'>
-          <DialogHeader>
-            <DialogTitle>{t('App Keypool')}</DialogTitle>
-          </DialogHeader>
-          {keypoolAppId !== null && (
-            <KeypoolContent
-              data={keypoolQuery.data}
-              loading={keypoolQuery.isLoading}
-              refreshing={refreshKeypoolMutation.isPending}
-              onRefresh={() => refreshKeypoolMutation.mutate(keypoolAppId)}
-            />
-          )}
         </DialogContent>
       </Dialog>
 

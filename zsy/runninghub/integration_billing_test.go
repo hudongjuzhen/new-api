@@ -204,7 +204,7 @@ func newRHITestEnv(t *testing.T, upstreamID string) *rhITestEnv {
 		&model.Task{}, &model.User{}, &model.Token{}, &model.Log{}, &model.Channel{}, &model.Ability{},
 		&model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.UserSubscription{},
 		&model.Option{},
-		&runninghub.App{}, &runninghub.AppKeyPool{}, &runninghub.KeypoolPending{},
+		&runninghub.App{},
 	)
 
 	// Seed user / token / channel / ability wired to the fake upstream.

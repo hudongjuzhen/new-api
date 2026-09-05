@@ -16,9 +16,9 @@ import (
 // ---------------------------------------------------------------------------
 // Admin stats (GET /dashboard/zsy/rh/stats)
 //
-// One aggregate response for the plugin dashboard: app/instance/keypool
-// counters from plugin-owned tables plus task status counters scoped to the
-// RunningHub platform in the host tasks table.
+// One aggregate response for the plugin dashboard: app counters from the
+// plugin-owned table plus task status counters scoped to the RunningHub
+// platform in the host tasks table.
 // ---------------------------------------------------------------------------
 
 // AppsStats summarises the app template registry.
@@ -26,13 +26,6 @@ type AppsStats struct {
 	Total     int64            `json:"total"`
 	Published int64            `json:"published"`
 	ByKind    map[string]int64 `json:"byKind"`
-}
-
-// KeypoolStats summarises per-app keypool rows and in-flight submit audits.
-type KeypoolStats struct {
-	TotalKeys      int64 `json:"totalKeys"`
-	EnabledKeys    int64 `json:"enabledKeys"`
-	PendingSubmits int64 `json:"pendingSubmits"`
 }
 
 // TasksStats summarises host tasks scoped to the RunningHub platform.
@@ -45,9 +38,8 @@ type TasksStats struct {
 
 // AdminStats is the response shape of GET /dashboard/zsy/rh/stats.
 type AdminStats struct {
-	Apps    AppsStats    `json:"apps"`
-	Keypool KeypoolStats `json:"keypool"`
-	Tasks   TasksStats   `json:"tasks"`
+	Apps  AppsStats  `json:"apps"`
+	Tasks TasksStats `json:"tasks"`
 }
 
 // rhTaskPlatform is the host `tasks.platform` value for this plugin
@@ -78,17 +70,6 @@ func CollectStats() (*AdminStats, error) {
 	}
 	for _, k := range kinds {
 		out.Apps.ByKind[string(k.Kind)] = k.C
-	}
-
-	// keypool: keys + enabled keys + pending audits
-	if err := db().Model(&AppKeyPool{}).Count(&out.Keypool.TotalKeys).Error; err != nil {
-		return nil, fmt.Errorf("stats keypool total: %w", err)
-	}
-	if err := db().Model(&AppKeyPool{}).Where("enabled = ?", true).Count(&out.Keypool.EnabledKeys).Error; err != nil {
-		return nil, fmt.Errorf("stats keypool enabled: %w", err)
-	}
-	if err := db().Model(&KeypoolPending{}).Where("state = ?", keypoolStatePending).Count(&out.Keypool.PendingSubmits).Error; err != nil {
-		return nil, fmt.Errorf("stats keypool pending: %w", err)
 	}
 
 	// tasks scoped to this platform, grouped by status
@@ -126,14 +107,16 @@ func CollectStats() (*AdminStats, error) {
 //
 //  A. channel.models → app: every channel model that resolves to an app
 //     (exact UpstreamID match, or the dev-plan `rh-aiapp-<id>` style prefix)
-//     that is not yet bound to this channel gets App.ChannelID set to this
-//     channel (an app already pinned to a different channel is left alone).
-//  B. app → channel.models: every app pinned to this channel gets its
-//     UpstreamID appended to channel.models when missing, then the channel is
-//     saved through the host Channel.Update() so the abilities table is
-//     rebuilt.
+//     is reported; only published apps whose site matches the channel's type
+//     are treated as in-pool (Action "ok").
+//  B. app → channel.models: every published app whose site matches this
+//     channel's type gets its UpstreamID appended to channel.models when
+//     missing, then the channel is saved through the host Channel.Update() so
+//     the abilities table is rebuilt.
 //
-// The operation is idempotent: running it twice yields zero changes.
+// The operation is idempotent: running it twice yields zero changes. Apps no
+// longer bind a channel — this sync only maintains the per-site channel pool
+// model lists that submitAppRun's site selector reads.
 // ---------------------------------------------------------------------------
 
 // ChannelSyncItem reports what happened to one channel model / app pair.
@@ -156,7 +139,6 @@ type ChannelSyncResult struct {
 
 // sync actions
 const (
-	syncActionBoundApp      = "bound_app"
 	syncActionSyncedChannel = "synced_to_channel"
 	syncActionOK            = "ok"
 	syncActionOrphanModel   = "orphan_model"
@@ -216,7 +198,7 @@ func SyncChannelApps(channelID int64) (*ChannelSyncResult, error) {
 
 	// app registry: UpstreamID -> app (lowest id wins on duplicates)
 	var apps []App
-	if err := db().Select("id, kind, upstream_id, channel_id").Order("id asc").Find(&apps).Error; err != nil {
+	if err := db().Select("id, kind, upstream_id").Order("id asc").Find(&apps).Error; err != nil {
 		return nil, fmt.Errorf("load runninghub apps: %w", err)
 	}
 	appByUpstream := make(map[string]*App, len(apps))
@@ -227,34 +209,30 @@ func SyncChannelApps(channelID int64) (*ChannelSyncResult, error) {
 		}
 	}
 
-	// A. channel.models -> app binding
+	// A. channel.models -> app: every channel model whose UpstreamID resolves
+	// to a published, site-matching app is verified present in that app's site
+	// channel pool. Apps no longer bind a channel, so nothing is written here.
 	for _, m := range models {
 		app, ok := appByUpstream[modelToUpstreamID(m)]
 		if !ok {
 			result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionOrphanModel})
 			continue
 		}
-		if app.ChannelID == channelID {
+		if app.Published && siteToChannelType(app.Site) == ch.Type {
 			result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionOK, AppID: app.ID})
 			continue
 		}
-		// An app pinned to a different channel is intentionally left alone.
-		if app.ChannelID > 0 {
-			result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionOK, AppID: app.ID})
-			continue
-		}
-		if err := db().Model(&App{}).Where("id = ?", app.ID).Update("channel_id", channelID).Error; err != nil {
-			return nil, fmt.Errorf("bind channel to runninghub app %d: %w", app.ID, err)
-		}
-		app.ChannelID = channelID
-		result.AppsBound++
-		result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionBoundApp, AppID: app.ID})
+		// The app either is unpublished, or does not belong to this channel's
+		// site (site=cn app in an Intl channel's model list, or site= intl app
+		// in a cn channel's). Leave the channel's models untouched — the admin
+		// can prune them manually.
+		result.Items = append(result.Items, ChannelSyncItem{Model: m, Action: syncActionOK, AppID: app.ID})
 	}
 
 	// B. app -> channel.models
 	modelsChanged := false
 	for _, app := range apps {
-		if app.ChannelID != channelID || inModels[app.UpstreamID] {
+		if !app.Published || siteToChannelType(app.Site) != ch.Type || inModels[app.UpstreamID] {
 			continue
 		}
 		inModels[app.UpstreamID] = true

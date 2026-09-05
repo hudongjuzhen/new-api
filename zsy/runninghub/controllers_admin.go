@@ -246,10 +246,11 @@ func parseCurlEndpoint(c *gin.Context) {
 // =========================================================================
 
 // syncAppsFromChannel (POST /dashboard/zsy/rh/apps/sync-from-channel) —
-// bidirectional reconciliation between the RunningHub channel's model
-// registry and the plugin's apps/instances. The store layer (SyncChannelApps)
-// documents the exact semantics; RH has no upstream "list apps" API, so the
-// channel's own models list is the source of truth.
+// site-pool reconciliation between one RunningHub channel's model registry
+// and the plugin's app registry. The store layer (SyncChannelApps) documents
+// the exact semantics; RH has no upstream "list apps" API, so the channel's
+// own models list is the source of truth. Apps no longer bind a channel —
+// this only maintains each site's channel-pool model lists.
 func syncAppsFromChannel(c *gin.Context) {
 	var payload struct {
 		ChannelID int64 `json:"channelId"`
@@ -265,7 +266,6 @@ func syncAppsFromChannel(c *gin.Context) {
 	}
 	recordManageAudit(c, "rh_app.sync_from_channel", map[string]any{
 		"channelId":            payload.ChannelID,
-		"appsBound":            result.AppsBound,
 		"modelsSynced":         result.ModelsSynced,
 		"channelModelsUpdated": result.ChannelModelsUpdated,
 	})

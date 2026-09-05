@@ -2,6 +2,8 @@ package runninghub_test
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/zsy/runninghub"
@@ -26,6 +28,15 @@ func newSyncTestRouter() *gin.Engine {
 	return r
 }
 
+func doJSONRaw(t *testing.T, r http.Handler, method, url, body string) (*httptest.ResponseRecorder, []byte) {
+	t.Helper()
+	req := httptest.NewRequest(method, url, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w, w.Body.Bytes()
+}
+
 func TestSyncFromChannel_BadJSON_ReturnsEnvelopeError(t *testing.T) {
 	t.Parallel()
 	r := newSyncTestRouter()
@@ -39,9 +50,7 @@ func TestSyncFromChannel_BadJSON_ReturnsEnvelopeError(t *testing.T) {
 func TestSyncFromChannel_ZeroChannelID_RejectedBeforeDB(t *testing.T) {
 	t.Parallel()
 	r := newSyncTestRouter()
-	w, raw := doJSON(t, r, http.MethodPost, "/dashboard/zsy/rh/apps/sync-from-channel", map[string]any{
-		"channelId": 0,
-	})
+	w, raw := doJSONRaw(t, r, http.MethodPost, "/dashboard/zsy/rh/apps/sync-from-channel", `{"channelId":0}`)
 	require.Equal(t, http.StatusOK, w.Code)
 	env := parseAPIEnvelope(t, raw)
 	assert.False(t, env.Success)
@@ -51,9 +60,7 @@ func TestSyncFromChannel_ZeroChannelID_RejectedBeforeDB(t *testing.T) {
 func TestSyncFromChannel_NegativeChannelID_RejectedBeforeDB(t *testing.T) {
 	t.Parallel()
 	r := newSyncTestRouter()
-	w, raw := doJSON(t, r, http.MethodPost, "/dashboard/zsy/rh/apps/sync-from-channel", map[string]any{
-		"channelId": -3,
-	})
+	w, raw := doJSONRaw(t, r, http.MethodPost, "/dashboard/zsy/rh/apps/sync-from-channel", `{"channelId":-3}`)
 	require.Equal(t, http.StatusOK, w.Code)
 	env := parseAPIEnvelope(t, raw)
 	assert.False(t, env.Success)

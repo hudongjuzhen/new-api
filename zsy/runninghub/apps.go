@@ -61,7 +61,6 @@ type AppView struct {
 	PerSecondBilling   bool                   `json:"perSecondBilling"`
 	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
-	ChannelID          int64                  `json:"channelId"`
 	Site               string                 `json:"site"`
 }
 
@@ -84,7 +83,6 @@ type AppCreateDTO struct {
 	PerSecondBilling   bool                   `json:"perSecondBilling"`
 	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
-	ChannelID          int64                  `json:"channelId"`
 	Site               string                 `json:"site"`
 }
 
@@ -272,9 +270,6 @@ func AppInsert(dto *AppCreateDTO) (*AppView, error) {
 	if err := validateApp(app); err != nil {
 		return nil, err
 	}
-	if err := validatePinChannel(app.ChannelID); err != nil {
-		return nil, err
-	}
 	if err := db().Create(app).Error; err != nil {
 		if isUniqueViolation(err, "name") {
 			return nil, fmt.Errorf("应用名称 %q 已存在", app.Name)
@@ -301,9 +296,6 @@ func AppUpdate(id uint, dto *AppUpdateDTO) (*AppView, error) {
 		return nil, err
 	}
 	if err := validateApp(updated); err != nil {
-		return nil, err
-	}
-	if err := validatePinChannel(updated.ChannelID); err != nil {
 		return nil, err
 	}
 	if err := db().Save(updated).Error; err != nil {
@@ -440,7 +432,6 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 	target.FixedQuotaPerCall = dto.FixedQuotaPerCall
 	target.PerSecondBilling = dto.PerSecondBilling
 	target.QuotaPerSecond = dto.QuotaPerSecond
-	target.ChannelID = dto.ChannelID
 	target.Site = normalizeSite(strings.TrimSpace(dto.Site))
 	if dto.ModelBaseRateRatio == 0 {
 		// Treat explicit zero same as unset: back to 1.0 default so billing
@@ -527,7 +518,6 @@ func appToView(a *App) (*AppView, error) {
 		PerSecondBilling:   a.PerSecondBilling,
 		QuotaPerSecond:     a.QuotaPerSecond,
 		ModelBaseRateRatio: a.ModelBaseRateRatio,
-		ChannelID:          a.ChannelID,
 		Site:               a.Site,
 	}, nil
 }
@@ -570,142 +560,6 @@ func siteName(site string) string {
 		return "RunningHub Intl"
 	}
 	return ""
-}
-
-// validatePinChannel ensures an optionally-pinned channel exists and is a
-// RunningHub channel. Zero means "no pin" (submit falls back to model-based
-// channel selection), so it is always accepted.
-func validatePinChannel(channelID int64) error {
-	if channelID <= 0 {
-		return nil
-	}
-	ch, err := model.GetChannelById(int(channelID), false)
-	if err != nil {
-		return fmt.Errorf("绑定渠道无效 (id=%d): %w", channelID, err)
-	}
-	if !pluginChannelTypes[ch.Type] {
-		return fmt.Errorf("渠道 %d (%s) 不是 RunningHub 渠道 (type=%d)", channelID, ch.Name, ch.Type)
-	}
-	return nil
-}
-
-// runAppDataMigration performs one-time, idempotent migrations when the
-// plugin starts, best-effort so any failure is logged and skipped:
-//
-//  1. Channel backfill — copy a legacy `app_instances.channel_id` into the
-//     app's `Apps.ChannelID` once, so apps created before the direct-channel
-//     binding still work without a manual edit.
-//  2. Keypool lift — migrate legacy per-instance keypool rows
-//     (`app_instance_key_pools`) up to the per-app `app_key_pools` table,
-//     keyed by the owning app, so existing keypool entries are not lost when
-//     the instance concept is removed.
-//
-// The legacy tables are queried by explicit table name (GORM never manages
-// the removed AppInstance model), so on a fresh install where those tables do
-// not exist the queries simply error out and are skipped.
-func runAppDataMigration() {
-	runChannelBackfill()
-	runKeypoolLift()
-}
-
-func runChannelBackfill() {
-	var apps []App
-	if err := db().Where("channel_id = 0").Limit(500).Find(&apps).Error; err != nil {
-		common.SysError("runninghub channel backfill read apps: " + err.Error())
-		return
-	}
-	if len(apps) == 0 {
-		return
-	}
-	ids := make([]uint, 0, len(apps))
-	for _, a := range apps {
-		ids = append(ids, a.ID)
-	}
-	type legacyInst struct {
-		AppID     uint
-		ChannelID int64
-	}
-	var insts []legacyInst
-	// app_instances is a legacy table; never auto-migrated after this change.
-	if err := db().Table("app_instances").
-		Select("app_id, channel_id").
-		Where("app_id IN ?", ids).
-		Scan(&insts).Error; err != nil {
-		common.SysError("runninghub channel backfill read legacy instances: " + err.Error())
-		return
-	}
-	chanOf := make(map[uint]int64, len(insts))
-	for _, in := range insts {
-		if in.ChannelID > 0 {
-			chanOf[in.AppID] = in.ChannelID
-		}
-	}
-	for _, a := range apps {
-		cid, ok := chanOf[a.ID]
-		if !ok || cid <= 0 {
-			continue
-		}
-		if err := db().Model(&App{}).Where("id = ?", a.ID).Update("channel_id", cid).Error; err != nil {
-			common.SysError(fmt.Sprintf("runninghub channel backfill app %d: %s", a.ID, err.Error()))
-		}
-	}
-}
-
-// runKeypoolLift copies legacy per-instance keypool rows into the per-app
-// AppKeyPool table. Idempotent: an (app_id, key) pair already present is
-// skipped, so re-running never duplicates rows.
-func runKeypoolLift() {
-	type legacyInst struct {
-		ID    uint
-		AppID uint
-	}
-	var insts []legacyInst
-	if err := db().Table("app_instances").Select("id, app_id").Scan(&insts).Error; err != nil {
-		common.SysError("runninghub keypool lift read legacy instances: " + err.Error())
-		return
-	}
-	appOf := make(map[uint]uint, len(insts))
-	for _, in := range insts {
-		appOf[in.ID] = in.AppID
-	}
-	if len(appOf) == 0 {
-		return
-	}
-	type legacyPool struct {
-		InstanceID uint
-		Key        string
-		Enabled    bool
-		Remark     string
-	}
-	var pools []legacyPool
-	// Unscoped-style read: legacy audit rows may be soft-deleted but still
-	// represent keys that must be lifted into the live per-app pool.
-	if err := db().Table("app_instance_key_pools").
-		Select("instance_id, key, enabled, remark").
-		Scan(&pools).Error; err != nil {
-		common.SysError("runninghub keypool lift read legacy pools: " + err.Error())
-		return
-	}
-	lifted := 0
-	for _, p := range pools {
-		appID, ok := appOf[p.InstanceID]
-		if !ok {
-			continue
-		}
-		if err := db().Where("app_id = ? AND key = ?", appID, p.Key).
-			First(&AppKeyPool{}).Error; err == nil {
-			continue // already lifted
-		}
-		entry := &AppKeyPool{AppID: appID, Key: p.Key, Enabled: p.Enabled, Remark: p.Remark}
-		if err := db().Create(entry).Error; err != nil {
-			common.SysError(fmt.Sprintf("runninghub keypool lift app %d key: %s", appID, err.Error()))
-			continue
-		}
-		lifted++
-	}
-	if lifted > 0 {
-		common.SysError(fmt.Sprintf("runninghub keypool lift migrated %d legacy keys to per-app pool", lifted))
-	}
 }
 
 // validateApp enforces the non-null / invariants. Anything that could cause

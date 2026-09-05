@@ -1,6 +1,5 @@
 // Package runninghub is a new-api plugin that adds RunningHub (https://runninghub.ai
-// / https://runninghub.cn) as a task upstream channel, application management and
-// keypool-powered quota layer.
+// / https://runninghub.cn) as a task upstream channel and application management.
 //
 // This file wires the plugin into the host process via extcore registries at init()
 // time. Host-level anchors were installed in P1-P5 during the extcore phase, so no
@@ -18,7 +17,7 @@ import (
 const (
 	pluginName    = "RunningHub"
 	pluginVersion = "0.1.0"
-	pluginDesc    = "RunningHub AI App / Workflow / Standard Model API 上游集成 + 应用 CRUD + keypool"
+	pluginDesc    = "RunningHub AI App / Workflow / Standard Model API 上游集成 + 应用 CRUD + 站点路由"
 )
 
 // pluginChannelType is the host-level channel id assigned in constant/channel.go.
@@ -45,11 +44,7 @@ func init() {
 	// GORM models for the plugin-owned tables. Always registered here (before
 	// main.go calls migrateDB) because extbootstrap is imported (and therefore
 	// init() runs) in main() before model.InitDB.
-	extcore.RegisterMigrateModels(
-		&App{},
-		&AppKeyPool{},
-		&KeypoolPending{},
-	)
+	extcore.RegisterMigrateModels(&App{})
 
 	// Task adaptor factory. The returned value must satisfy
 	// relay/channel.TaskAdaptor; the host performs a checked type-assertion

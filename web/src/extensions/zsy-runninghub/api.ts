@@ -3,8 +3,7 @@ Copyright (C) 2023-2026 QuantumNous
 
 RunningHub admin API client. All endpoints are under
 /dashboard/zsy/rh/* and require admin auth (enforced by backend
-requireAdminAuth middleware). Channel list reuses the host /api/channel
-endpoint filtered by the RunningHub channel type.
+requireAdminAuth middleware).
 */
 
 import { api } from '@/lib/api'
@@ -49,7 +48,6 @@ export interface AppView {
   perSecondBilling: boolean
   quotaPerSecond: number
   modelBaseRateRatio: number
-  channelId: number
   site: string
 }
 
@@ -77,13 +75,7 @@ export interface AppCreateDTO {
   perSecondBilling: boolean
   quotaPerSecond: number
   modelBaseRateRatio: number
-  channelId: number
   site: string
-}
-
-export interface RhChannel {
-  id: number
-  name: string
 }
 
 export interface FetchTemplateResult {
@@ -109,32 +101,6 @@ export interface ParseCurlResult {
   }>
   schema: SchemaParam[]
   schemaErrors?: { field: string; message: string }[]
-}
-
-export interface KeyPoolEntry {
-  id: number
-  key: string
-  enabled: boolean
-  remark: string
-  occupancy: number
-}
-
-export interface AppKeypoolResult {
-  appId: number
-  channelId: number
-  channelName: string
-  total: number
-  enabled: number
-  keys: KeyPoolEntry[]
-}
-
-export interface KeypoolRefreshResult {
-  appId: number
-  keysAdded: number
-  keysDisabled: number
-  keysRestored: number
-  pendingReleased: number
-  keys: { poolId: number; key: string; enabled: boolean; occupancy: number }[]
 }
 
 // ---------------------------------------------------------------------------
@@ -180,27 +146,6 @@ export async function deleteApp(id: number) {
   await api.delete(`/dashboard/zsy/rh/apps/${id}`)
 }
 
-export async function syncAppsFromChannel(channelId: number) {
-  const res = await api.post<{ success: boolean; message?: string }>(
-    '/dashboard/zsy/rh/apps/sync-from-channel',
-    { channelId }
-  )
-  return res.data
-}
-
-/**
- * One-click fetch of a RunningHub app's parameter template. Uses the selected
- * channel's RH key to call the upstream apiCallDemo and infers the schema.
- */
-export async function fetchAppTemplate(channelId: number, upstreamId: string) {
-  const res = await api.post<{
-    success: boolean
-    data?: FetchTemplateResult
-    message?: string
-  }>('/dashboard/zsy/rh/apps/fetch-template', { channelId, upstreamId })
-  return res.data.data
-}
-
 /**
  * Parse a pasted RunningHub curl request example and draft the app fields
  * (kind, upstream id, app name) plus the parameter schema. Reuses the admin
@@ -216,40 +161,6 @@ export async function parseCurlRequest(curl: string) {
     message?: string
   }>('/dashboard/zsy/rh/apps/parse-curl', { curl }, { skipBusinessError: true })
   return res.data
-}
-
-// ---------------------------------------------------------------------------
-// App keypool API
-// ---------------------------------------------------------------------------
-
-export async function getAppKeypool(id: number): Promise<AppKeypoolResult> {
-  const res = await api.get<{ success: boolean; data: AppKeypoolResult }>(
-    `/dashboard/zsy/rh/apps/${id}/keypool`
-  )
-  return res.data.data
-}
-
-export async function refreshAppKeypool(
-  id: number
-): Promise<KeypoolRefreshResult> {
-  const res = await api.post<{ success: boolean; data: KeypoolRefreshResult }>(
-    `/dashboard/zsy/rh/apps/${id}/keypool-refresh`
-  )
-  return res.data.data
-}
-
-// ---------------------------------------------------------------------------
-// RunningHub channels (host /api/channel filtered by type 61)
-// ---------------------------------------------------------------------------
-
-export async function getRhChannels(): Promise<RhChannel[]> {
-  const res = await api.get<{
-    success: boolean
-    data?: { items?: RhChannel[] }
-  }>('/api/channel', {
-    params: { type: [61, 62, 63].join(','), page: 1, pageSize: 100 },
-  })
-  return res.data.data?.items ?? []
 }
 
 // ---------------------------------------------------------------------------
