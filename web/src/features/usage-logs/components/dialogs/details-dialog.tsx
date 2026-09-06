@@ -855,6 +855,13 @@ export function DetailsDialog(props: DetailsDialogProps) {
         {/* Refund details (type=6) */}
         {isRefund && other && (other.task_id || other.reason) && (
           <DetailSection label={t('Refund Details')}>
+            {props.log.quota !== 0 && (
+              <DetailRow
+                label={t('Refunded')}
+                value={formatLogQuota(props.log.quota)}
+                mono
+              />
+            )}
             {other.task_id && (
               <DetailRow label={t('Task ID')} value={other.task_id} mono />
             )}

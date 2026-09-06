@@ -384,6 +384,10 @@ func submitAppRun(c *gin.Context) {
 			Properties: model.Properties{OriginModelName: relayInfo.OriginModelName},
 			PrivateData: model.TaskPrivateData{
 				UpstreamTaskID: upstreamFromResult(result),
+				// Persist which funding source paid for this run so the
+				// generation-records DTO can show per-record deduction source.
+				BillingSource:  relayInfo.BillingSource,
+				SubscriptionId: relayInfo.SubscriptionId,
 				TokenId:        relayInfo.TokenId,
 				NodeName:       common.NodeName,
 				BillingContext: &model.TaskBillingContext{

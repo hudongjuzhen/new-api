@@ -50,6 +50,10 @@ type TaskDto struct {
 	Properties any             `json:"properties"`
 	Username   string          `json:"username,omitempty"`
 	Data       json.RawMessage `json:"data"`
+	// 计费展示字段：本次任务实际扣除额度的来源（"wallet" 或 "subscription"）
+	// 及订阅实例 ID。与 PrivateData 中同名字段一致，供前端区分扣费来源。
+	BillingSource string `json:"billing_source,omitempty"`
+	SubscriptionId int  `json:"subscription_id,omitempty"`
 }
 
 type FetchReq struct {

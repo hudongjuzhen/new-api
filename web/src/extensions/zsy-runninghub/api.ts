@@ -192,6 +192,10 @@ export interface TaskDto {
   username: string
   properties?: Record<string, unknown>
   data?: unknown
+  /** 计费来源："wallet" 或 "subscription"（由后端 TaskDto 透出，用于展示扣费来源） */
+  billing_source?: string
+  /** 订阅实例 ID：billing_source === 'subscription' 时指向 user_subscriptions.id */
+  subscription_id?: number
 }
 
 export interface TaskListPage {

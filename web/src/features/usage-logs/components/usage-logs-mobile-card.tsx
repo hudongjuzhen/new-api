@@ -379,6 +379,7 @@ function TaskLogsCard<TData>({
   const taskIdCell = cells.get('task_id')
   const statusCell = cells.get('status')
   const submitTimeCell = cells.get('submit_time')
+  const costCell = cells.get('cost')
 
   return (
     <div className='space-y-2.5'>
@@ -390,6 +391,7 @@ function TaskLogsCard<TData>({
       <div className='grid grid-cols-2 gap-1.5'>
         <SummaryField label={t('Submit Time')} cell={submitTimeCell} />
         <SummaryField label={t('User')} cell={cells.get('user')} primaryOnly />
+        <SummaryField label={t('Cost')} cell={costCell} />
         <SummaryField
           label={t('Result')}
           cell={cells.get('fail_reason')}

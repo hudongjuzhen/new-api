@@ -50,6 +50,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { getApiKeys } from '@/features/keys/api'
+import { formatLogQuota } from '@/lib/format'
 
 import {
   listPublicApps,
@@ -379,7 +380,9 @@ function ParamField({
   )
 }
 
-/** Extract result media URLs from a task's RH data payload. */
+/**
+ * Extract result media URLs from a task's RH data payload.
+ */
 function extractResultUrls(task: TaskDto): string[] {
   const raw = task.data
   let results: Array<{ url?: unknown; value?: unknown }>
@@ -813,7 +816,20 @@ function GenerationRecords({ appId }: { appId: number }) {
                   <span className='text-muted-foreground truncate font-mono text-[11px]'>
                     {task.task_id}
                   </span>
-                  {statusBadge(task.status, t)}
+                  <span className='flex shrink-0 items-center gap-1.5'>
+                    {task.quota > 0 && (
+                      <span className='border-border/60 bg-muted/30 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none font-medium tabular-nums'>
+                        {t('Deducted')} {formatLogQuota(task.quota)}
+                        {task.billing_source === 'subscription' && (
+                          <span className='flex items-center gap-0.5 text-[10px] text-muted-foreground'>
+                            ·
+                            {t('Subscription')}
+                          </span>
+                        )}
+                      </span>
+                    )}
+                    {statusBadge(task.status, t)}
+                  </span>
                 </div>
                 <div className='mt-2 flex gap-1.5 overflow-x-auto'>
                   {extractResultUrls(task).map((url, idx) => (

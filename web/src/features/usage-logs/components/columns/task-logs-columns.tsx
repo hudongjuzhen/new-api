@@ -22,14 +22,16 @@ import { Music } from 'lucide-react'
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
-import { formatTimestampToDate } from '@/lib/format'
+import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
+import { parseLogOther } from '../../lib/format'
 import type { TaskLog } from '../../types'
 import {
   AudioPreviewDialog,
@@ -213,6 +215,34 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
       },
     },
     createProgressColumn<TaskLog>({ headerLabel: t('Progress') }),
+    {
+      id: 'cost',
+      header: t('Cost'),
+      accessorFn: (row) => row.quota,
+      cell: function CostCell({ row }) {
+        const quota = row.getValue('cost') as number | undefined
+        if (!quota) {
+          return <span className='text-muted-foreground/60 text-xs'>-</span>
+        }
+        const log = row.original
+        const other = log.other ? parseLogOther(log.other) : null
+        const isSubscription = other?.billing_source === 'subscription'
+        return (
+          <span className='border-border/60 bg-muted/30 inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-xs'>
+            {formatLogQuota(quota)}
+            {isSubscription && (
+              <Badge
+                variant='outline'
+                className='h-4 gap-0 px-1 text-[10px] font-normal'
+              >
+                {t('Subscription')}
+              </Badge>
+            )}
+          </span>
+        )
+      },
+      meta: { label: t('Cost') },
+    },
     {
       accessorKey: 'fail_reason',
       header: t('Details'),

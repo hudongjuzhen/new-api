@@ -305,6 +305,9 @@ export interface TaskLog {
   other?: string
   created_at?: number
   updated_at?: number
+  // Task pre-charge / settled quota (per-call apps store the fixed per-call
+  // amount here; diff settlement may adjust it later). Absent on legacy rows.
+  quota?: number
 }
 
 // ============================================================================
