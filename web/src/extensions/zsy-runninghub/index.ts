@@ -17,11 +17,11 @@ import { ROLE } from "@/lib/roles";
 // Register sidebar menu group. "RH App Center" is available to every
 // authenticated user; "RH Apps" (management) is admin-only.
 //
-// Titles are plain-English i18n keys: the host translates extension menu
-// titles at render time through t() (see hooks/use-sidebar-data.ts), so
-// these must stay English strings that exist in src/i18n/locales/*.json.
-// Do NOT call useTranslation() here: this module runs outside React and
-// hooks at module scope throw "Invalid hook call" during app bootstrap.
+// The titles are plain-English i18n keys: the host renders extension menu
+// titles through t() (see hooks/use-sidebar-data.ts), so these must stay
+// English strings that exist in src/i18n/locales/*.json. Never call
+// useTranslation() here — this module is evaluated outside React's render
+// context, which crashes the whole app at startup.
 EXT_MENU_GROUPS.push({
   id: "zsy-runninghub",
   title: "RunningHub",

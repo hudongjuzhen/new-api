@@ -58,6 +58,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  getCurrencyDisplay,
+  getCurrencyLabel,
+} from '@/lib/currency'
+import {
+  getEditableQuotaStep,
+  parseQuotaFromDollars,
+  quotaUnitsToEditableAmount,
+} from '@/lib/format'
 
 import {
   listApps,
@@ -173,6 +182,16 @@ function AppForm({
   const [dto, setDto] = useState<AppCreateDTO>(initial)
   const [curlInput, setCurlInput] = useState('')
   const [fetching, setFetching] = useState(false)
+
+  // Editable billing fields are shown in the host's configured currency (USD /
+  // CNY / custom) or tokens. The stored value stays in quota units — inputs
+  // convert on mount/edit, submit converts back (same helpers the redemption
+  // and user-quota forms use).
+  const isTokensMode = getCurrencyDisplay().meta.kind === 'tokens'
+  const quotaToDisplay = (quota: number) =>
+    isTokensMode ? quota : quotaUnitsToEditableAmount(quota)
+  const displayToQuota = (value: number) =>
+    isTokensMode ? Math.round(value) : parseQuotaFromDollars(value)
 
   const set = <K extends keyof AppCreateDTO>(k: K, v: AppCreateDTO[K]) =>
     setDto((prev) => ({ ...prev, [k]: v }))
@@ -341,35 +360,54 @@ function AppForm({
                 min='0.01'
                 value={dto.modelBaseRateRatio}
                 onChange={(e) =>
-                  set('modelBaseRateRatio', parseFloat(e.target.value) || 1.0)
+                  set(
+                    'modelBaseRateRatio',
+                    Number.parseFloat(e.target.value) || 1.0
+                  )
                 }
               />
             </div>
           )}
           {billingModeOf(dto) === 'per-call' && (
             <div className='space-y-1.5'>
-              <Label htmlFor='rh-app-fixed'>{t('Fixed Quota')}</Label>
+              <Label htmlFor='rh-app-fixed'>
+                {t('Fixed Quota ({{currency}})', {
+                  currency: isTokensMode ? t('Tokens') : getCurrencyLabel(),
+                })}
+              </Label>
               <Input
                 id='rh-app-fixed'
                 type='number'
                 min='0'
-                value={dto.fixedQuotaPerCall}
+                step={getEditableQuotaStep()}
+                value={quotaToDisplay(dto.fixedQuotaPerCall)}
                 onChange={(e) =>
-                  set('fixedQuotaPerCall', parseInt(e.target.value) || 0)
+                  set(
+                    'fixedQuotaPerCall',
+                    displayToQuota(Number(e.target.value) || 0)
+                  )
                 }
               />
             </div>
           )}
           {billingModeOf(dto) === 'per-second' && (
             <div className='space-y-1.5'>
-              <Label htmlFor='rh-app-per-second'>{t('Quota Per Second')}</Label>
+              <Label htmlFor='rh-app-per-second'>
+                {t('Quota Per Second ({{currency}})', {
+                  currency: isTokensMode ? t('Tokens') : getCurrencyLabel(),
+                })}
+              </Label>
               <Input
                 id='rh-app-per-second'
                 type='number'
                 min='0'
-                value={dto.quotaPerSecond}
+                step={getEditableQuotaStep()}
+                value={quotaToDisplay(dto.quotaPerSecond)}
                 onChange={(e) =>
-                  set('quotaPerSecond', parseInt(e.target.value) || 0)
+                  set(
+                    'quotaPerSecond',
+                    displayToQuota(Number(e.target.value) || 0)
+                  )
                 }
               />
             </div>
@@ -454,14 +492,16 @@ function AppForm({
               )}
             </p>
           ) : (
-            dto.paramSchema.map((p, i) => (
-              <div key={i} className='space-y-2 rounded-md border p-2'>
-                <div className='grid grid-cols-[1fr_140px] gap-2'>
-                  <Input
-                    value={p.label}
-                    placeholder={t('Label')}
-                    onChange={(e) => setParam(i, { label: e.target.value })}
-                  />
+            dto.paramSchema.map((p, i) => {
+              const key = `${p.nodeId ?? 'p'}-${p.fieldName ?? 'f'}-${i}`
+              return (
+                <div key={key} className='space-y-2 rounded-md border p-2'>
+                  <div className='grid grid-cols-[1fr_140px] gap-2'>
+                    <Input
+                      value={p.label}
+                      placeholder={t('Label')}
+                      onChange={(e) => setParam(i, { label: e.target.value })}
+                    />
                   <Select
                     value={p.type}
                     onValueChange={(v) => {
@@ -519,8 +559,9 @@ function AppForm({
                     <X className='size-3.5' />
                   </Button>
                 </div>
-              </div>
-            ))
+                </div>
+              )
+            })
           )}
           <Button
             type='button'
@@ -543,6 +584,75 @@ function AppForm({
       </div>
     </form>
   )
+}
+
+function siteLabel(site: string): string {
+  if (site === 'cn') return 'RunningHub'
+  if (site === 'intl') return 'RunningHub Intl'
+  return '—'
+}
+
+function billingBadge(app: AppView, t: (key: string) => string) {
+  if (app.perCallBilling) {
+    return <Badge>{t('Per-Call Billing')}</Badge>
+  }
+  if (app.perSecondBilling) {
+    return <Badge variant='outline'>{t('Per-Second Billing')}</Badge>
+  }
+  return <Badge variant='outline'>{t('Dynamic')}</Badge>
+}
+
+function renderTableBody(
+  isLoading: boolean,
+  data: { items?: AppView[] } | undefined,
+  t: (key: string) => string,
+  onEdit: (app: AppView) => void,
+  onDelete: (id: number) => void
+) {
+  if (isLoading) {
+    return (
+      <TableRow>
+        <TableCell colSpan={7} className='text-center'>
+          {t('Loading...')}
+        </TableCell>
+      </TableRow>
+    )
+  }
+  if (!data?.items?.length) {
+    return (
+      <TableRow>
+        <TableCell colSpan={7} className='text-center'>
+          {t('No data')}
+        </TableCell>
+      </TableRow>
+    )
+  }
+  return data.items.map((app) => (
+    <TableRow key={app.id}>
+      <TableCell>{app.id}</TableCell>
+      <TableCell className='font-medium'>{app.name}</TableCell>
+      <TableCell>{app.kind}</TableCell>
+      <TableCell className='font-mono text-xs'>{app.upstreamId}</TableCell>
+      <TableCell className='text-xs'>{siteLabel(app.site)}</TableCell>
+      <TableCell>{billingBadge(app, t)}</TableCell>
+      <TableCell className='text-right'>
+        <Button
+          variant='ghost'
+          size='icon-sm'
+          onClick={() => onEdit(app)}
+        >
+          <Pencil className='size-3.5' />
+        </Button>
+        <Button
+          variant='ghost'
+          size='icon-sm'
+          onClick={() => onDelete(app.id)}
+        >
+          <Trash2 className='size-3.5' />
+        </Button>
+      </TableCell>
+    </TableRow>
+  ))
 }
 
 export function RhAppsPage() {
@@ -638,60 +748,7 @@ export function RhAppsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={7} className='text-center'>
-                    {t('Loading...')}
-                  </TableCell>
-                </TableRow>
-              ) : !data?.items?.length ? (
-                <TableRow>
-                  <TableCell colSpan={7} className='text-center'>
-                    {t('No data')}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                data.items.map((app) => (
-                  <TableRow key={app.id}>
-                    <TableCell>{app.id}</TableCell>
-                    <TableCell className='font-medium'>{app.name}</TableCell>
-                    <TableCell>{app.kind}</TableCell>
-                    <TableCell className='font-mono text-xs'>
-                      {app.upstreamId}
-                    </TableCell>
-                    <TableCell className='text-xs'>
-                      {app.site === 'cn'
-                        ? 'RunningHub'
-                        : app.site === 'intl'
-                          ? 'RunningHub Intl'
-                          : '—'}
-                    </TableCell>
-                    <TableCell>
-                      {app.perCallBilling ? (
-                        <Badge>{t('Per-Call Billing')}</Badge>
-                      ) : (
-                        <Badge variant='outline'>{t('Dynamic')}</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className='text-right'>
-                      <Button
-                        variant='ghost'
-                        size='icon-sm'
-                        onClick={() => openEdit(app)}
-                      >
-                        <Pencil className='size-3.5' />
-                      </Button>
-                      <Button
-                        variant='ghost'
-                        size='icon-sm'
-                        onClick={() => setDeleteId(app.id)}
-                      >
-                        <Trash2 className='size-3.5' />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
+              {renderTableBody(isLoading, data, t, openEdit, setDeleteId)}
             </TableBody>
           </Table>
         </SectionPageLayout.Content>

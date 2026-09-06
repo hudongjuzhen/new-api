@@ -430,6 +430,36 @@ function statusBadge(status: string, t: (k: string) => string) {
   )
 }
 
+/**
+ * Failure message shown for a failed generation record: the RH payload's
+ * `data.errorMessage` takes precedence when present (it carries the precise
+ * upstream failure), otherwise `task.fail_reason` is used. Only absolute URLs
+ * are rendered as links — anything else is plain truncated text (a relative
+ * path like "/任务超时（1440分钟）" must never become an <a href> navigation).
+ */
+function taskFailMessage(task: TaskDto): string {
+  const nested = task.data as { errorMessage?: unknown } | undefined
+  const errorMessage =
+    typeof nested?.errorMessage === 'string' ? nested.errorMessage : ''
+  return errorMessage || task.fail_reason || ''
+}
+
+function FailMessageText({ message }: { message: string }) {
+  if (/^https?:\/\//.test(message)) {
+    return (
+      <a
+        href={message}
+        target='_blank'
+        rel='noreferrer'
+        className='min-w-0 truncate underline-offset-2 hover:underline'
+      >
+        {message}
+      </a>
+    )
+  }
+  return <span className='min-w-0 truncate'>{message}</span>
+}
+
 function AppRunForm({
   app,
   onSubmitted,
@@ -861,23 +891,10 @@ function GenerationRecords({ appId }: { appId: number }) {
                       </span>
                     )}
                   {task.status?.toLowerCase() === 'failure' &&
-                    task.fail_reason && (
+                    taskFailMessage(task) && (
                       <span className='text-destructive flex items-center gap-1 text-[11px]'>
                         <XCircle className='size-3.5' />
-                        {/^https?:\/\//.test(task.fail_reason) ? (
-                          <a
-                            href={task.fail_reason}
-                            target='_blank'
-                            rel='noreferrer'
-                            className='min-w-0 truncate underline-offset-2 hover:underline'
-                          >
-                            {task.fail_reason}
-                          </a>
-                        ) : (
-                          <span className='min-w-0 truncate'>
-                            {task.fail_reason}
-                          </span>
-                        )}
+                        <FailMessageText message={taskFailMessage(task)} />
                       </span>
                     )}
                 </div>
