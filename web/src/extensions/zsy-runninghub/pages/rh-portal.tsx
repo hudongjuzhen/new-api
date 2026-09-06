@@ -25,6 +25,10 @@ import {
   XCircle,
   UploadCloud,
   Trash2,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  X,
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -32,6 +36,7 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -599,7 +604,7 @@ function AppRunForm({
 function AppIntro({ app }: { app: AppView }) {
   const { t } = useTranslation()
   return (
-    <div className='flex h-full flex-col overflow-hidden'>
+    <div className='relative flex h-full min-h-0 flex-col overflow-hidden'>
       <ScrollArea className='min-h-0 flex-1'>
         <div className='space-y-3'>
           {app.coverUrl ? (
@@ -628,6 +633,139 @@ function AppIntro({ app }: { app: AppView }) {
   )
 }
 
+/**
+ * Full-screen image preview for a single generation record. Arrow keys cycle
+ * only within that record's own result images — pressing left/right at either
+ * end stops (never leaks into the next/previous record). The dialog holds its
+ * own index state so it always starts on the clicked image.
+ */
+function ResultImageLightbox({
+  open,
+  onOpenChange,
+  urls,
+  initialIndex,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  urls: string[]
+  initialIndex: number
+}) {
+  const { t } = useTranslation()
+  const [index, setIndex] = useState(initialIndex)
+  const [wasOpen, setWasOpen] = useState(open)
+
+  // Clamp in render so a stale initialIndex (never expected here) degrades
+  // gracefully instead of rendering urls[-1].
+  const clamped = Math.min(Math.max(index, 0), urls.length - 1)
+
+  // Restart from the clicked image every time the dialog opens. onOpenChange
+  // already mirrors state, so a flip from closed→open resets the index.
+  if (open !== wasOpen) {
+    setWasOpen(open)
+    if (open) setIndex(initialIndex)
+  }
+
+  const prev = () => setIndex((i) => Math.max(0, i - 1))
+  const next = () => setIndex((i) => Math.min(urls.length - 1, i + 1))
+  const canPrev = clamped > 0
+  const canNext = clamped < urls.length - 1
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      prev()
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      next()
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        showCloseButton={false}
+        className='bg-background/95 max-w-4xl border-border/40 p-3 backdrop-blur-md sm:max-w-4xl'
+      >
+        <div
+          tabIndex={-1}
+          onKeyDown={handleKeyDown}
+          className='relative flex min-h-[60vh] flex-col outline-none'
+        >
+          <div className='flex items-center justify-between gap-2 text-xs text-muted-foreground'>
+            <span className='flex items-center gap-1.5'>
+              <Sparkles className='size-3.5' />
+              {t('Preview image')}
+            </span>
+            <span data-testid='lightbox-counter'>
+              {t('{{current}} of {{total}}', {
+                current: clamped + 1,
+                total: urls.length,
+              })}
+            </span>
+            <div className='flex items-center gap-1'>
+              <a
+                href={urls[clamped]}
+                download
+                title={t('Download')}
+                aria-label={t('Download')}
+                className='text-muted-foreground hover:text-foreground inline-flex items-center justify-center rounded-md p-1 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50'
+              >
+                <Download className='size-4' />
+              </a>
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon-sm'
+                title={t('Close')}
+                onClick={() => onOpenChange(false)}
+              >
+                <X className='size-4' />
+              </Button>
+            </div>
+          </div>
+
+          <div className='flex min-h-0 flex-1 items-center justify-center py-3'>
+            <img
+              src={urls[clamped]}
+              alt={t('Preview image')}
+              className='max-h-[65vh] max-w-full rounded-md border border-border/40 object-contain'
+            />
+          </div>
+
+          {urls.length > 1 && (
+            <>
+              <Button
+                type='button'
+                variant='outline'
+                size='icon'
+                title={t('Previous Result')}
+                aria-label={t('Previous Result')}
+                disabled={!canPrev}
+                onClick={prev}
+                className='absolute top-1/2 -left-2.5 -translate-y-1/2 border-border/60 bg-background/80 backdrop-blur-sm sm:-left-5'
+              >
+                <ChevronLeft className='size-5' />
+              </Button>
+              <Button
+                type='button'
+                variant='outline'
+                size='icon'
+                title={t('Next Result')}
+                aria-label={t('Next Result')}
+                disabled={!canNext}
+                onClick={next}
+                className='absolute top-1/2 -right-2.5 -translate-y-1/2 border-border/60 bg-background/80 backdrop-blur-sm sm:-right-5'
+              >
+                <ChevronRight className='size-5' />
+              </Button>
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function GenerationRecords({ appId }: { appId: number }) {
   const { t } = useTranslation()
   const tasks = useQuery({
@@ -637,10 +775,17 @@ function GenerationRecords({ appId }: { appId: number }) {
   })
 
   const items = tasks.data?.items ?? []
+  // The record currently shown in the lightbox. Index resets to the clicked
+  // thumbnail within that record; navigation never crosses record boundaries.
+  const [preview, setPreview] = useState<{
+    taskId: string
+    urls: string[]
+    index: number
+  } | null>(null)
 
   return (
     <div className='flex h-full flex-col overflow-hidden'>
-      <div className='mb-2 flex items-center justify-between'>
+      <div className='mb-2 shrink-0 items-center justify-between gap-2 sm:flex'>
         <span className='text-sm font-medium'>{t('Generation Records')}</span>
         <Button
           type='button'
@@ -671,14 +816,26 @@ function GenerationRecords({ appId }: { appId: number }) {
                   {statusBadge(task.status, t)}
                 </div>
                 <div className='mt-2 flex gap-1.5 overflow-x-auto'>
-                  {extractResultUrls(task).map((url) => (
-                    <a key={url} href={url} target='_blank' rel='noreferrer'>
+                  {extractResultUrls(task).map((url, idx) => (
+                    <button
+                      key={url}
+                      type='button'
+                      title={t('Preview image')}
+                      onClick={() =>
+                        setPreview({
+                          taskId: task.task_id,
+                          urls: extractResultUrls(task),
+                          index: idx,
+                        })
+                      }
+                      className='cursor-pointer'
+                    >
                       <img
                         src={url}
-                        alt=''
-                        className='h-14 w-14 shrink-0 rounded border object-cover'
+                        alt={t('Preview image')}
+                        className='h-14 w-14 shrink-0 rounded border object-cover transition-transform hover:scale-105'
                       />
-                    </a>
+                    </button>
                   ))}
                   {extractResultUrls(task).length === 0 &&
                     task.status?.toLowerCase() === 'success' && (
@@ -713,6 +870,16 @@ function GenerationRecords({ appId }: { appId: number }) {
           </div>
         )}
       </ScrollArea>
+
+      <ResultImageLightbox
+        open={preview !== null}
+        onOpenChange={(open) => {
+          if (!open) setPreview(null)
+        }}
+        urls={preview?.urls ?? []}
+        initialIndex={preview?.index ?? 0}
+        key={preview?.taskId ?? 'closed'}
+      />
     </div>
   )
 }
@@ -760,7 +927,7 @@ export function RhPortalPage() {
               className='pl-8'
             />
           </div>
-          <ScrollArea className='h-[70vh]'>
+          <ScrollArea className='h-[calc(100vh-11rem)]'>
             <div className='space-y-1 pr-1'>
               {list.length === 0 ? (
                 <p className='text-muted-foreground px-2 py-4 text-center text-xs'>
@@ -804,24 +971,28 @@ export function RhPortalPage() {
         ) : (
           <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
             {/* form (left) */}
-            <div className='bg-card min-h-[60vh] rounded-xl border p-4'>
+            <div className='bg-card flex h-[calc(100vh-11rem)] min-h-0 flex-col rounded-xl border p-4'>
               <h3 className='mb-3 text-sm font-semibold'>{t('Parameters')}</h3>
-              <AppRunForm
-                app={app}
-                onSubmitted={() => {
-                  // records panel polls automatically; nothing else needed here
-                }}
-              />
+              <div className='min-h-0 flex-1'>
+                <AppRunForm
+                  app={app}
+                  onSubmitted={() => {
+                    // records panel polls automatically; nothing else needed here
+                  }}
+                />
+              </div>
             </div>
             {/* intro (center) */}
-            <div className='bg-card min-h-[60vh] rounded-xl border p-4'>
+            <div className='bg-card flex h-[calc(100vh-11rem)] min-h-0 flex-col rounded-xl border p-4'>
               <h3 className='mb-3 text-sm font-semibold'>
                 {t('About this app')}
               </h3>
-              <AppIntro app={app} />
+              <div className='min-h-0 flex-1'>
+                <AppIntro app={app} />
+              </div>
             </div>
             {/* generation records (right) */}
-            <div className='bg-card min-h-[60vh] rounded-xl border p-4 md:col-span-2 xl:col-span-1'>
+            <div className='bg-card flex h-[calc(100vh-11rem)] min-h-0 flex-col rounded-xl border p-4 md:col-span-2 xl:col-span-1'>
               <GenerationRecords appId={app.id} />
             </div>
           </div>
