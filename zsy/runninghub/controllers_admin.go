@@ -273,6 +273,96 @@ func syncAppsFromChannel(c *gin.Context) {
 }
 
 // =========================================================================
+// Admin controllers — App category CRUD
+// =========================================================================
+
+// CategoryDTO is the write shape for category create/update.
+type CategoryDTO struct {
+	Name      string `json:"name"`
+	SortOrder int    `json:"sortOrder"`
+}
+
+// listCategories (GET /dashboard/zsy/rh/app-categories) — all categories
+// with their app counts.
+func listCategories(c *gin.Context) {
+	views, err := AppCategoryList()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, views)
+}
+
+// createCategory (POST /dashboard/zsy/rh/app-categories) — create one category.
+func createCategory(c *gin.Context) {
+	var dto CategoryDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		common.ApiError(c, fmt.Errorf("请求体错误: %w", err))
+		return
+	}
+	view, err := AppCategoryInsert(dto.Name, dto.SortOrder)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "rh_app.category_create", map[string]any{
+		"id":   view.ID,
+		"name": view.Name,
+	})
+	common.ApiSuccess(c, view)
+}
+
+// updateCategory (PUT /dashboard/zsy/rh/app-categories/:id) — update a category.
+func updateCategory(c *gin.Context) {
+	id, err := parseAppIDParam(c, "id")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	var dto CategoryDTO
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		common.ApiError(c, fmt.Errorf("请求体错误: %w", err))
+		return
+	}
+	view, err := AppCategoryUpdate(id, dto.Name, dto.SortOrder)
+	if err != nil {
+		if errors.Is(err, ErrCategoryNotFound) {
+			common.ApiErrorMsg(c, "分类不存在")
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "rh_app.category_update", map[string]any{
+		"id":   view.ID,
+		"name": view.Name,
+	})
+	common.ApiSuccess(c, view)
+}
+
+// deleteCategory (DELETE /dashboard/zsy/rh/app-categories/:id) — delete a
+// category and clear its references.
+func deleteCategory(c *gin.Context) {
+	id, err := parseAppIDParam(c, "id")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := AppCategoryDelete(id); err != nil {
+		if errors.Is(err, ErrCategoryNotFound) {
+			common.ApiErrorMsg(c, "分类不存在")
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "rh_app.category_delete", map[string]any{
+		"id": id,
+	})
+	common.ApiSuccess(c, map[string]any{"deleted": true})
+}
+
+// =========================================================================
 // Admin audit helper
 // =========================================================================
 

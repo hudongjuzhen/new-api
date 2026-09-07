@@ -16,8 +16,9 @@ import {
   Wand2,
   Loader2,
   X,
+  FolderOpen,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -74,6 +75,12 @@ import {
   updateApp,
   deleteApp,
   parseCurlRequest,
+  listCategories,
+  createCategory,
+  updateCategory,
+  deleteCategory,
+  type AppCategory,
+  type CategoryInput,
   type AppView,
   type AppCreateDTO,
   type SchemaParam,
@@ -105,6 +112,7 @@ const emptyDTO: AppCreateDTO = {
   quotaPerSecond: 0,
   modelBaseRateRatio: 1.0,
   site: '',
+  categoryId: null,
 }
 
 /** Billing mode selector value → the two mutually-exclusive flags. */
@@ -182,6 +190,12 @@ function AppForm({
   const [dto, setDto] = useState<AppCreateDTO>(initial)
   const [curlInput, setCurlInput] = useState('')
   const [fetching, setFetching] = useState(false)
+
+  const { data: categories = [] } = useQuery({
+    queryKey: ['rh-app-categories'],
+    queryFn: () => listCategories(),
+  })
+  const catId = dto.categoryId ?? null
 
   // Editable billing fields are shown in the host's configured currency (USD /
   // CNY / custom) or tokens. The stored value stays in quota units — inputs
@@ -294,6 +308,28 @@ function AppForm({
             </Select>
             <p className='text-xs text-muted-foreground'>
               {t('Which site handles this app')}
+            </p>
+          </div>
+          <div className='space-y-1.5'>
+            <Label htmlFor='rh-app-category'>{t('Category')}</Label>
+            <Select
+              value={catId == null ? '' : String(catId)}
+              onValueChange={(v) => set('categoryId', v === '' ? null : Number(v))}
+            >
+              <SelectTrigger id='rh-app-category'>
+                <SelectValue placeholder={t('Uncategorized')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value=''>{t('Uncategorized')}</SelectItem>
+                {categories.map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>
+                    {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className='text-xs text-muted-foreground'>
+              {t('Select a category for this app')}
             </p>
           </div>
           <div className='grid grid-cols-2 gap-4'>
@@ -592,6 +628,10 @@ function siteLabel(site: string): string {
   return '—'
 }
 
+function CategoryBadge({ name }: { name: string }) {
+  return <Badge variant='outline'>{name}</Badge>
+}
+
 function billingBadge(app: AppView, t: (key: string) => string) {
   if (app.perCallBilling) {
     return <Badge>{t('Per-Call Billing')}</Badge>
@@ -612,7 +652,7 @@ function renderTableBody(
   if (isLoading) {
     return (
       <TableRow>
-        <TableCell colSpan={7} className='text-center'>
+        <TableCell colSpan={8} className='text-center'>
           {t('Loading...')}
         </TableCell>
       </TableRow>
@@ -621,7 +661,7 @@ function renderTableBody(
   if (!data?.items?.length) {
     return (
       <TableRow>
-        <TableCell colSpan={7} className='text-center'>
+        <TableCell colSpan={8} className='text-center'>
           {t('No data')}
         </TableCell>
       </TableRow>
@@ -631,6 +671,13 @@ function renderTableBody(
     <TableRow key={app.id}>
       <TableCell>{app.id}</TableCell>
       <TableCell className='font-medium'>{app.name}</TableCell>
+      <TableCell>
+        {app.categoryName ? (
+          <Badge variant='outline'>{app.categoryName}</Badge>
+        ) : (
+          <span className='text-muted-foreground/60 text-xs'>-</span>
+        )}
+      </TableCell>
       <TableCell>{app.kind}</TableCell>
       <TableCell className='font-mono text-xs'>{app.upstreamId}</TableCell>
       <TableCell className='text-xs'>{siteLabel(app.site)}</TableCell>
@@ -655,12 +702,189 @@ function renderTableBody(
   ))
 }
 
+export function CategoryManageDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+}) {
+  const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [editing, setEditing] = useState<AppCategory | null>(null)
+  const [name, setName] = useState('')
+  const [sortOrder, setSortOrder] = useState(0)
+  const [deleteId, setDeleteId] = useState<number | null>(null)
+
+  const { data: categories = [], isLoading } = useQuery({
+    queryKey: ['rh-app-categories'],
+    queryFn: () => listCategories(),
+  })
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['rh-app-categories'] })
+    queryClient.invalidateQueries({ queryKey: ['rh-apps'] })
+  }
+
+  const startEdit = (cat: AppCategory) => {
+    setEditing(cat)
+    setName(cat.name)
+    setSortOrder(cat.sortOrder ?? 0)
+  }
+  const startCreate = () => {
+    setEditing(null)
+    setName('')
+    setSortOrder(0)
+  }
+
+  const save = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const input: CategoryInput = { name: name.trim(), sortOrder }
+    if (!input.name) return
+    const mutate = editing
+      ? updateCategory(editing.id, input)
+      : createCategory(input)
+    mutate
+      .then(() => {
+        toast.success(editing ? t('Category updated') : t('Category created'))
+        invalidate()
+        startCreate()
+      })
+      .catch((err: unknown) =>
+        toast.error(String((err as Error)?.message ?? err))
+      )
+  }
+
+  const confirmDelete = () => {
+    if (deleteId == null) return
+    deleteCategory(deleteId)
+      .then(() => {
+        toast.success(t('Category deleted'))
+        invalidate()
+        setDeleteId(null)
+      })
+      .catch((err: unknown) => {
+        toast.error(String((err as Error)?.message ?? err))
+        setDeleteId(null)
+      })
+  }
+
+  return (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className='sm:max-w-lg'>
+          <DialogHeader>
+            <DialogTitle>{t('Category Management')}</DialogTitle>
+          </DialogHeader>
+          <div className='space-y-4'>
+            <form onSubmit={save} className='flex items-end gap-2'>
+              <div className='space-y-1.5 flex-1'>
+                <Label htmlFor='rh-cat-name'>{t('Category Name')}</Label>
+                <Input
+                  id='rh-cat-name'
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={t('New category name…')}
+                />
+              </div>
+              <div className='w-24 space-y-1.5'>
+                <Label htmlFor='rh-cat-order'>{t('Sort')}</Label>
+                <Input
+                  id='rh-cat-order'
+                  type='number'
+                  value={sortOrder}
+                  onChange={(e) => setSortOrder(Number(e.target.value) || 0)}
+                />
+              </div>
+              <Button type='submit'>
+                {editing ? t('Save') : t('Add')}
+              </Button>
+            </form>
+
+            <div className='max-h-72 space-y-1 overflow-y-auto'>
+              {isLoading ? (
+                <div className='text-muted-foreground py-4 text-center text-sm'>
+                  {t('Loading...')}
+                </div>
+              ) : (
+                (() => {
+                  if (categories.length === 0) {
+                    return (
+                      <div className='text-muted-foreground py-4 text-center text-sm'>
+                        {t('No categories yet')}
+                      </div>
+                    )
+                  }
+                  return categories.map((cat) => (
+                    <div
+                      key={cat.id}
+                      className='border-border/60 bg-muted/20 flex items-center justify-between gap-2 rounded-md border px-2 py-1.5'
+                    >
+                      <div className='flex min-w-0 items-center gap-2'>
+                      <span className='text-sm font-medium'>{cat.name}</span>
+                      <CategoryBadge name={`${cat.appCount ?? 0}`} />
+                    </div>
+                    <div className='flex shrink-0 items-center gap-1'>
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => startEdit(cat)}
+                        title={t('Edit')}
+                      >
+                        <Pencil className='size-3.5' />
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => setDeleteId(cat.id)}
+                        title={t('Delete')}
+                      >
+                        <Trash2 className='size-3.5' />
+                      </Button>
+                    </div>
+                  </div>
+                ))
+                })()
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={deleteId !== null}
+        onOpenChange={(v) => !v && setDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('Delete Category')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                'Deleting a category unassigns the apps in it. Existing apps are kept.'
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete}>
+              {t('Delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  )
+}
+
 export function RhAppsPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<AppView | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
+  const [catManageOpen, setCatManageOpen] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['rh-apps'],
@@ -729,6 +953,10 @@ export function RhAppsPage() {
           {t('RunningHub Apps')}
         </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
+          <Button size='sm' variant='outline' onClick={() => setCatManageOpen(true)}>
+            <FolderOpen className='size-4' />
+            {t('Category Management')}
+          </Button>
           <Button size='sm' onClick={openCreate}>
             <Plus className='size-4' />
             {t('Create App')}
@@ -740,6 +968,7 @@ export function RhAppsPage() {
               <TableRow>
                 <TableHead>ID</TableHead>
                 <TableHead>{t('App Name')}</TableHead>
+                <TableHead>{t('Category')}</TableHead>
                 <TableHead>{t('Kind')}</TableHead>
                 <TableHead>{t('Upstream ID')}</TableHead>
                 <TableHead>{t('Site')}</TableHead>
@@ -753,6 +982,11 @@ export function RhAppsPage() {
           </Table>
         </SectionPageLayout.Content>
       </SectionPageLayout>
+
+      <CategoryManageDialog
+        open={catManageOpen}
+        onOpenChange={setCatManageOpen}
+      />
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className='max-h-[85vh] w-[80vw] max-w-[80vw] overflow-y-auto sm:max-w-[80vw]'>
@@ -780,6 +1014,7 @@ export function RhAppsPage() {
                     quotaPerSecond: editing.quotaPerSecond,
                     modelBaseRateRatio: editing.modelBaseRateRatio,
                     site: editing.site ?? '',
+                    categoryId: editing.categoryId ?? null,
                   }
                 : emptyDTO
             }
@@ -795,8 +1030,7 @@ export function RhAppsPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('Delete App')}</AlertDialogTitle>
-            <AlertDialogDescription>
+            <AlertDialogTitle>{t('Delete App')}</AlertDialogTitle>            <AlertDialogDescription>
               {t('Are you sure you want to delete this app?')}
             </AlertDialogDescription>
           </AlertDialogHeader>

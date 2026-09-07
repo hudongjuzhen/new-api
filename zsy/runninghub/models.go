@@ -70,6 +70,11 @@ type App struct {
 	Published   bool    `gorm:"index"                                     json:"published"`
 	AdminOnly   bool    `gorm:"index"                                     json:"adminOnly"`
 
+	// Optional category reference for grouping apps in the admin list and the
+	// app center. Soft-deleted categories null this column out (FK-less
+	// integer reference by design — see AppCategory).
+	CategoryID uint `gorm:"index;default:0" json:"categoryId"`
+
 	// Site scopes the submit path to a RunningHub site (cn / intl). The site is
 	// the authoritative routing input: submit picks an enabled channel from the
 	// site's channel-type pool (RunningHub 61 for cn, RunningHub 国际站 62 for
@@ -108,6 +113,29 @@ type App struct {
 	// base rate". Any non-positive ratio is rejected by the validator so the
 	// billing chain is always protected.
 	ModelBaseRateRatio float64 `gorm:"default:1.0;not null"                     json:"modelBaseRateRatio"`
+}
+
+// AppCategory is an optional grouping label for RunningHub apps. It is a
+// plain integer reference from App.CategoryID — no DB-level FK, so deleting a
+// category never conflicts with existing apps; the store layer clears the
+// references instead. Name is unique per category row.
+type AppCategory struct {
+	ID        uint           `gorm:"primarykey"                        json:"id"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
+	DeletedAt gorm.DeletedAt `gorm:"index"                            json:"-"`
+
+	Name      string `gorm:"type:varchar(191);not null;uniqueIndex" json:"name"`
+	SortOrder int    `gorm:"default:0;not null"                    json:"sortOrder"`
+}
+
+// AppCategoryView is the read-side shape of an AppCategory with the number
+// of apps still referencing it (for the manage dialog's delete affordance).
+type AppCategoryView struct {
+	ID        uint   `json:"id"`
+	Name      string `json:"name"`
+	SortOrder int    `json:"sortOrder"`
+	AppCount  int64  `json:"appCount"`
 }
 
 // ParamSchema returns the decoded parameter list. An empty schema is a valid,

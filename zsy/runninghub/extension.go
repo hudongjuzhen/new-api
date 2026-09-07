@@ -44,7 +44,7 @@ func init() {
 	// GORM models for the plugin-owned tables. Always registered here (before
 	// main.go calls migrateDB) because extbootstrap is imported (and therefore
 	// init() runs) in main() before model.InitDB.
-	extcore.RegisterMigrateModels(&App{})
+	extcore.RegisterMigrateModels(&App{}, &AppCategory{})
 
 	// Task adaptor factory. The returned value must satisfy
 	// relay/channel.TaskAdaptor; the host performs a checked type-assertion

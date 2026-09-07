@@ -49,6 +49,8 @@ export interface AppView {
   quotaPerSecond: number
   modelBaseRateRatio: number
   site: string
+  categoryId: number | null
+  categoryName: string | null
 }
 
 export interface AppListResult {
@@ -76,6 +78,7 @@ export interface AppCreateDTO {
   quotaPerSecond: number
   modelBaseRateRatio: number
   site: string
+  categoryId: number | null
 }
 
 export interface FetchTemplateResult {
@@ -83,6 +86,19 @@ export interface FetchTemplateResult {
   upstreamId: string
   schema: SchemaParam[]
   schemaErrors?: { field: string; message: string }[]
+}
+
+export interface AppCategory {
+  id: number
+  name: string
+  sortOrder: number
+  appCount: number
+  createdAt?: number
+}
+
+export interface CategoryInput {
+  name: string
+  sortOrder?: number
 }
 
 /** Parser output of a pasted RunningHub curl request example. */
@@ -144,6 +160,42 @@ export async function updateApp(id: number, dto: AppCreateDTO) {
 
 export async function deleteApp(id: number) {
   await api.delete(`/dashboard/zsy/rh/apps/${id}`)
+}
+
+// ---------------------------------------------------------------------------
+// App categories API (admin CRUD)
+// ---------------------------------------------------------------------------
+
+export async function listCategories(): Promise<AppCategory[]> {
+  const res = await api.get<{ success: boolean; data: AppCategory[] }>(
+    '/dashboard/zsy/rh/app-categories'
+  )
+  return res.data.data ?? []
+}
+
+export async function createCategory(
+  input: CategoryInput
+): Promise<AppCategory> {
+  const res = await api.post<{ success: boolean; data: AppCategory }>(
+    '/dashboard/zsy/rh/app-categories',
+    input
+  )
+  return res.data.data
+}
+
+export async function updateCategory(
+  id: number,
+  input: CategoryInput
+): Promise<AppCategory> {
+  const res = await api.put<{ success: boolean; data: AppCategory }>(
+    `/dashboard/zsy/rh/app-categories/${id}`,
+    input
+  )
+  return res.data.data
+}
+
+export async function deleteCategory(id: number) {
+  await api.delete(`/dashboard/zsy/rh/app-categories/${id}`)
 }
 
 /**

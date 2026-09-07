@@ -62,6 +62,8 @@ type AppView struct {
 	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	Site               string                 `json:"site"`
+	CategoryID         uint                   `json:"categoryId"`
+	CategoryName       string                 `json:"categoryName"`
 }
 
 // AppCreateDTO / AppUpdateDTO are the write shapes accepted by the admin
@@ -84,6 +86,7 @@ type AppCreateDTO struct {
 	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	Site               string                 `json:"site"`
+	CategoryID         uint                   `json:"categoryId"`
 }
 
 type AppUpdateDTO = AppCreateDTO // field set identical; alias keeps symmetry
@@ -197,9 +200,17 @@ func AppSearch(q AppListQuery) (AppListResult, error) {
 	if err != nil {
 		return AppListResult{}, fmt.Errorf("runninghub apps list: %w", err)
 	}
+
+	// Join category names for the returned page in one query (avoids one
+	// query per row against app_categories on every list load).
+	categoryNames, err := categoryNameMap()
+	if err != nil {
+		return AppListResult{}, err
+	}
+
 	views := make([]*AppView, 0, len(rows))
 	for i := range rows {
-		av, err := appToView(&rows[i])
+		av, err := appToViewWithCategories(&rows[i], categoryNames)
 		if err != nil {
 			return AppListResult{}, fmt.Errorf("runninghub app[%d] view: %w", i, err)
 		}
@@ -433,6 +444,7 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 	target.PerSecondBilling = dto.PerSecondBilling
 	target.QuotaPerSecond = dto.QuotaPerSecond
 	target.Site = normalizeSite(strings.TrimSpace(dto.Site))
+	target.CategoryID = dto.CategoryID
 	if dto.ModelBaseRateRatio == 0 {
 		// Treat explicit zero same as unset: back to 1.0 default so billing
 		// multipliers are never a flat-rate-zero.
@@ -474,6 +486,19 @@ func schemaParamsToField(in []rhparser.SchemaParam) []FieldParam {
 		out = append(out, fp)
 	}
 	return out
+}
+
+// appToViewWithCategories builds an AppView and fills CategoryName from a
+// pre-loaded map (used by the paginated list to avoid N+1 queries).
+func appToViewWithCategories(a *App, names map[uint]string) (*AppView, error) {
+	view, err := appToView(a)
+	if err != nil {
+		return nil, err
+	}
+	if names != nil {
+		view.CategoryName = names[a.CategoryID]
+	}
+	return view, nil
 }
 
 func appToView(a *App) (*AppView, error) {
@@ -519,7 +544,22 @@ func appToView(a *App) (*AppView, error) {
 		QuotaPerSecond:     a.QuotaPerSecond,
 		ModelBaseRateRatio: a.ModelBaseRateRatio,
 		Site:               a.Site,
+		CategoryID:         a.CategoryID,
 	}, nil
+}
+
+// categoryNameMap returns id → name for every non-deleted category, used to
+// join CategoryID onto AppView without N+1 queries.
+func categoryNameMap() (map[uint]string, error) {
+	var cats []AppCategory
+	if err := db().Find(&cats).Error; err != nil {
+		return nil, fmt.Errorf("runninghub categories: %w", err)
+	}
+	out := make(map[uint]string, len(cats))
+	for _, c := range cats {
+		out[c.ID] = c.Name
+	}
+	return out, nil
 }
 
 // normalizeSite canonicalises the app's site selector to a stable value. It
@@ -614,4 +654,125 @@ func isUniqueViolation(err error, columnHint string) bool {
 	msg := strings.ToLower(err.Error())
 	return (strings.Contains(msg, "unique") || strings.Contains(msg, "duplicate")) &&
 		strings.Contains(msg, strings.ToLower(columnHint))
+}
+
+// ---------------------------------------------------------------------------
+// App categories store layer
+// ---------------------------------------------------------------------------
+
+// ErrCategoryNotFound is returned when a required AppCategory is missing.
+var ErrCategoryNotFound = errors.New("runninghub: category not found")
+
+// AppCategoryList returns all non-deleted categories, ordered by sort then id.
+func AppCategoryList() ([]*AppCategoryView, error) {
+	var cats []AppCategory
+	if err := db().Order("sort_order asc, id asc").Find(&cats).Error; err != nil {
+		return nil, fmt.Errorf("runninghub categories list: %w", err)
+	}
+	views := make([]*AppCategoryView, 0, len(cats))
+	for i := range cats {
+		views = append(views, &AppCategoryView{
+			ID:        cats[i].ID,
+			Name:      cats[i].Name,
+			SortOrder: cats[i].SortOrder,
+		})
+	}
+	if len(views) == 0 {
+		return views, nil
+	}
+	// Attach per-category app counts in one aggregate query.
+	ids := make([]uint, 0, len(views))
+	for _, v := range views {
+		ids = append(ids, v.ID)
+	}
+	type row struct {
+		CategoryID uint
+		N          int64
+	}
+	var rows []row
+	if err := db().Model(&App{}).
+		Select("category_id, count(*) as n").
+		Where("category_id IN ?", ids).
+		Group("category_id").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("runninghub category counts: %w", err)
+	}
+	counts := make(map[uint]int64, len(rows))
+	for _, r := range rows {
+		counts[r.CategoryID] = r.N
+	}
+	for _, v := range views {
+		v.AppCount = counts[v.ID]
+	}
+	return views, nil
+}
+
+// AppCategoryInsert creates a category. Name uniqueness is enforced by the DB
+// unique index and translated to a stable user-facing error.
+func AppCategoryInsert(name string, sortOrder int) (*AppCategoryView, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("分类名称不能为空")
+	}
+	if len(name) > 191 {
+		return nil, fmt.Errorf("分类名称过长 (上限 191 字符)")
+	}
+	cat := &AppCategory{Name: name, SortOrder: sortOrder}
+	if err := db().Create(cat).Error; err != nil {
+		if isUniqueViolation(err, "name") {
+			return nil, fmt.Errorf("分类名称 %q 已存在", name)
+		}
+		return nil, fmt.Errorf("create runninghub category: %w", err)
+	}
+	return &AppCategoryView{ID: cat.ID, Name: cat.Name, SortOrder: cat.SortOrder}, nil
+}
+
+func loadAppCategory(id uint) (*AppCategory, error) {
+	cat := &AppCategory{}
+	if err := db().First(cat, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrCategoryNotFound
+		}
+		return nil, err
+	}
+	return cat, nil
+}
+
+// AppCategoryUpdate renames/reorders a category. Returns ErrCategoryNotFound
+// when the id does not exist.
+func AppCategoryUpdate(id uint, name string, sortOrder int) (*AppCategoryView, error) {
+	cat, err := loadAppCategory(id)
+	if err != nil {
+		return nil, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("分类名称不能为空")
+	}
+	if len(name) > 191 {
+		return nil, fmt.Errorf("分类名称过长 (上限 191 字符)")
+	}
+	cat.Name = name
+	cat.SortOrder = sortOrder
+	if err := db().Save(cat).Error; err != nil {
+		if isUniqueViolation(err, "name") {
+			return nil, fmt.Errorf("分类名称 %q 已存在", name)
+		}
+		return nil, fmt.Errorf("update runninghub category: %w", err)
+	}
+	return &AppCategoryView{ID: cat.ID, Name: cat.Name, SortOrder: cat.SortOrder}, nil
+}
+
+// AppCategoryDelete soft-deletes a category and clears App.CategoryID for any
+// apps referencing it. Returns ErrCategoryNotFound when the id is missing.
+func AppCategoryDelete(id uint) error {
+	if _, err := loadAppCategory(id); err != nil {
+		return err
+	}
+	return db().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&App{}).Where("category_id = ?", id).Update("category_id", 0).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&AppCategory{}, "id = ?", id).Error
+	})
 }

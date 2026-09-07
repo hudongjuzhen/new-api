@@ -60,6 +60,10 @@ func mountRoutes(router *gin.Engine) {
 			apps.POST("/fetch-template", fetchAppTemplate)
 			apps.POST("/sync-from-channel", syncAppsFromChannel)
 		}
+		admin.GET("/app-categories", listCategories)
+		admin.POST("/app-categories", createCategory)
+		admin.PUT("/app-categories/:id", updateCategory)
+		admin.DELETE("/app-categories/:id", deleteCategory)
 		admin.GET("/stats", stats)
 	}
 }
