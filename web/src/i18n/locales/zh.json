@@ -5540,7 +5540,17 @@
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放",
     "Deducted": "扣费",
-    "Refunded": "已退款"
+    "Refunded": "已退款",
+    "Category Management": "分类管理",
+    "Category created": "分类已创建",
+    "Category updated": "分类已更新",
+    "Category deleted": "分类已删除",
+    "New category name…": "新分类名称…",
+    "No categories yet": "暂无分类",
+    "Uncategorized": "未分类",
+    "Select a category for this app": "为应用选择一个分类",
+    "Delete Category": "删除分类",
+    "Deleting a category unassigns the apps in it. Existing apps are kept.": "删除分类会解除分类下应用的归类，已有应用会被保留。"
   },
   "Dynamic Billing": "动态计费",
   "Per-Second Billing": "按秒计费",

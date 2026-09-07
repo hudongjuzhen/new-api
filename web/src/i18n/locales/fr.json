@@ -5540,7 +5540,17 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "Deducted": "Prélevé",
-    "Refunded": "Remboursé"
+    "Refunded": "Remboursé",
+    "Category Management": "Gestion des catégories",
+    "Category created": "Catégorie créée",
+    "Category updated": "Catégorie mise à jour",
+    "Category deleted": "Catégorie supprimée",
+    "New category name…": "Nouveau nom de catégorie…",
+    "No categories yet": "Aucune catégorie",
+    "Uncategorized": "Non catégorisé",
+    "Select a category for this app": "Sélectionnez une catégorie pour cette application",
+    "Delete Category": "Supprimer la catégorie",
+    "Deleting a category unassigns the apps in it. Existing apps are kept.": "Supprimer une catégorie désaffecte les applications qui en font partie. Les applications existantes sont conservées."
   },
   "Dynamic Billing": "Dynamic Billing",
   "Per-Second Billing": "Per-Second Billing",

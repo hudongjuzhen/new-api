@@ -5540,7 +5540,17 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "Deducted": "Khấu trừ",
-    "Refunded": "Đã hoàn"
+    "Refunded": "Đã hoàn",
+    "Category Management": "Quản lý danh mục",
+    "Category created": "Đã tạo danh mục",
+    "Category updated": "Đã cập nhật danh mục",
+    "Category deleted": "Đã xóa danh mục",
+    "New category name…": "Tên danh mục mới…",
+    "No categories yet": "Chưa có danh mục nào",
+    "Uncategorized": "Chưa phân loại",
+    "Select a category for this app": "Chọn danh mục cho ứng dụng này",
+    "Delete Category": "Xóa danh mục",
+    "Deleting a category unassigns the apps in it. Existing apps are kept.": "Việc xóa danh mục sẽ hủy phân loại các ứng dụng trong đó. Các ứng dụng hiện có vẫn được giữ."
   },
   "Dynamic Billing": "Dynamic Billing",
   "Per-Second Billing": "Per-Second Billing",

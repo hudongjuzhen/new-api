@@ -5540,7 +5540,17 @@
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム",
     "Deducted": "課金",
-    "Refunded": "返金済み"
+    "Refunded": "返金済み",
+    "Category Management": "カテゴリ管理",
+    "Category created": "カテゴリを作成しました",
+    "Category updated": "カテゴリを更新しました",
+    "Category deleted": "カテゴリを削除しました",
+    "New category name…": "新しいカテゴリ名…",
+    "No categories yet": "カテゴリはまだありません",
+    "Uncategorized": "未分類",
+    "Select a category for this app": "このアプリのカテゴリを選択",
+    "Delete Category": "カテゴリを削除",
+    "Deleting a category unassigns the apps in it. Existing apps are kept.": "カテゴリを削除すると、そのカテゴリのアプリの分類が解除されます。既存のアプリは保持されます。"
   },
   "Dynamic Billing": "Dynamic Billing",
   "Per-Second Billing": "Per-Second Billing",
