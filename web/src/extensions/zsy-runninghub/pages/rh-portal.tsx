@@ -433,15 +433,30 @@ function statusBadge(status: string, t: (k: string) => string) {
 /**
  * Failure message shown for a failed generation record: the RH payload's
  * `data.errorMessage` takes precedence when present (it carries the precise
- * upstream failure), otherwise `task.fail_reason` is used. Only absolute URLs
- * are rendered as links — anything else is plain truncated text (a relative
- * path like "/任务超时（1440分钟）" must never become an <a href> navigation).
+ * upstream failure message, e.g. "Task not found, please check the task ID"),
+ * otherwise `task.fail_reason` is used. In extreme cases the raw `data` can
+ * itself be a bare error string (e.g. "/任务超时（1440分钟）"), so prefer the
+ * string payload over the sanitized task fields. Only absolute URLs are
+ * rendered as links — anything else is plain truncated text (a relative path
+ * like "/任务超时（1440分钟）" must never become an <a href> navigation).
  */
 function taskFailMessage(task: TaskDto): string {
-  const nested = task.data as { errorMessage?: unknown } | undefined
-  const errorMessage =
-    typeof nested?.errorMessage === 'string' ? nested.errorMessage : ''
-  return errorMessage || task.fail_reason || ''
+  const rawData = task.data
+  const nested =
+    rawData && typeof rawData === 'object'
+      ? (rawData as { errorMessage?: unknown })
+      : null
+  if (
+    nested &&
+    typeof nested.errorMessage === 'string' &&
+    nested.errorMessage.trim() !== ''
+  ) {
+    return nested.errorMessage
+  }
+  if (typeof rawData === 'string' && rawData.trim() !== '') {
+    return rawData
+  }
+  return task.fail_reason || ''
 }
 
 function FailMessageText({ message }: { message: string }) {
