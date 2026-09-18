@@ -74,6 +74,10 @@ func getTaskResultContent(c *gin.Context) {
 		common.ApiErrorMsg(c, "任务不存在或无权访问")
 		return
 	}
+	if denied := tokenScopeDenied(c, task); denied != "" {
+		apiError(c, http.StatusForbidden, ErrorCodeTaskNotOwnedByKey, denied)
+		return
+	}
 	if !taskOwnsResultURL(task, rawURL) {
 		common.ApiErrorMsg(c, "仅支持预览该任务自身的结果文件")
 		return

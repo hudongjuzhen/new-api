@@ -275,39 +275,23 @@ type RhApp struct {
 - **并发计数恢复**：对账数据全部来自 DB（未完成任务按渠道+Key 分组重算），进程重启后最多一个对账周期（30s）自动收敛，无持久化状态可丢失，无人工干预。
 - **提交窗口幽灵任务**（既有架构固有，非插件引入）：请求已达 RH（RH 侧开始运行并扣 RH 币）而 new-api 在落库前崩溃时，预扣费已发生但无任务行、无轮询与退款路径。该窗口为核心 `RelayTask` 流程固有（所有任务平台共有，窗口为毫秒级），插件不做结构性改造；缓解措施：提交前写一条审计日志（时间/用户/模型/参数摘要），供管理员与 RH 后台对账，文档标注该残余风险。
 
-### 3.5 提交链路（`controller/submit.go`）
+### 3.5 提交链路（`zsy/runninghub/controllers_user.go`）
 
-路由链（与 `/suno` 任务路由同级强度）：
-
-```go
-group := router.Group("/zsy/rh/v1")
-group.Use(middleware.RouteTag("relay"))
-group.Use(middleware.SystemPerformanceCheck())
-group.Use(middleware.TokenAuth())
-group.Use(middleware.ModelRequestRateLimit())
-group.Use(middleware.Distribute()) // 请求体含 "model" 字段，由 Distribute 按模型选渠道
-```
-
-`POST /zsy/rh/v1/submit` 处理流程（在核心 `controller.RelayTask` 基础上做两处增强，其余流程一致）：
+实际挂载（见 §4.1）：`POST /api/zsy/rh/apps/:id/run`，组内中间件为 `callerAuthRequired`（会话 / PAT / API Key）。插件**不使用**宿主的 `middleware.Distribute`：站点（`site=cn|intl|liblib`）才是选路输入，渠道从该站点类型（61/62/63）的渠道池里按优先级 / 权重选取，并叠加 §3.10 的并发额度闸门。
 
 ```text
-1. 绑定请求体：{ model, params: {name: value}, instance_type?, use_personal_queue?, webhook_url? }
-2. 校验 model → 查 RhApp（必须 enabled）；校验 params（schema/validate.go，全部拒绝式 400）
-3. 解析图片/视频参数：URL / base64 data URI / 本地上传引用（见 §3.6）
-4. 并发感知选 Key：
-   ch := 渠道（Distribute 已选定；重试时 GetRandomSatisfiedChannel + SetupContextForSelectedChannel）
-   key, release := keypool.Acquire(ch)          // 覆盖 Distribute 给出的默认 Key
-   common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-5. 构建 RH 请求体：schema + params → nodeInfoList + instanceType/usePersonalQueue/webhookUrl
-   存入 gin context（adaptor.BuildRequestBody 直接取用）
-6. relay.RelayTaskSubmit(c, relayInfo)         // 预扣费→提交→AdjustBillingOnSubmit，全部原生
-7. defer：提交失败 release（pending 集合移除）
-8. 成功：SettleBilling → LogTaskConsumption → InitTask 落库
-   task.PrivateData.Key = key                  // 轮询用同 Key 查询（多账号安全）
-9. 响应：{ task_id, model, status }
+1. 绑定请求体：{ values: {"nodeId.fieldName": value}, instanceType?, webhookUrl?, tokenId? }
+2. 校验 app（已发布、非 admin-only）→ 按 ParamSchema 校验 values（拒绝式错误）
+3. 令牌绑定：API Key 调用者只能用自己的 Key 计费；面板调用者可用 tokenId 指定付费 Key
+4. Key 模型白名单校验（token_id > 0 且启用限制时，见 §4.1.1）
+5. 站点选渠道 + 并发额度（满额则受理为 QUEUED 排队记录，见 §3.10）
+6. 构建 RH nodeInfoList → 存入 gin context（adaptor.BuildRequestBody 取用）
+7. relay.RelayTaskSubmit(c, relayInfo)  // 预扣费 → 提交 → DoResponse，全部原生
+8. 成功：结算 → 消费日志 → task 落库（PrivateData.Key / TokenId / BillingContext）
+9. 响应：common.ApiSuccess 包裹的 { taskId, status, upstreamTaskId, raw }
 ```
 
-重试策略（自实现简化版 `shouldRetry`）：429/5xx 且未超 `common.RetryTimes` → 换渠道重试；4xx/本地错误 → 终止。每次重试重新 `keypool.Acquire`。
+重试策略：复用核心 `ShouldRetryTaskRelay` + `ProcessChannelError`（429/5xx 换渠道重试，本地错误终止）；每次重试重新获取并发额度。
 
 **计费语义**：应用绑定模型名在"模型价格"表中配置按次价格 → `ModelPriceHelperPerCall` 得 `UsePrice=true` → `PerCallBilling=true`（[relay.go#L593-L600](../controller/relay.go#L593-L600)）→ 轮询阶段自动跳过差额结算；任务失败走 `RefundTaskQuota` 全额退款；超时清扫同样退款。整条链无插件侧算术，无负扣费风险面；v1.5 如引入参数倍率，必须走 `PriceData.AddOtherRatio`（核心已拒绝非正/NaN/Inf）并在 schema 中声明数值边界。
 
@@ -322,13 +306,15 @@ group.Use(middleware.Distribute()) // 请求体含 "model" 字段，由 Distribu
 
 求值结果钳制到 `[1, relaycommon.MaxTaskDurationSeconds]`（3600）；引用不存在/未提交、除零、语法错误一律在提交时返回 400，绝不静默按 1 秒计费。管理端"按秒计费"分支提供该输入框。
 
+**按秒计费是固定价，不参与"币结算"**：`perSecondBilling` 的任务与按次、动态倍率三种模式一样，以 `BillingContext.PerCallBilling=true` 落库（`controllers_user.go` 的 `taskChargeIsFinal`，直提与排队两条路径共用），轮询阶段跳过差额结算，最终扣费恒为 `QuotaPerSecond × 秒数 × 分组倍率`（失败/超时仍全额退款）。原因：RH 的 `usage.consumeCoins` 与 new-api 的 quota 量纲不同，`ParseTaskResult` 里"1 币 = 1 quota"的换算等价于 **500000 币 = $1**，比真实币价低数个数量级。线上 `task_U4n7F7SxBdO4TdrfbWADfYd7XEiF9CRq`（8 秒 × $0.03/秒）预扣 120000 quota 后被 adaptor 调整覆盖为 49 quota（$0.000098）即由此缺陷导致。**该通道已整体关闭**：adaptor 不再重写 `AdjustBillingOnComplete`（继承 `taskcommon.BaseBilling` 的"返回 0 = 保持预扣"），`ParseTaskResult` 也不再读取 `usage.consumeCoins` 参与计费（原始 usage 仍留在 `task.Data` 里可查）。恢复"按上游实际消耗结算"前必须先确定真实"币 → quota"汇率。
+
 **导入不再自动推断数值边界**：`rhparser` 原 `inferRangeHint` 会按样例值猜测 min/max（样例值 `0`/`1` → `[0,1]`，`0.25~4` → `[0.25,4]`），导致"开始秒数"这类计数字段被钉死上限，提交时被 `coerceValueByType` 以"不能大于 1"拒绝。该推断已删除：number 类型默认不写边界，边界只能由管理员在参数模板里显式填写（`Min`/`Max` 输入框，留空表示不限制）。
 
-### 3.6 上传代理（`controller/upload.go`）
+### 3.6 上传代理（`zsy/runninghub/controllers_upload.go`）
 
-- `POST /zsy/rh/v1/upload`（TokenAuth）：multipart 单文件，大小上限取实例配置 `max_upload_mb`（默认 50，见 §3.2）。
-- 转发至 `{base_url}/openapi/v2/media/upload/binary`，`Authorization: Bearer {key}`（Key 从绑定渠道轮询选取，不占并发额度——查询/上传类轻请求）。
-- 返回 `{ file_name, url }`；`file_name`（如 `openapi/xxxx.png`）可直接作为 image/video 参数值提交。
+- `POST /api/zsy/rh/upload?site=cn|intl`（`callerAuthRequired`：会话 / PAT / API Key）：multipart 单文件，大小上限见下列常量。
+- 转发至 `{base_url}/openapi/v2/media/upload/binary`，`Authorization: Bearer {key}`（Key 从该站点渠道选取，不占任务并发额度——上传/查询类轻请求）。
+- 返回 `{ fileName, url }`；`fileName`（如 `openapi/xxxx.png`）可直接作为 image/video 参数值提交。
 - 仅允许转发到渠道配置的 RH 域名（SSRF 防护：目标固定来自渠道 `base_url`，不接受用户传 URL）。
 
 ### 3.7 Adaptor 实现（`adaptor/task_adaptor.go`）
@@ -341,15 +327,16 @@ group.Use(middleware.Distribute()) // 请求体含 "model" 字段，由 Distribu
 | `ValidateRequestAndSetAction` | 从 context 取 RhApp，设置 `info.Action = app.Kind`；兜底校验请求体存在 |
 | `EstimateBilling` | 返回 nil（纯按次，无 OtherRatios） |
 | `AdjustBillingOnSubmit` | 返回 nil |
-| `AdjustBillingOnComplete` | 返回 0（PerCallBilling 已跳过，此为兜底） |
+| `AdjustBillingOnComplete` | 不重写：继承 `taskcommon.BaseBilling` 的"返回 0 = 保持预扣"（插件三种模式均在提交时定价） |
 | `BuildRequestURL` | `{base_url}/openapi/v2/run/ai-app/{appID}` 或 `/openapi/v2/run/workflow/{appID}`（按 kind；路径已由用户示例佐证） |
 | `BuildRequestHeader` | `Authorization: Bearer {ContextKeyChannelKey}`、`Content-Type: application/json` |
 | `BuildRequestBody` | 从 gin context 取 §3.5 第 5 步构建好的请求体（`common.Marshal` 产物） |
 | `DoRequest` | 标准 POST（支持渠道代理设置），复用 `relay/channel/api_request.go` 既有请求器 |
-| `DoResponse` | 解析 `{ taskId, status, errorCode, errorMessage }`（兼容 `taskId`/`task_id` 两种命名）；返回 `upstreamTaskID=taskId`，`taskData=原始 body` |
-| `GetModelList` | 查询 rh_apps 表 enabled 的 model_name 列表 |
+| `DoResponse` | 解析 `{ taskId, status, errorCode, errorMessage }`（兼容 `taskId`/`task_id` 两种命名）；返回 `upstreamTaskID=taskId`，`taskData=原始 body`。**并在插件自身的 run 处理器未接管响应时回写客户端**（`SubmitResponse`：`taskId`/`task_id` + `upstreamTaskId` + `status` + `raw`），与内置任务 adaptor 的约定一致（对照 `relay/channel/task/sora`）；否则经通用中继端点（`/v1/video/generations`、`/v1/videos`、`/suno/submit/:action`）提交的调用方只会拿到空的 200，永远拿不到轮询所需的 task_id |
+| `ConvertToOpenAIVideo` | 已实现（`channel.OpenAIVideoConverter`）：`GET /v1/videos/{task_id}` 返回 OpenAI 视频对象。基础字段来自宿主共用的 `model.Task.ToOpenAIVideo()`（状态映射与其它平台一致），再叠加 RH 专有信息：`metadata.results` 列出该次运行的全部结果 URL（首个同时写入 `metadata.url`）、失败任务把上游原因写入 `error.message`、按秒计费的任务把计费秒数写入 `seconds` |
+| `GetModelList` | 返回已发布（`published=true AND admin_only=false`）应用的 `upstream_id` 列表——即渠道 `models` 应填的模型名（命名约定见 `stats_sync.modelToUpstreamID`）。早期占位返回值（`runninghub:ai-app` 等）会让渠道表单的「获取模型列表」写入三个无法路由的名字 |
 | `GetChannelName` | `"RunningHub"` |
-| `FetchTask(baseURL, key, body, proxy)` | `POST {base_url}/openapi/v2/task/{task_id}/status`，body 含 `task_id`/`action`；Bearer 用传入 key（核心已保证为任务提交时的 Key）。**查询端点为待实测假设（阻塞项），见 §3.9** |
+| `FetchTask(baseURL, key, body, proxy)` | `POST {base_url}/openapi/v2/query`，body `{"taskId":"<id>"}`；Bearer 用传入 key（核心已保证为任务提交时的 Key） |
 | `ParseTaskResult` | RH 状态映射：`QUEUED→QUEUED`、`RUNNING→IN_PROGRESS`、`SUCCESS→SUCCESS`（`Url=results[0].url`）、`FAILED→FAILURE`（`Reason=errorMessage`）；完整 results 保留在响应 body 中（核心轮询将原始 body 存入 `task.Data`，多文件结果随 `Data` 透出）。**上游报错但没有可用 status 时（如 `{"status":"","errorCode":"1004","errorMessage":"Task not found, please check the task ID | 任务不存在或已过期，请检查任务ID"}`）按 FAILURE 处理**：RH 平台在核心 `skipTimeoutForPlatform` 里被豁免超时清扫，只认上游状态，若不处理会永远停在 QUEUED 并占住预扣额度；请求级错误码（1001 Invalid URL / 1007 参数解析）不属于任务状态，保持挂起并记 `SysError`，避免上游地址配错时把在跑的任务批量判失败退款 |
 
 ### 3.8 Webhook（可选增强，v1 保留路由桩）
@@ -393,47 +380,63 @@ RunningHub 对超并发的请求是**直接拒绝**而不是排队，所以闸�
 
 ## 4. API 接口定义
 
-### 4.1 用户端（TokenAuth）
+### 4.1 用户端 / 第三方调用（会话、访问令牌或 API Key）
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/zsy/rh/v1/apps` | 可用应用列表（含 ParamSchema，供动态表单渲染） |
-| POST | `/zsy/rh/v1/submit` | 提交任务（请求体见 §3.5） |
-| GET | `/zsy/rh/v1/task/:task_id` | 单任务状态 + 结果（从 tasks 表 + task.Data 解析 results[] 全量输出） |
-| GET | `/zsy/rh/v1/tasks?page=&status=` | 本人任务分页 |
-| POST | `/zsy/rh/v1/upload` | 文件上传代理 |
+挂载于 `/api/zsy/rh/**`（`zsy/runninghub/routes.go` 的 `userRoutes`）。鉴权为 `callerAuthRequired`：**同一个 `Authorization: Bearer` 头接受三类凭据**——面板会话 JWT、面板「访问令牌」（PAT）、中继 API Key（`sk-…`）。凭据类型在中间件里先判定并写在 context 上，因为两者的可见范围不同（见 4.1.1）。
 
-submit 请求/响应示例：
+| 方法 | 路径 | 鉴权 | 说明 |
+|---|---|---|---|
+| GET | `/api/zsy/rh/apps` | 公开 | 已发布、非 admin-only 的应用列表（含 ParamSchema，供动态表单渲染） |
+| GET | `/api/zsy/rh/apps/:id` | 公开 | 应用详情（同上范围） |
+| POST | `/api/zsy/rh/apps/:id/run` | 必需 | 提交任务；body `{values, instanceType?, webhookUrl?, tokenId?}` |
+| GET | `/api/zsy/rh/apps/task/:task_id` | 必需 | 单任务状态 + 结果（宿主 TaskDto） |
+| GET | `/api/zsy/rh/apps/task/:task_id/content?url=` | 必需 | 结果文件文本预览（仅限该任务自身结果 URL，SSRF 防护，上限 1 MiB） |
+| POST | `/api/zsy/rh/apps/task/:task_id/cancel` | 必需 | 取消任务（排队中本地取消；已派发先调上游取消，确认后才置终态 + 退款） |
+| GET | `/api/zsy/rh/apps/tasks` | 必需（仅面板） | 本人任务分页；**API Key 调用返回 403 `key_scoped_list_unsupported`** |
+| POST | `/api/zsy/rh/upload` | 必需 | 媒体上传代理（转发 RH `media/upload/binary`，返回 `fileName`） |
+| GET | `/api/zsy/rh/upload-channel?site=` | 必需 | 该站点是否已有可上传的启用渠道 |
+
+run 请求/响应示例（`taskId` 是网关公开 ID，查询与取消都用它）：
 
 ```json
-// POST /zsy/rh/v1/submit
-{ "model": "rh-aiapp-1975951975441412098",
-  "params": { "reference_image": "https://... 或 openapi/xxxx.png",
-              "reference_video": "openapi/yyyy.mp4",
-              "intensity": "1.5", "posture_method": "2" },
-  "instance_type": "default" }
+// POST /api/zsy/rh/apps/42/run
+{ "values": { "122.prompt": "a tiny castle", "275.reference_image": "openapi/xxxx.png" },
+  "instanceType": "default" }
 
 // 200
-{ "task_id": "task_xxxxxxxxxxxxxxxx", "model": "rh-aiapp-...", "status": "SUBMITTED" }
-// 错误（余额不足/校验失败/并发满）复用 taskdto.TaskError 结构与状态码
+{ "success": true, "message": "",
+  "data": { "taskId": "task_xxxxxxxxxxxxxxxx", "status": "IN_PROGRESS",
+            "upstreamTaskId": "1xxxxxxxxxxxxxxxxx", "raw": { "taskId": "1xxxx…", "status": "RUNNING" } } }
 ```
 
-### 4.2 管理端（AdminAuth，挂载在 `/zsy/rh/admin`）
+#### 4.1.1 第三方（API Key）调用契约
+
+- **凭据**：用中继 API Key（`Authorization: Bearer sk-…`）。该 Key 的分组、额度、IP 白名单等既有约束全部生效；面板侧继续用会话 / PAT，行为不变。
+- **计费**：任务记在调用 Key 名下（`task.private_data.token_id`），预扣与退款都走该 Key（额度不足按 `pre_consume_token_quota_failed` 拒绝）。
+- **可见范围**：Key **只能**查询/取消自己提交的任务（否则 403 `task_not_owned_by_key`）；查询和取消都要求 `task_id`，**不提供按 Key 分页的历史列表**——宿主 `tasks` 表没有按 Key 的索引（付费 Key 存在 `private_data` JSON 里），返回账号级列表会把别的 Key 的运行记录泄露给调用方，而在页内过滤又不是分页。若确需该能力，应先在核心表加一个带索引的 `token_id` 列。
+- **模型限制**：插件的提交路径自行从站点池选渠道（不经 `middleware.Distribute`），因此在这里补做了 Key 的模型白名单校验——不在白名单内返回 403 `token_model_forbidden`。注意这会同时约束"面板选了带模型限制的 Key"的运行（与核心 `Distribute` 的语义对齐）。
+- **Key 不能指定别的 Key**：body 里 `tokenId` 与本 Key 不一致时返回 400 `token_selection_not_allowed`（面板调用仍可用 `tokenId` 选择付费 Key）。
+- **通用中继入口同样可用**：`POST /v1/video/generations`、`POST /v1/videos`、`POST /suno/submit/:action` 会经渠道类型（61/62/63）路由到同一 adaptor；提交响应、`GET /v1/video/generations/{task_id}` 与 `GET /v1/videos/{task_id}` 查询均已补齐（见 §3.7）。但这些入口绕过插件的参数 schema 校验、站点选路与排队准入，计费退回宿主价格表的基础价，因此**第三方集成应优先使用 4.1 的插件接口**。
+- **前端可见**：应用中心「About this app」下方直接给出 run / query / cancel 的可复制示例（cURL / Python / JavaScript），示例 body 由该应用的参数 schema 生成（`web/src/extensions/zsy-runninghub/lib/api-samples.ts`）。
+
+### 4.2 管理端（AdminAuth，挂载在 `/dashboard/zsy/rh`）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET/POST/PUT/DELETE | `/apps` | 应用模板 CRUD（保存时同步渠道 models 列表 + 模型价格按次配置） |
-| POST | `/apps/parse-curl` | 粘贴 curl → 返回解析预览（不落库） |
-| GET | `/instances` | 渠道类型=RunningHub 的实例列表（Key 脱敏展示） |
-| PUT | `/instances/:id` | 更新 base_url / Keys / max_concurrency_per_key |
-| GET | `/instances/:id/stats` | 每 Key 当前占用 / 上限 / 未完成任务数 |
-| POST | `/instances/:id/test` | 连通性测试（调 RH 余额/用户信息接口，校验每个 Key 有效性） |
+| GET | `/dashboard/zsy/rh/apps` | 应用分页列表（含关键词 / kind / 分类过滤） |
+| GET | `/dashboard/zsy/rh/apps/:id` | 应用详情 |
+| POST | `/dashboard/zsy/rh/apps` | 新建应用（保存时同步模型价格表，见 `syncAppBillingPrice`） |
+| PUT | `/dashboard/zsy/rh/apps/:id` | 更新应用 |
+| DELETE | `/dashboard/zsy/rh/apps/:id` | 软删除应用 |
+| POST | `/dashboard/zsy/rh/apps/parse-curl` | 粘贴 curl → 返回解析预览（不落库） |
+| POST | `/dashboard/zsy/rh/apps/fetch-template` | 按上游应用 ID 拉取示例节点并推断参数模板 |
+| POST | `/dashboard/zsy/rh/apps/sync-from-channel` | 渠道 ↔ 应用双向对账（把已发布应用的 upstreamId 写入渠道 models） |
+| GET/POST/PUT/DELETE | `/dashboard/zsy/rh/app-categories` | 应用分类 CRUD |
+| GET | `/dashboard/zsy/rh/stats` | 插件仪表盘统计 |
 
 ### 4.3 Webhook
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| POST | `/zsy/rh/webhook/:task_id?token=` | RH TASK_END 回调接收（HMAC 校验） |
+**未实现**（规划见 §3.8，当前 `routes.go` 没有 webhook 路由）：状态流转完全依赖宿主轮询（系统任务驱动），第三方如需更快感知完成，请自行轮询 `GET /api/zsy/rh/apps/task/:task_id`。
 
 ---
 
@@ -443,18 +446,20 @@ submit 请求/响应示例：
 web/src/extensions/zsy-runninghub/
 ├── index.ts              # 模块声明：向 extensions/menus.tsx、channel-types.ts 贡献条目
 ├── api.ts                # 上述 API 的类型化客户端
-├── locales/{en,zh,zh-TW,fr,ru,ja,vi}.json   # 插件词条（由 i18n 初始化合并，见 P8）
 ├── components/
-│   ├── ParamForm.tsx     # ★ 动态表单渲染器（schema → 控件）
-│   ├── AppCard.tsx
-│   └── TaskResult.tsx    # results[] 渲染：png/img 预览、mp4 播放器、text 展示、24h 过期提示
-└── pages/
-    ├── admin-apps.tsx    # 应用管理：列表 + curl 解析器 + schema 编辑表格 + 定价
-    ├── admin-instances.tsx # 实例管理：Key 列表（并发占用进度条）+ 上限设置 + 测试
-    ├── user-apps.tsx     # 用户端应用广场
-    ├── user-run.tsx      # 应用运行页（ParamForm + 提交 + 进度轮询）
-    └── user-tasks.tsx    # 任务记录
+│   └── api-examples.tsx  # 应用中心「About this app」下方的 run/query/cancel 调用示例（Tab 切端点 × 语言）
+├── lib/
+│   ├── api-samples.ts    # 示例文本的纯构造函数（可单测：路径 / 凭据头 / values 键名）
+│   ├── result-media.ts   # results[] → 类型化结果项
+│   └── task-status.ts    # 任务状态 → i18n key / 取消可用性
+├── pages/
+│   ├── apps-page.tsx     # 应用管理：列表 + curl 解析器 + schema 编辑表格 + 定价 + 分类
+│   └── rh-portal.tsx     # 应用中心：分类 / 应用列表 / 参数表单 / 应用介绍 / 生成记录 / API 示例
+└── __tests__/
+    └── api-samples.test.ts
 ```
+
+词条按宿主约定写入核心 `src/i18n/locales/*.json`（7 语言，经 `scripts/add-missing-keys.mjs` + `i18n:sync`），不使用插件独立 locales 目录。
 
 **扩展注入类型契约**（`web/src/extensions/` 导出，供 P6/P7 消费）：
 

@@ -222,6 +222,7 @@ func newRHITestEnv(t *testing.T, upstreamID string) *rhITestEnv {
 		&model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.UserSubscription{},
 		&model.Option{},
 		&runninghub.App{},
+		&runninghub.AppCategory{},
 		&runninghub.RhQueuedTask{},
 	)
 
@@ -361,10 +362,11 @@ func (e *rhITestEnv) pollOnce() {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Dynamic billing: pre-consume → RUNNING → SUCCESS diff settlement
+// 1. Dynamic billing: pre-consume = base price × ratio, and the completion poll
+// keeps it — the adaptor must not re-price the run from RH's usage.consumeCoins.
 // ---------------------------------------------------------------------------
 
-func TestIntegration_DynamicBilling_SuccessPollSettlesDiff(t *testing.T) {
+func TestIntegration_DynamicBilling_SuccessKeepsPrecharge(t *testing.T) {
 	const upstreamID = "9001-dynamic-app"
 	env := newRHITestEnv(t, upstreamID)
 
@@ -374,7 +376,8 @@ func TestIntegration_DynamicBilling_SuccessPollSettlesDiff(t *testing.T) {
 	appID := env.createApp("itest-dynamic", upstreamID, false, 0, 1.0)
 
 	// Pseudo upstream: submit returns RUNNING; the first poll answers RUNNING,
-	// the second SUCCESS with usage.consumeCoins = 123456 quota.
+	// the second SUCCESS with usage.consumeCoins = 123456 — which must NOT be
+	// turned into a charge.
 	upstreamTaskID := "rh-task-dyn-1"
 	env.rh.submitResp = func(string) (int, any) {
 		return http.StatusOK, runninghub.SubmitResp{TaskID: upstreamTaskID, Status: runninghub.StatusRunning}
@@ -403,15 +406,16 @@ func TestIntegration_DynamicBilling_SuccessPollSettlesDiff(t *testing.T) {
 	assert.Equal(t, upstreamTaskID, data["upstreamTaskId"])
 	assert.Equal(t, string(model.TaskStatusInProgress), data["status"])
 
-	// Submit pre-charged wallet + token, and recorded the task with the
-	// upstream id and dynamic (non-per-call) billing context.
+	// Submit pre-charged wallet + token, and recorded the task with the upstream
+	// id and a fixed-price (settle-skipping) billing context.
 	assert.Equal(t, itestInitQuota-preConsumed, env.userQuota())
 	assert.Equal(t, itestInitQuota-preConsumed, env.tokenRemain())
 	task := env.taskByTaskID(publicTaskID)
 	assert.Equal(t, preConsumed, task.Quota)
 	assert.Equal(t, model.TaskStatusInProgress, string(task.Status))
 	require.NotNil(t, task.PrivateData.BillingContext)
-	assert.False(t, task.PrivateData.BillingContext.PerCallBilling)
+	assert.True(t, task.PrivateData.BillingContext.PerCallBilling,
+		"every plugin billing mode is priced at submit time")
 	assert.Equal(t, upstreamTaskID, task.PrivateData.UpstreamTaskID)
 
 	// The submit reached RH with the channel key and the schema-built nodes.
@@ -430,21 +434,21 @@ func TestIntegration_DynamicBilling_SuccessPollSettlesDiff(t *testing.T) {
 	assert.Equal(t, itestInitQuota-preConsumed, env.userQuota())
 	assert.Equal(t, itestInitQuota-preConsumed, env.tokenRemain())
 
-	// Second poll: SUCCESS — diff settlement restores the unused part
-	// (500000 − 123456 = 376544) so the user ends up paying exactly the
-	// upstream-reported charge.
+	// Second poll: SUCCESS — the charge stays at the pre-consumed amount; RH's
+	// reported consumeCoins (123456) has no quota rate and must be ignored.
 	env.pollOnce()
-	assert.Equal(t, itestInitQuota-123456, env.userQuota())
-	assert.Equal(t, itestInitQuota-123456, env.tokenRemain())
+	assert.Equal(t, itestInitQuota-preConsumed, env.userQuota())
+	assert.Equal(t, itestInitQuota-preConsumed, env.tokenRemain())
 
 	task = env.taskByTaskID(publicTaskID)
 	assert.Equal(t, model.TaskStatusSuccess, string(task.Status))
 	assert.Equal(t, "100%", task.Progress)
-	assert.Equal(t, 123456, task.Quota)
+	assert.Equal(t, preConsumed, task.Quota)
 	assert.Equal(t, "https://img.rh-itest.local/out-0.png", task.PrivateData.ResultURL)
 
-	// task.Data keeps the full upstream results and the result API exposes the
-	// URL list through TaskDto.
+	// task.Data keeps the full upstream results (including usage.consumeCoins,
+	// which stays observable even though it is no longer billed) and the result
+	// API exposes the URL list through TaskDto.
 	var dataView map[string]any
 	require.NoError(t, json.Unmarshal(task.Data, &dataView))
 	results, _ := dataView["results"].([]any)
@@ -452,12 +456,12 @@ func TestIntegration_DynamicBilling_SuccessPollSettlesDiff(t *testing.T) {
 	firstResult, _ := results[0].(map[string]any)
 	assert.Equal(t, "https://img.rh-itest.local/out-0.png", firstResult["url"])
 
-	// The diff settlement must be auditable as a refund log entry.
+	// No settlement/refund log rows: the charge was final at submit time.
 	var logCount int64
 	require.NoError(t, model.DB.Model(&model.Log{}).
-		Where("user_id = ? AND type = ? AND quota = ?", itestUserID, model.LogTypeRefund, preConsumed-123456).
+		Where("user_id = ?", itestUserID).
 		Count(&logCount).Error)
-	assert.Equal(t, int64(1), logCount)
+	assert.Zero(t, logCount)
 
 	// User-facing result API: TaskDto envelope with status / result_url / data.
 	w, raw := doJSON(t, env.router, http.MethodGet, fmt.Sprintf("/api/zsy/rh/apps/task/%s", publicTaskID), nil)
@@ -477,7 +481,7 @@ func TestIntegration_DynamicBilling_SuccessPollSettlesDiff(t *testing.T) {
 	require.NoError(t, json.Unmarshal(dtoBytes, &dto))
 	assert.Equal(t, publicTaskID, dto.TaskID)
 	assert.Equal(t, "SUCCESS", dto.Status)
-	assert.Equal(t, 123456, dto.Quota)
+	assert.Equal(t, preConsumed, dto.Quota)
 	assert.Equal(t, "https://img.rh-itest.local/out-0.png", dto.ResultURL)
 	assert.Contains(t, string(dto.Data), "https://img.rh-itest.local/out-0.png")
 }
@@ -547,11 +551,13 @@ func TestIntegration_PerCallBilling_SuccessKeepsFlatCharge(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 2b. Per-second billing: pre-charge = QuotaPerSecond × seconds, then diff
-// settle against RH usage.consumeCoins on SUCCESS (dynamic-billing semantics).
+// 2b. Per-second billing: pre-charge = QuotaPerSecond × seconds, and the
+// completion poll keeps it. RH's usage.consumeCoins must never replace the
+// configured per-second price — a RH coin is not a new-api quota (reading them
+// 1:1 undercharged a real 8-second run from $0.24 to $0.000098).
 // ---------------------------------------------------------------------------
 
-func TestIntegration_PerSecondBilling_PrechargeAndDiffSettle(t *testing.T) {
+func TestIntegration_PerSecondBilling_KeepsPrecharge(t *testing.T) {
 	const upstreamID = "9004-persecond-app"
 	const quotaPerSecond = int64(10_000)
 	const seconds = 30
@@ -583,10 +589,10 @@ func TestIntegration_PerSecondBilling_PrechargeAndDiffSettle(t *testing.T) {
 	pollResponses := []runninghub.QueryResp{
 		{TaskID: upstreamTaskID, Status: runninghub.StatusRunning},
 		{
-			TaskID:       upstreamTaskID,
-			Status:       runninghub.StatusSuccess,
-			Usage:        &runninghub.TaskUsage{ConsumeCoins: "123000"},
-			Results:      []runninghub.TaskResult{{URL: "https://img.rh-itest.local/sec.png"}},
+			TaskID:  upstreamTaskID,
+			Status:  runninghub.StatusSuccess,
+			Usage:   &runninghub.TaskUsage{ConsumeCoins: "123000"},
+			Results: []runninghub.TaskResult{{URL: "https://img.rh-itest.local/sec.png"}},
 		},
 	}
 	env.rh.queryResp = func(string) (int, any) {
@@ -598,8 +604,8 @@ func TestIntegration_PerSecondBilling_PrechargeAndDiffSettle(t *testing.T) {
 
 	w, raw := doJSON(t, env.router, http.MethodPost, fmt.Sprintf("/api/zsy/rh/apps/%d/run", appID),
 		map[string]any{"values": map[string]any{
-			"122.prompt":  "a beating heart",
-			"77.seconds":  fmt.Sprintf("%d", seconds),
+			"122.prompt": "a beating heart",
+			"77.seconds": fmt.Sprintf("%d", seconds),
 		}})
 	envResp := parseAPIEnvelope(t, raw)
 	require.Equal(t, http.StatusOK, w.Code)
@@ -613,17 +619,24 @@ func TestIntegration_PerSecondBilling_PrechargeAndDiffSettle(t *testing.T) {
 	assert.Equal(t, itestInitQuota-int(preConsumed), env.tokenRemain())
 	task := env.taskByTaskID(publicTaskID)
 	require.NotNil(t, task.PrivateData.BillingContext)
-	assert.False(t, task.PrivateData.BillingContext.PerCallBilling,
-		"per-second billing must keep settlement enabled (not per-call)")
+	assert.True(t, task.PrivateData.BillingContext.PerCallBilling,
+		"per-second billing is fixed-price: the task must skip diff settlement")
 	assert.Equal(t, int(preConsumed), task.Quota)
 
 	env.pollOnce() // RUNNING
-	env.pollOnce() // SUCCESS → diff settle against consumeCoins 123000
+	env.pollOnce() // SUCCESS — the reported consumeCoins (123000) must be ignored
 
-	assert.Equal(t, itestInitQuota-123000, env.userQuota())
+	assert.Equal(t, itestInitQuota-int(preConsumed), env.userQuota(),
+		"per-second billing must keep the pre-charge, not settle against RH coins")
+	assert.Equal(t, itestInitQuota-int(preConsumed), env.tokenRemain())
 	task = env.taskByTaskID(publicTaskID)
 	assert.Equal(t, model.TaskStatusSuccess, string(task.Status))
-	assert.Equal(t, 123000, task.Quota)
+	assert.Equal(t, int(preConsumed), task.Quota)
+
+	// No settlement/refund log rows: the per-second charge was final at submit.
+	var logCount int64
+	require.NoError(t, model.DB.Model(&model.Log{}).Where("user_id = ?", itestUserID).Count(&logCount).Error)
+	assert.Zero(t, logCount)
 
 	// The seconds ratio must be visible in the submitted node fields too — the
 	// schema says the seconds-bearing node goes upstream verbatim.

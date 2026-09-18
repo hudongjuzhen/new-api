@@ -133,11 +133,18 @@ func TestPickFailureReason_PrefersRealReasons(t *testing.T) {
 	)
 }
 
-func TestParseTaskResult_UsageBecomesCompletionTokens(t *testing.T) {
+// usage.consumeCoins must not be translated into billing numbers: a RH coin has
+// no established quota rate, and reading them 1:1 (the old behaviour, 500000
+// coins per dollar) undercharged every settled run. The raw usage stays visible
+// in task.Data because the poller stores the whole query response there.
+func TestParseTaskResult_UsageDoesNotBecomeQuota(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	body := `{"taskId":"t1","status":"SUCCESS","usage":{"consumeCoins":"51"},"results":[{"url":"https://x/y.png"}]}`
 
 	info, err := adaptor.ParseTaskResult([]byte(body))
 	require.NoError(t, err)
-	assert.Equal(t, 51, info.CompletionTokens)
+	assert.Equal(t, 0, info.CompletionTokens, "coins must not be converted into a quota")
+	assert.Equal(t, 0, info.TotalTokens)
+	assert.Equal(t, "SUCCESS", info.Status)
+	assert.Equal(t, "https://x/y.png", info.Url)
 }

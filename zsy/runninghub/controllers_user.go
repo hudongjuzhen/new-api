@@ -230,16 +230,33 @@ func submitAppRun(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	// When the caller selected an API key for this run, bind the token's
-	// billing context (id/key/unlimited/group/quota) onto the request before
-	// GenRelayInfo snapshots it into RelayInfo. The host's dashboard
-	// UserAuth path never sets token_* keys, so without this the task would
-	// bill against TokenId=0.
-	if payload.TokenId > 0 {
+	// Token binding. A dashboard caller may pick which of its keys pays for the
+	// run; an API-key caller already is a key, so its own token context (set by
+	// middleware.TokenAuth) is the only acceptable one — asking for a different
+	// key is rejected rather than silently ignored, because the key that pays is
+	// also the key that may later read or cancel the task.
+	if callerUsesAPIKey(c) {
+		callerTokenID := c.GetInt(string(constant.ContextKeyTokenId))
+		if payload.TokenId > 0 && int(payload.TokenId) != callerTokenID {
+			apiError(c, http.StatusBadRequest, ErrorCodeTokenSelectionNotAllowed,
+				"使用 API Key 调用时不能指定其他密钥，本次调用只能由该 Key 计费")
+			return
+		}
+	} else if payload.TokenId > 0 {
+		// The host's dashboard UserAuth path never sets token_* keys, so without
+		// this the task would bill against TokenId=0.
 		if err := applySelectedToken(c, payload.TokenId); err != nil {
 			common.ApiErrorMsg(c, err.Error())
 			return
 		}
+	}
+	// Token model limits live in middleware.Distribute on the /v1/* relay path;
+	// this handler picks its own channel from the site pool, so the allow-list
+	// has to be enforced here or a key limited to a model list could run any app.
+	if !tokenAllowsApp(c, app.UpstreamID) {
+		apiError(c, http.StatusForbidden, ErrorCodeTokenModelForbidden,
+			fmt.Sprintf("当前密钥未被授权使用模型 %s", app.UpstreamID))
+		return
 	}
 	c.Set("platform", rhPlatform)
 
@@ -253,12 +270,20 @@ func submitAppRun(c *gin.Context) {
 	// Billing is derived inside RelayTaskSubmit, which rebuilds PriceData from
 	// the host model price table (ModelPriceHelperPerCall). The app is stashed
 	// for the adaptor:
-	//   - PerCallBilling → the per-call price is kept in sync with the table by
+	//   - per-call → the per-call price is kept in sync with the table by
 	//     syncAppBillingPrice, so UsePrice=true and the pre-charge is the fixed
-	//     quota (task PerCallBilling skips diff settlement on completion).
+	//     quota.
+	//   - per-second → EstimateBilling contributes the "seconds" OtherRatio
+	//     (QuotaPerSecond × seconds, bounded by MaxTaskDurationSeconds).
 	//   - dynamic billing → EstimateBilling contributes the "app_rate_ratio"
 	//     OtherRatio (ModelBaseRateRatio) scaling the model's base price.
+	// All three are fixed-price: their tasks are recorded with PerCallBilling so
+	// the completion poll keeps the pre-charge instead of replacing it with RH's
+	// coin usage (see taskChargeIsFinal).
 	c.Set("rh_app", app)
+	// This handler answers with the dashboard envelope (taskId + status), so the
+	// task adaptor must not write a second body onto the same response.
+	c.Set(contextKeyControllerResponds, true)
 
 	// The plugin mounts its routes outside the host's Distribute middleware,
 	// so — unlike the core task controllers — there is no pre-selected channel
@@ -448,7 +473,7 @@ func submitAppRun(c *gin.Context) {
 					ModelRatio:      relayInfo.PriceData.ModelRatio,
 					OtherRatios:     relayInfo.PriceData.OtherRatios(),
 					OriginModelName: relayInfo.OriginModelName,
-					PerCallBilling:  (common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice) && !app.PerSecondBilling,
+					PerCallBilling:  taskChargeIsFinal(relayInfo, app),
 				},
 			},
 		}
@@ -474,11 +499,22 @@ var rhFamilyPlatforms = []constant.TaskPlatform{
 	channelTypePlatform(constant.ChannelTypeLiblib),         // "63"
 }
 
-// listMyRhTasks returns the current user's RunningHub tasks (paginated). It
+// listMyRhTasks returns the current account's RunningHub tasks (paginated). It
 // reuses the host task query filtered to the RunningHub family (`"61"`, `"62"`,
 // `"63"`) so the "generation records" panel renders tasks submitted through
 // any of the three sites, each recorded under its own platform string.
+//
+// API-key callers are refused: the host task table indexes nothing by key (the
+// paying key lives in the private_data JSON blob), so a key-scoped page cannot
+// be filtered without a schema change. Answering the account-wide page instead
+// would leak every other key's runs to the caller, and post-filtering a page is
+// not pagination. A key polls the task ids it created.
 func listMyRhTasks(c *gin.Context) {
+	if callerUsesAPIKey(c) {
+		apiError(c, http.StatusForbidden, ErrorCodeKeyScopedListUnsupported,
+			"API Key 调用不支持列出历史任务，请使用 task_id 查询单个任务")
+		return
+	}
 	pageInfo := common.GetPageQuery(c)
 	userId := c.GetInt("id")
 
@@ -514,6 +550,10 @@ func getAppTaskResult(c *gin.Context) {
 	}
 	if !exists {
 		common.ApiErrorMsg(c, "任务不存在或无权访问")
+		return
+	}
+	if denied := tokenScopeDenied(c, task); denied != "" {
+		apiError(c, http.StatusForbidden, ErrorCodeTaskNotOwnedByKey, denied)
 		return
 	}
 	common.ApiSuccess(c, relay.TaskModel2Dto(task))
@@ -906,6 +946,29 @@ func rawFromResult(r *relay.TaskSubmitResult) any {
 	return out
 }
 
+// taskChargeIsFinal reports whether the charge decided at submit time is the
+// final one for this run.
+//
+// Every plugin billing mode qualifies: per-call charges FixedQuotaPerCall,
+// per-second charges QuotaPerSecond × seconds, and dynamic charges the channel's
+// base model price × ModelBaseRateRatio. All three are computed from configured
+// values when the run is submitted, so the completion poll must keep them and the
+// host skips its diff settlement for a task flagged PerCallBilling.
+//
+// The settlement this suppresses re-priced the run from RH's usage.consumeCoins
+// read as raw quota (1 coin = 1 quota in the adaptor's old ParseTaskResult) —
+// 500000 coins per dollar, which undercharged a real 8-second run from $0.24 to
+// $0.000098. Enabling pass-through again requires a real coin→quota rate.
+func taskChargeIsFinal(info *relaycommon.RelayInfo, app *AppView) bool {
+	if app != nil {
+		return true
+	}
+	// Defensive fallback for a caller without an app in context: mirror the
+	// host's own rule for a flat model price.
+	return common.StringsContains(constant.TaskPricePatches, info.OriginModelName) ||
+		info.PriceData.UsePrice
+}
+
 // ---------------------------------------------------------------------------
 // Queued runs
 // ---------------------------------------------------------------------------
@@ -963,8 +1026,7 @@ func enqueueAppRun(c *gin.Context, app *AppView, info *relaycommon.RelayInfo) (s
 				ModelRatio:      info.PriceData.ModelRatio,
 				OtherRatios:     info.PriceData.OtherRatios(),
 				OriginModelName: info.OriginModelName,
-				PerCallBilling: (common.StringsContains(constant.TaskPricePatches, info.OriginModelName) ||
-					info.PriceData.UsePrice) && !app.PerSecondBilling,
+				PerCallBilling:  taskChargeIsFinal(info, app),
 			},
 		},
 	}
@@ -1057,6 +1119,10 @@ func cancelAppTask(c *gin.Context) {
 	}
 	if !exist || task == nil {
 		common.ApiErrorMsg(c, "任务不存在")
+		return
+	}
+	if denied := tokenScopeDenied(c, task); denied != "" {
+		apiError(c, http.StatusForbidden, ErrorCodeTaskNotOwnedByKey, denied)
 		return
 	}
 	if !isRhFamilyPlatform(task.Platform) {

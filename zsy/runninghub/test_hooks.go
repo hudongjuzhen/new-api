@@ -86,6 +86,18 @@ func TestHookGetTaskResultContent(c *gin.Context) { getTaskResultContent(c) }
 // TestHookUploadAppMedia exposes the user-side upload proxy handler for tests.
 func TestHookUploadAppMedia(c *gin.Context) { uploadAppMedia(c) }
 
+// TestHookMountUserRoutes mounts the plugin's user-facing route group with the
+// real authentication middleware chain, so the API-key (third-party) path can
+// be exercised end to end — including credential classification, token scoping
+// and the response envelope.
+func TestHookMountUserRoutes(router *gin.Engine) {
+	userRoutes(router.Group("/api/zsy/rh"))
+}
+
+// TestHookMarkControllerResponds mirrors the marker submitAppRun sets, so tests
+// can pin the adaptor's "the run handler already answered" behaviour.
+func TestHookMarkControllerResponds(c *gin.Context) { c.Set(contextKeyControllerResponds, true) }
+
 // TestHookValidateRunPayload runs the in-memory validation path used by
 // submitAppRun without hitting the relay pipeline. Exported for table-driven
 // unit tests covering the typed schema validator.

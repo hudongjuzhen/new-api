@@ -306,6 +306,35 @@ func (token *Token) Insert() error {
 	return err
 }
 
+// CreateDefaultUserToken creates the API key a freshly registered account
+// starts with. The caller supplies the name and group; every other field stays
+// at the dashboard's new-key defaults: enabled, unlimited quota, never expires,
+// no model limits and no IP limits. GORM generates the primary key, so the
+// insert behaves identically on SQLite, MySQL and PostgreSQL.
+func CreateDefaultUserToken(userId int, name string, group string) (*Token, error) {
+	key, err := common.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	now := common.GetTimestamp()
+	token := &Token{
+		UserId:             userId,
+		Name:               name,
+		Key:                key,
+		Status:             common.TokenStatusEnabled,
+		CreatedTime:        now,
+		AccessedTime:       now,
+		ExpiredTime:        -1,
+		UnlimitedQuota:     true,
+		ModelLimitsEnabled: false,
+		Group:              group,
+	}
+	if err := token.Insert(); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update() (err error) {
 	// 写库前失效缓存并设置 fence，防止并发读者把过期快照重新写回缓存。

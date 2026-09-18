@@ -84,6 +84,24 @@ type TaskUsageEntry struct {
 // type alias to aid readability.
 type QueryResp = SubmitResp
 
+// SubmitResponse is the gateway-level answer to a run submit: the public task id
+// every gateway endpoint polls with, the upstream id for support/debugging, and
+// the raw upstream body. It is what the task adaptor writes when a run arrives
+// through the generic relay endpoints (/v1/video/generations, /v1/videos,
+// /suno/submit/:action); the plugin's own /api/zsy/rh/apps/:id/run answers with
+// the same ids inside the dashboard envelope.
+type SubmitResponse struct {
+	TaskID       string `json:"taskId"`
+	TaskIDCompat string `json:"task_id"`
+	// UpstreamTaskID is empty while the run is still waiting for a channel slot
+	// in the gateway queue.
+	UpstreamTaskID string `json:"upstreamTaskId,omitempty"`
+	Status         string `json:"status,omitempty"`
+	Queued         bool   `json:"queued,omitempty"`
+	// Raw is the upstream submit response verbatim.
+	Raw json.RawMessage `json:"raw,omitempty"`
+}
+
 // QueryBody is the camelCase body for POST /openapi/v2/query.
 type QueryBody struct {
 	TaskID string `json:"taskId"`

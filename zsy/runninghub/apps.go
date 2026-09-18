@@ -421,6 +421,24 @@ func syncAppBillingPrice(old *App, updated *App) {
 	}
 }
 
+// publishedAppUpstreamIDs returns the upstream ids of every published,
+// non-admin-only app, i.e. the model names a client may address through the
+// channel (see modelToUpstreamID for the naming convention).
+func publishedAppUpstreamIDs() ([]string, error) {
+	if db() == nil {
+		return nil, fmt.Errorf("database is not initialised")
+	}
+	var upstreamIDs []string
+	err := db().Model(&App{}).
+		Where("published = ? AND admin_only = ?", true, false).
+		Order("id asc").
+		Pluck("upstream_id", &upstreamIDs).Error
+	if err != nil {
+		return nil, fmt.Errorf("load published app upstream ids: %w", err)
+	}
+	return upstreamIDs, nil
+}
+
 // ---------------------------------------------------------------------------
 // Model <-> View translation
 // ---------------------------------------------------------------------------

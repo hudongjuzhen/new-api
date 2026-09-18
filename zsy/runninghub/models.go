@@ -87,9 +87,10 @@ type App struct {
 	ParamSchemaText string `gorm:"type:text;column:param_schema"            json:"-"`
 
 	// PerCallBilling mirrors the new-api billing semantics. When true the task
-	// is charged flatly at submission and never refunded, matching v1 of the
-	// RH pricing model. When false the billing chain supports
-	// AdjustBillingOnComplete driven by RH usage.consumeCoins.
+	// is charged flatly at submission and that charge is final (a failed task is
+	// still refunded in full); the completion poll skips its diff settlement.
+	// All three plugin modes are billed this way — this flag only selects which
+	// price the flat charge uses.
 	PerCallBilling bool `gorm:"index"                                     json:"perCallBilling"`
 
 	// Price per invocation when PerCallBilling=true. Stored as an integer
@@ -98,9 +99,11 @@ type App struct {
 	FixedQuotaPerCall int64 `gorm:"default:0;not null"                       json:"fixedQuotaPerCall"`
 
 	// PerSecondBilling charges the task by the value of the schema's
-	// seconds/duration parameter: pre-charge = QuotaPerSecond × seconds, then
-	// the completion poll diff-settles against RH usage.consumeCoins when the
-	// upstream reports it (dynamic-billing semantics; settle is NOT skipped).
+	// seconds/duration parameter (App.SecondsExpr): pre-charge =
+	// QuotaPerSecond × seconds. That charge is final — per-second apps are
+	// recorded with the same fixed-price flag as per-call, so the completion
+	// poll keeps the pre-charge instead of replacing it with RH's
+	// usage.consumeCoins (a RH coin is not a new-api quota).
 	// Mutually exclusive with PerCallBilling — enforced by validateApp.
 	PerSecondBilling bool `gorm:"index"                                 json:"perSecondBilling"`
 

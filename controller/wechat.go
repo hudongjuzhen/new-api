@@ -117,6 +117,8 @@ func WeChatAuth(c *gin.Context) {
 				})
 				return
 			}
+			// 微信首次注册的账号与面板注册一致：自动获得「官方渠道」默认密钥
+			provisionDefaultUserKey(user.Id, user.Group)
 		} else {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,

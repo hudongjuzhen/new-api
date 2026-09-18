@@ -149,3 +149,33 @@ func TestRegisterWithoutInviteCodeStillWorksWhenNotRequired(t *testing.T) {
 	require.NotNil(t, created)
 	assert.Zero(t, created.InviterId)
 }
+
+// Registration must hand the new account a ready-to-use relay key, so the user
+// never has to visit the dashboard before calling the gateway.
+func TestRegisterCreatesOfficialChannelKey(t *testing.T) {
+	setupRegisterTestDB(t)
+
+	success, message := performRegister(t, `{"username":"keyed_user","password":"pass12345"}`)
+	require.True(t, success, "registration must succeed (message=%s)", message)
+
+	created := registeredUser(t, "keyed_user")
+	require.NotNil(t, created)
+
+	var tokens []model.Token
+	require.NoError(t, model.DB.Where("user_id = ?", created.Id).Order("id asc").Find(&tokens).Error)
+	require.Len(t, tokens, 1, "registration must provision exactly one key")
+
+	token := tokens[0]
+	assert.Equal(t, "官方渠道", token.Name, "the key name is fixed to 官方渠道")
+	assert.Equal(t, "官方渠道", token.Group, "the key group is fixed to 官方渠道")
+	assert.Len(t, token.Key, 48, "the stored key must be the full 48-char secret")
+	assert.Equal(t, common.TokenStatusEnabled, token.Status)
+	assert.True(t, token.UnlimitedQuota, "the default key is unlimited")
+	assert.EqualValues(t, -1, token.ExpiredTime, "the default key never expires")
+	assert.Zero(t, token.RemainQuota)
+	assert.False(t, token.ModelLimitsEnabled, "the default key restricts no model")
+	assert.Empty(t, token.ModelLimits)
+	assert.Empty(t, token.GetIpLimits(), "the default key restricts no IP")
+	assert.NotZero(t, token.CreatedTime)
+	assert.NotZero(t, token.AccessedTime)
+}

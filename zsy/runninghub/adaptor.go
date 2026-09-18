@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
@@ -22,17 +23,18 @@ import (
 // TaskAdaptor implements channel.TaskAdaptor for RunningHub.
 // Billing methods are delegated to taskcommon.BaseBilling — which means the
 // default pricing is derived straight from `info.PriceData` (UsePrice /
-// OtherRatios / ModelRatio set at the host level). RunningHub v1 uses
-// per-call billing, which is expressed by the task caller setting
-// PriceData.UsePrice=true when building the app's submit.
+// OtherRatios / ModelRatio set at the host level).
 //
-// Per-call tasks are settled at the pre-charged amount (the host skips the
-// diff settlement for BillingContext.PerCallBilling). For dynamic-billing
-// tasks the actual quota comes from RH's usage.consumeCoins: ParseTaskResult
-// converts it into TaskInfo.CompletionTokens (1 coin = 1 quota, the v1
-// semantic; per-coin pricing can later be layered on the model price config),
-// and AdjustBillingOnCompleteChecked feeds it into the host's diff settlement
-// while surfacing any quota saturation event as a *common.QuotaClamp.
+// Every plugin billing mode prices the run at submit time, and that charge is
+// final: per-call uses FixedQuotaPerCall, per-second uses
+// QuotaPerSecond × seconds, dynamic uses the channel base price ×
+// ModelBaseRateRatio. The submit controller records such tasks with
+// BillingContext.PerCallBilling, so the host skips its completion-time diff
+// settlement, and this adaptor contributes no AdjustBillingOnComplete either.
+//
+// Re-pricing a run from RH's usage.consumeCoins was tried and removed: a RH coin
+// has no established quota rate, and the "1 coin = 1 quota" reading (500000
+// coins per dollar) turned a real 8-second, $0.24 run into $0.000098.
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
 
@@ -41,16 +43,17 @@ type TaskAdaptor struct {
 	apiKey      string
 	baseURL     string
 	userAgent   string
-
-	// quotaClamp holds the saturation event (if any) captured while converting
-	// usage.consumeCoins in ParseTaskResult, so the settle phase can audit it.
-	quotaClamp *common.QuotaClamp
 }
 
 // Compile-time check: TaskAdaptor satisfies channel.TaskAdaptor. Kept here so
 // a missing method fails the package build rather than the relay layer's
 // runtime assertion.
 var _ channel.TaskAdaptor = (*TaskAdaptor)(nil)
+
+// ConvertToOpenAIVideo also makes the adaptor an OpenAIVideoConverter, which is
+// what GET /v1/videos/{task_id} requires; without it that endpoint answers
+// 501 not_implemented for RunningHub tasks.
+var _ channel.OpenAIVideoConverter = (*TaskAdaptor)(nil)
 
 // Init copies the host's channel-level settings into the adaptor. This is the
 // only call site where ChannelBaseUrl/ApiKey come from.
@@ -75,18 +78,19 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 // GetChannelName returns the short, stable name used in logs.
 func (a *TaskAdaptor) GetChannelName() string { return "RunningHub" }
 
-// GetModelList exposes the AI apps / workflows as selectable "models" in the
-// UI / API. The host routing maps originModelName → appID in
-// ValidateRequestAndSetAction by reading the metadata.
+// GetModelList exposes the published apps / workflows as channel "models": an
+// app is addressed by its bare upstream id (the convention
+// stats_sync.modelToUpstreamID also accepts), so the channel's model list is
+// exactly what a client sends as `model`. Querying the app table keeps the
+// channel form's "fetch models" button honest — the previous placeholder list
+// would have written three unusable names into the channel.
 func (a *TaskAdaptor) GetModelList() []string {
-	// TODO: query runninghub.App table and populate when wiring the management
-	// API. For the skeleton we return a placeholder list so the channel
-	// settings UI is not empty.
-	return []string{
-		"runninghub:ai-app",
-		"runninghub:workflow",
-		"runninghub:model",
+	models, err := publishedAppUpstreamIDs()
+	if err != nil {
+		common.SysError("runninghub: load app models failed: " + err.Error())
+		return nil
 	}
+	return models
 }
 
 // ValidateRequestAndSetAction decodes the submit body and sets info.Action.
@@ -314,12 +318,17 @@ func debugMaskedKey(info *relaycommon.RelayInfo) string {
 }
 
 // DoResponse parses the V2 submit response, returns (upstream taskId, raw
-// bytes). The host already writes the response body to the client via the
-// surrounding relay handler; this only extracts task bookkeeping data.
+// bytes) and — unless the plugin's own run handler owns the response — writes
+// the gateway answer to the client.
 //
-// Temporary debug: when the upstream returned an error tuple, the exact URL
-// and raw response body are logged via common.SysLog so a 90x
-// ("webapp not exists", "app not found", …) can be correlated to the submit.
+// Writing the body matters for the generic relay endpoints
+// (/v1/video/generations, /v1/videos, /suno/submit/:action): the host expects
+// the task adaptor to answer, exactly like the built-in task adaptors do
+// (see relay/channel/task/sora). Without it an API-key caller received an empty
+// 200 and could never learn the task id needed for polling or cancelling.
+//
+// A failing submit keeps the historical behaviour: the error tuple is returned
+// and the host turns it into the error response.
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *taskdto.TaskError) {
 	if resp == nil {
 		taskErr = service.TaskErrorWrapperLocal(fmt.Errorf("nil response"), "nil_response", http.StatusBadGateway)
@@ -348,7 +357,27 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		taskErr.Data = rhResp
 		return rhResp.TaskID, raw, taskErr
 	}
+
+	if !controllerResponds(c) {
+		publicTaskID := ""
+		if info != nil && info.TaskRelayInfo != nil {
+			publicTaskID = info.TaskRelayInfo.PublicTaskID
+		}
+		c.JSON(http.StatusOK, SubmitResponse{
+			TaskID:         publicTaskID,
+			TaskIDCompat:   publicTaskID,
+			UpstreamTaskID: rhResp.TaskID,
+			Status:         rhResp.Status,
+			Raw:            raw,
+		})
+	}
 	return rhResp.TaskID, raw, nil
+}
+
+// controllerResponds reports whether the plugin's own run handler writes the API
+// response for this request, in which case the adaptor must stay silent.
+func controllerResponds(c *gin.Context) bool {
+	return c != nil && c.GetBool(contextKeyControllerResponds)
 }
 
 // debugResolvedURL returns the full URL the submit was dispatched to, or a
@@ -426,8 +455,13 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 
 // ParseTaskResult converts the raw RH query response into the host TaskInfo
 // format. Status mapping follows §3.9: QUEUED/RUNNING → PENDING; SUCCESS →
-// SUCCESS; FAILED/CANCELED → FAILURE. Charges from usage.consumeCoins are
-// fed back as CompletionTokens so the billing chain can settle.
+// SUCCESS; FAILED/CANCELED → FAILURE.
+//
+// usage.consumeCoins is deliberately NOT translated into billing numbers: a RH
+// coin has no established quota rate, and the old "1 coin = 1 quota" mapping
+// (500000 coins per dollar) undercharged every settled run. The raw usage stays
+// visible in the task row, because the poller stores this whole response body in
+// task.Data.
 //
 // A response that carries an upstream error but no usable status
 // ("errorCode":"1004", "errorMessage":"Task not found, please check the task
@@ -492,18 +526,77 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	default:
 		out.Progress = "10%"
 	}
-	if rh.Usage != nil {
-		if coins, err := parseFloatRelaxed(rh.Usage.ConsumeCoins); err == nil {
-			// Coins → quota conversion is saturation-checked per the billing
-			// invariants in AGENTS.md. A clamp is stashed so the settle-time
-			// AdjustBillingOnCompleteChecked can surface it into the task
-			// billing log's admin_info.quota_saturation.
-			quota, clamp := common.QuotaFromFloatChecked(coins)
-			out.CompletionTokens = quota
-			a.quotaClamp = clamp
+	return out, nil
+}
+
+// ConvertToOpenAIVideo renders one stored task as the OpenAI video object that
+// GET /v1/videos/{task_id} (and the OpenAI-compatible clients built on it)
+// expects.
+//
+// The base object comes from the host's shared mapper, so status/progress
+// translation (QUEUED → queued, IN_PROGRESS → in_progress, …) stays identical
+// to every other task platform. RunningHub specifics are layered on top:
+//
+//   - every result URL of the run is exposed under metadata.results (the first
+//     one is also metadata.url), because one RH run can emit several files;
+//   - a failed run carries the upstream failure reason in error.message;
+//   - the billed run length is exposed as `seconds` when the app is priced per
+//     second.
+func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
+	if originTask == nil {
+		return nil, fmt.Errorf("runninghub: nil task")
+	}
+	video := originTask.ToOpenAIVideo()
+
+	var rh QueryResp
+	dataParsed := false
+	if len(originTask.Data) > 0 && common.Unmarshal(originTask.Data, &rh) == nil {
+		dataParsed = true
+	}
+	urls := rh.resultURLs()
+	if len(urls) > 0 {
+		video.SetMetadata("results", urls)
+		video.SetMetadata("url", urls[0])
+	}
+
+	if originTask.Status == model.TaskStatusFailure {
+		reason := originTask.FailReason
+		if dataParsed {
+			if parsed := pickFailureReason(&rh); parsed != "" {
+				reason = parsed
+			}
+		}
+		video.Error = &dto.OpenAIVideoError{
+			Message: reason,
+			Code:    "runninghub_task_failed",
 		}
 	}
-	return out, nil
+
+	if billing := originTask.PrivateData.BillingContext; billing != nil {
+		if seconds, ok := billing.OtherRatios["seconds"]; ok && seconds > 0 {
+			video.Seconds = strconv.FormatFloat(seconds, 'f', -1, 64)
+		}
+	}
+
+	return common.Marshal(video)
+}
+
+// resultURLs returns every media URL a query/submit body carries, in upstream
+// order and without duplicates.
+func (rh *QueryResp) resultURLs() []string {
+	if rh == nil {
+		return nil
+	}
+	urls := make([]string, 0, len(rh.Results))
+	seen := make(map[string]bool, len(rh.Results))
+	for _, r := range rh.Results {
+		if r.URL == "" || seen[r.URL] {
+			continue
+		}
+		seen[r.URL] = true
+		urls = append(urls, r.URL)
+	}
+	return urls
 }
 
 // EstimateBilling returns the app-specific OtherRatios that scale the base
@@ -516,8 +609,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 //   - per-second apps    → {"seconds": N} where N is the customer-chosen
 //     seconds/duration parameter (stashed into metadata.rh.seconds by the
 //     submit controller, default 1). Pre-charge becomes
-//     QuotaPerSecond × N × groupRatio; the completion poll then diff-settles
-//     against RH usage.consumeCoins (dynamic-billing semantics).
+//     QuotaPerSecond × N × groupRatio and is final: like per-call, the task is
+//     recorded with PerCallBilling so the completion poll keeps it instead of
+//     settling against RH usage.consumeCoins.
 //   - dynamic apps       → {"app_rate_ratio": ModelBaseRateRatio} (skipped at
 //     1.0).
 //
@@ -579,27 +673,13 @@ func secondsFromMetadata(m map[string]any) float64 {
 	return raw
 }
 
-// AdjustBillingOnComplete returns the actual quota derived from RH's reported
-// usage (usage.consumeCoins, converted in ParseTaskResult). Returning 0 keeps
-// the pre-charged amount (or defers to the token-based recalculation).
-func (a *TaskAdaptor) AdjustBillingOnComplete(_ *model.Task, taskResult *relaycommon.TaskInfo) int {
-	if taskResult == nil || taskResult.CompletionTokens <= 0 {
-		return 0
-	}
-	return taskResult.CompletionTokens
-}
-
-// AdjustBillingOnCompleteChecked is the clamp-audited variant used by the
-// host's diff settlement: alongside the actual quota it returns the
-// *common.QuotaClamp captured during the coins→quota conversion in
-// ParseTaskResult, so the saturation event lands on the billing log's
-// admin_info. QuotaClamp is nil for in-range conversions.
-func (a *TaskAdaptor) AdjustBillingOnCompleteChecked(_ *model.Task, taskResult *relaycommon.TaskInfo) (int, *common.QuotaClamp) {
-	if taskResult == nil || taskResult.CompletionTokens <= 0 {
-		return 0, nil
-	}
-	return taskResult.CompletionTokens, a.quotaClamp
-}
+// AdjustBillingOnComplete is intentionally NOT overridden: the embedded
+// taskcommon.BaseBilling returns 0, which tells the host to keep the pre-charged
+// quota. RunningHub runs are priced at submit time from configured values
+// (per-call / per-second / dynamic ratio) and the submit controller flags them as
+// final, so there is nothing to re-price on completion. Pass-through from RH's
+// usage.consumeCoins must not come back until a real coin→quota rate exists —
+// see ParseTaskResult.
 
 // mapRHStatus translates RH upstream status to the host task status set.
 func mapRHStatus(s string) string {
@@ -664,16 +744,6 @@ func pickFailureReason(rh *QueryResp) string {
 func isEmptyJSONContainer(s string) bool {
 	s = strings.TrimSpace(s)
 	return s == "" || s == "{}" || s == "[]" || s == "null"
-}
-
-// parseFloatRelaxed parses a string or string-shaped number, tolerating null
-// and empty strings (upstream usage fields are optional).
-func parseFloatRelaxed(s string) (float64, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, fmt.Errorf("empty")
-	}
-	return strconv.ParseFloat(s, 64)
 }
 
 // ---- tiny metadata accessors --------------------------------------------

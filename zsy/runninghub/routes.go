@@ -16,11 +16,16 @@ import (
 //
 // Route layout:
 //
-//	/api/zsy/rh/app          (user-side)  Run an app, fetch results
-//	/dashboard/zsy/rh/app    (admin)     App CRUD, curl import
+//	/api/zsy/rh/apps        (user-side + third-party)  list/run/poll/cancel
+//	/dashboard/zsy/rh/apps  (admin)                    app CRUD, curl import
+//
+// The user-side group authenticates with callerAuthRequired, which accepts a
+// dashboard session, a dashboard personal access token or a relay API key, so
+// an external service can drive apps with the same API key it uses for /v1/*
+// (see auth_helpers.go for the scope differences between the two).
 //
 // NOTE: These routes intentionally sit *outside* the core router groups so the
-// plugin does not take hard dependency on the internals of
+// plugin does not take a hard dependency on the internals of
 // SetApiRouter/SetDashboardRouter. Admin and user auth are guarded with
 // existing middlewares looked up by name via controller helpers.
 func mountRoutes(router *gin.Engine) {
@@ -30,34 +35,7 @@ func mountRoutes(router *gin.Engine) {
 	// plugin's own tests; the loop is idle until something is queued.
 	startQueueDispatcher()
 
-	api := router.Group("/api/zsy/rh")
-	{
-		apps := api.Group("/apps")
-		{
-			apps.GET("", listPublicApps)
-			apps.GET("/:id", getPublicAppDetail)
-			apps.POST("/:id/run", requireUserAuth, submitAppRun)
-			apps.GET("/task/:task_id", requireUserAuth, getAppTaskResult)
-			// Inline text preview of one result file. Task-scoped: the URL must be
-			// one of the caller's own task results (the upstream storage sends no
-			// CORS headers, so the browser cannot read it directly).
-			apps.GET("/task/:task_id/content", requireUserAuth, getTaskResultContent)
-			// Cancel a queued or running run: local fail+refund while the task is
-			// still queued, upstream cancel (then fail+refund) once it runs.
-			apps.POST("/task/:task_id/cancel", requireUserAuth, cancelAppTask)
-			apps.GET("/tasks", requireUserAuth, listMyRhTasks)
-		}
-		// Media upload proxy: forwards user files to the RunningHub site the
-		// app's `site` field declares (SSRF-safe: the target
-		// /openapi/v2/media/upload/binary is derived from the resolved
-		// channel's configured base URL, never from anything the caller sends).
-		// Consumers that reach back with the returned fileName (e.g.
-		// image/video node inputs) do so by calling the public file endpoint of
-		// the *matching* site (cn vs ai), which the harness does not filter —
-		// making fileName round-trips work as-is.
-		api.POST("/upload", requireUserAuth, uploadAppMedia)
-		api.GET("/upload-channel", requireUserAuth, getUploadChannelStatus)
-	}
+	userRoutes(router.Group("/api/zsy/rh"))
 
 	admin := router.Group("/dashboard/zsy/rh")
 	admin.Use(requireAdminAuth)
@@ -81,26 +59,53 @@ func mountRoutes(router *gin.Engine) {
 	}
 }
 
-// auth helpers -------------------------------------------------------------
-//
-// We do not import the auth middleware directly to avoid a hard coupling with
-// new-api's internal authz layering; instead we re-use the public
-// service.UserAuthRequired middleware pattern via the same gin handler chain.
-// These helpers are thin wrappers; they live in auth_helpers.go with the real
-// implementation.
+// userRoutes registers the user-facing app-center API on group. Kept as its own
+// function so the test hook mounts exactly the chain production uses.
+func userRoutes(group *gin.RouterGroup) {
+	apps := group.Group("/apps")
+	{
+		// Browsing is open: the app center lists what anonymous visitors may
+		// see, and the dynamic form is rendered from the same payload.
+		apps.GET("", listPublicApps)
+		apps.GET("/:id", getPublicAppDetail)
 
-func requireUserAuth(c *gin.Context)  { userAuthRequired(c) }
-func requireAdminAuth(c *gin.Context) { adminAuthRequired(c) }
+		apps.POST("/:id/run", requireCallerAuth, submitAppRun)
+		apps.GET("/task/:task_id", requireCallerAuth, getAppTaskResult)
+		// Inline text preview of one result file. Task-scoped: the URL must be
+		// one of the caller's own task results (the upstream storage sends no
+		// CORS headers, so the browser cannot read it directly).
+		apps.GET("/task/:task_id/content", requireCallerAuth, getTaskResultContent)
+		// Cancel a queued or running run: local fail+refund while the task is
+		// still queued, upstream cancel (then fail+refund) once it runs.
+		apps.POST("/task/:task_id/cancel", requireCallerAuth, cancelAppTask)
+		// Dashboard-only: the host task table carries no index by API key, so a
+		// key-scoped list cannot be filtered without a schema change (see
+		// listMyRhTasks).
+		apps.GET("/tasks", requireCallerAuth, listMyRhTasks)
+	}
+	// Media upload proxy: forwards user files to the RunningHub site the app's
+	// `site` field declares (SSRF-safe: the target
+	// /openapi/v2/media/upload/binary is derived from the resolved channel's
+	// configured base URL, never from anything the caller sends).
+	// Consumers that reach back with the returned fileName (e.g. image/video
+	// node inputs) do so by calling the public file endpoint of the *matching*
+	// site (cn vs ai), which the harness does not filter — making fileName
+	// round-trips work as-is.
+	group.POST("/upload", requireCallerAuth, uploadAppMedia)
+	group.GET("/upload-channel", requireCallerAuth, getUploadChannelStatus)
+}
+
+// auth helpers -------------------------------------------------------------
+
+func requireCallerAuth(c *gin.Context) { callerAuthRequired(c) }
+func requireAdminAuth(c *gin.Context)  { adminAuthRequired(c) }
 
 // ctx wraps to avoid import cycle in tests.
 func contextFromGin(c *gin.Context) context.Context { return c.Request.Context() }
 
-// ---------------------------------------------------------------------------
-// Controller stubs (return 501 NOT_IMPLEMENTED until the corresponding
-// feature is wired in follow-up steps). This keeps the route tree compiling
-// and the build green; callers will see a clear error message.
-// ---------------------------------------------------------------------------
-
+// notYetImplemented is the placeholder answer for plugin features that are
+// routed but not wired yet; it keeps the route tree compiling while telling the
+// caller exactly what is missing.
 func notYetImplemented(c *gin.Context, feature string) {
 	c.JSON(http.StatusNotImplemented, gin.H{
 		"error":   "NOT_IMPLEMENTED",
@@ -108,12 +113,6 @@ func notYetImplemented(c *gin.Context, feature string) {
 		"plugin":  pluginName,
 	})
 }
-
-// User-side handlers are implemented in controllers_user.go
-// (listPublicApps, getPublicAppDetail, submitAppRun, getAppTaskResult).
-// App CRUD admin handlers live in controllers_admin.go; stats and the channel
-// sync store layer live in stats_sync.go. They are NOT re-stubbed here to
-// avoid redeclaring the same symbols.
 
 // avoid-import lint: keep common package ref so future JSON writes are ready.
 var _ = common.Marshal

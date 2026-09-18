@@ -90,6 +90,29 @@ const (
 	SubmitFieldAccessPassword   = "accessPassword"
 )
 
+// Stable machine-readable error codes the plugin returns to API-key callers, so
+// a third-party client can branch on `code` instead of matching message text.
+const (
+	// ErrorCodeTokenSelectionNotAllowed: the run body carried a tokenId that is
+	// not the calling key. A key can only spend its own quota.
+	ErrorCodeTokenSelectionNotAllowed = "token_selection_not_allowed"
+	// ErrorCodeTaskNotOwnedByKey: the task exists on the account but was not
+	// submitted by the calling key.
+	ErrorCodeTaskNotOwnedByKey = "task_not_owned_by_key"
+	// ErrorCodeKeyScopedListUnsupported: listing the account's history is a
+	// dashboard operation; a key must poll the task ids it created.
+	ErrorCodeKeyScopedListUnsupported = "key_scoped_list_unsupported"
+	// ErrorCodeTokenModelForbidden: the key's model allow-list does not cover the
+	// app being run.
+	ErrorCodeTokenModelForbidden = "token_model_forbidden"
+)
+
+// contextKeyControllerResponds marks a submit request whose handler writes the
+// API response itself (the plugin's own run endpoint), so the task adaptor does
+// not write a second body onto the same response.
+const contextKeyControllerResponds = "rh_controller_responds"
+
+
 // NodeInfo struct fields (matches both V2 submit JSON and the curl parser).
 const (
 	NodeFieldNodeID    = "nodeId"

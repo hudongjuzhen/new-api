@@ -89,6 +89,7 @@ import {
   type RhResultKind,
 } from '../lib/result-media'
 import { rhCancelKind, rhStatusKey } from '../lib/task-status'
+import { ApiExamples } from '../components/api-examples'
 
 function fieldKey(p: { nodeId: string; fieldName: string }): string {
   return `${p.nodeId || ''}.${p.fieldName || ''}`
@@ -1443,6 +1444,11 @@ export function RhPortalPage() {
           </div>
         )}
       </div>
+
+      {/* ---- third-party integration: how to call this app from code ----
+          Rendered full width under the app introduction so the samples stay
+          readable (the intro column is only a third of the page). */}
+      {app && <ApiExamples app={app} />}
     </div>
   )
 }

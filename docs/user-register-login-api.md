@@ -1,8 +1,8 @@
 # 用户注册 / 登录开放接口（第三方应用接入）
 
 > 适用版本：当前 `zsy/runninghub` 分支源码树
-> 结论：**项目自带可用的注册与登录 HTTP 接口**（纯 JSON，无需浏览器），第三方应用可直接调用；但**核心注册接口默认不创建任何 API Key**，也无法指定 Key 的名称与分组。
-> 因此有两种用法：**方案 A** 直接组合核心接口（零改动，见 §6）；**方案 B** 使用 `zsy/appauth` 插件（已实现，注册即建 Key「默认密钥 / 官方渠道」并返回明文，见 §7）。
+> 结论：**项目自带可用的注册与登录 HTTP 接口**（纯 JSON，无需浏览器），第三方应用可直接调用；**核心注册接口注册成功即自动创建一个 Key**（名称与分组均为「官方渠道」，其余取 Key 默认值），但响应体不返回 Key 明文。
+> 因此有两种用法：**方案 A** 直接组合核心接口（注册后登录一次取 Key 明文，见 §6）；**方案 B** 使用 `zsy/appauth` 插件（注册即建 Key 并**在响应里直接返回明文**，名称/分组可配置，见 §7）。
 
 ---
 
@@ -15,9 +15,9 @@
 | 登录态续期 | ✅ 已有 | `POST /api/user/auth/refresh`（轮换 refresh Cookie） |
 | 服务端长期凭据 | ✅ 已有 | `GET /api/user/token` 生成 PAT（29–32 位，长期有效） |
 | 创建中继 API Key（`sk-…`） | ✅ 已有 | `POST /api/token/` 创建 + `POST /api/token/:id/key` 取明文 |
-| 注册后自动创建指定名称/分组的 Key | ⚠️ 核心接口**不支持** | 核心注册接口只在 `GENERATE_DEFAULT_TOKEN=true` 时建 Key，名称固定为 `<用户名>的初始令牌`，分组固定为 `auto` 或空，且**不返回 Key**；`zsy/appauth` 插件补齐了该能力（§7） |
+| 注册后自动创建指定名称/分组的 Key | ✅ 核心接口支持（名称/分组固定） | 核心注册接口注册成功即建 Key：名称与分组均为 `官方渠道`，其余字段取 Key 默认值（无限额度、永不过期、不限制模型/IP）；**响应不返回明文**，需登录后调 `POST /api/token/:id/key` 取。OAuth / 微信首次注册同样自动建 Key。`zsy/appauth` 插件额外支持自定义名称/分组并直接返回明文（§7） |
 
-注册接口中「默认令牌」的实现见 `controller/user.go:290-317`；开关默认关闭，见 `common/init.go:193-194`（`GENERATE_DEFAULT_TOKEN`，默认 `false`）。
+注册接口中「默认密钥」的实现见 `controller/user_default_token.go`（常量与告警）与 `model/token.go:CreateDefaultUserToken`（字段取值）；该行为无条件生效，不再有环境变量开关。
 
 ---
 
@@ -70,7 +70,6 @@ curl -s https://<网关域名>/api/status
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `GENERATE_DEFAULT_TOKEN` | `false` | 注册时是否生成默认令牌（名称不可定制） |
 | `CRITICAL_RATE_LIMIT` | `20` | 敏感接口限流次数，按客户端 IP |
 | `CRITICAL_RATE_LIMIT_DURATION` | `1200`（20 分钟） | 限流窗口（秒） |
 | `ANONYMOUS_REQUEST_BODY_LIMIT_KB` | `512` | 匿名接口请求体上限 |
@@ -139,12 +138,13 @@ curl -s -X POST 'https://<网关域名>/api/user/register' \
 
 **注意**
 
-- 成功响应**不包含会话、不包含任何 Key**，需要再调登录接口。
+- 成功响应**不包含会话**，需要再调登录接口。
+- 注册成功时服务端会**自动创建该账号的默认 Key**：名称与分组均为 `官方渠道`，`unlimited_quota=true`、`expired_time=-1`、不限制模型与 IP（实现见 §5 与 `controller/user_default_token.go`）。响应体**不含 Key 明文**，登录后调 `GET /api/token/?p=1&page_size=100` 拿 id，再调 `POST /api/token/:id/key` 取明文。
 - 新用户额度取 `QuotaForNewUser`；新用户默认分组为 `default`（`model/user.go:98`）。
 - 常见失败：`success=false` + 「用户名已存在 / 注册功能已关闭 / 邮箱验证码错误 / 已达到最大令牌数量限制」等。
 - `invite_code_required=true` 时，`aff_code` 缺失返回「本站注册需要邀请码，请填写邀请码」，无法解析到用户返回「邀请码无效，请核对后重试」；两种情况都**不会创建账号**。
 
-> 同一套邀请码规则也作用于其它注册入口：OAuth 回调（邀请码随 `/api/oauth/state` 的 `aff` 字段进入流程）、微信注册（`GET /api/oauth/wechat?code=…&aff=<邀请码>`，仅首次创建用户时校验）、以及插件接口 `POST /api/zsy/auth/register`。判定逻辑集中在 `model.CheckInviteCode`。
+> 同一套邀请码规则也作用于其它注册入口：OAuth 回调（邀请码随 `/api/oauth/state` 的 `aff` 字段进入流程）、微信注册（`GET /api/oauth/wechat?code=…&aff=<邀请码>`，仅首次创建用户时校验）、以及插件接口 `POST /api/zsy/auth/register`。判定逻辑集中在 `model.CheckInviteCode`。**注册后自动创建默认 Key 同样覆盖 OAuth 与微信首次注册**（三个入口共用 `controller.provisionDefaultUserKey`）。
 
 ---
 
@@ -365,6 +365,8 @@ Key 的 `group` 不是随便填的。中继请求鉴权时会做两级校验（`
 
 如果新注册用户落在 `default` 组而 `default` 组看不到 `官方渠道`，需要管理员调整可用分组配置；`zsy/appauth` 插件（§7）会为此显式返回 `warning` 与 `group_usable:false`，但同样不会替你修改用户分组。
 
+核心注册接口自动创建的 Key 也固定使用 `官方渠道` 分组，因此上面的两个条件同样必须满足：**分组不可用时注册照常成功**（建 Key 不会让注册失败），但后端日志会打印 `新用户 <id> 的默认密钥分组 "官方渠道" 对用户分组 "..." 不可用` 告警，该 Key 的中继请求会返回 403。
+
 ---
 
 ## 6. 第三方应用完整接入流程
@@ -393,16 +395,13 @@ ACCESS=$(curl -s -X POST "$GW/api/user/login" \
 # curl -s -X POST "$GW/api/user/login/2fa" -H 'Content-Type: application/json' \
 #   -d '{"code":"123456","flow_token":"<flow_token>"}'
 
-# 3) 创建 Key：名称「默认密钥」，分组「官方渠道」
-curl -s -X POST "$GW/api/token/" \
-  -H "Authorization: Bearer $ACCESS" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"默认密钥","group":"官方渠道","expired_time":-1,"unlimited_quota":true,"remain_quota":0,"model_limits_enabled":false}'
-# → {"success":true,"message":""}
-
-# 4) 取刚创建 Key 的 id，再取明文
+# 3) 取注册时自动创建的 Key（名称/分组均为「官方渠道」）的 id，再取明文
 ID=$(curl -s "$GW/api/token/?p=1&page_size=100" -H "Authorization: Bearer $ACCESS" | jq -r '.data.items[0].id')
 KEY=$(curl -s -X POST "$GW/api/token/$ID/key" -H "Authorization: Bearer $ACCESS" | jq -r '.data.key')
+
+# 3') 如需更多 Key（或需要别的名称/分组），再自行创建：
+# curl -s -X POST "$GW/api/token/" -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+#   -d '{"name":"默认密钥","group":"官方渠道","expired_time":-1,"unlimited_quota":true,"remain_quota":0,"model_limits_enabled":false}'
 
 # 5) 用 Key 调中继接口
 curl -s "$GW/v1/chat/completions" \
@@ -411,7 +410,7 @@ curl -s "$GW/v1/chat/completions" \
   -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-该方案缺点：注册与建 Key 是两次调用，且 Key 分组依赖 §5 的分组配置；第三方应用需自行处理 access_token 过期（15 分钟，用 refresh 或 PAT 兜底）。
+该方案缺点：Key 明文需登录后再取一次（注册响应不返回），且 Key 分组依赖 §5 的分组配置；第三方应用需自行处理 access_token 过期（15 分钟，用 refresh 或 PAT 兜底）。
 
 ### 方案 B：注册即建键（`zsy/appauth` 插件，已实现）
 
@@ -436,7 +435,7 @@ curl -s -X POST "$GW/api/zsy/auth/register" \
 
 | 维度 | 核心 `/api/user/register` | 插件 `/api/zsy/auth/register` |
 | --- | --- | --- |
-| 建 Key | 默认不建（`GENERATE_DEFAULT_TOKEN=false`），建了也不返回 | **必建**：名称 `默认密钥`、分组 `官方渠道`、其余取 Key 默认值，并返回明文 |
+| 建 Key | **必建**：名称/分组 `官方渠道`、其余取 Key 默认值，**不返回明文**（需另调取明文接口） | **必建**：名称 `默认密钥`、分组 `官方渠道`、其余取 Key 默认值，并返回明文 |
 | 登录会话 | 需再调一次 `/api/user/login` | 同一次响应直接下发 `access_token` + refresh Cookie（可用 `issue_session:false` 关闭） |
 | Turnstile | 开启后强制校验 | **不校验**（服务端调用无法解浏览器挑战），改用可选的 `X-Zsy-App-Secret` |
 | 错误语义 | 一律 HTTP 200 + `success:false` | **真实 HTTP 状态码** + 稳定 `code` 字段 |
@@ -556,7 +555,9 @@ go build ./...
 
 | 关注点 | 位置 |
 | --- | --- |
-| 注册实现 | `controller/user.go:206-324` |
+| 注册实现 | `controller/user.go:Register` |
+| 注册后自动建默认 Key | `controller/user_default_token.go`（名称/分组常量、失败与分组告警）、`model/token.go:CreateDefaultUserToken`（字段取值） |
+| 建 Key 的三个注册入口 | 网页 `controller/user.go:Register`、OAuth `controller/oauth.go:findOrCreateOAuthUser`、微信 `controller/wechat.go:WeChatAuth` |
 | 邀请码校验（所有注册入口共用） | `model/user.go:CheckInviteCode`（开关 `common.InviteCodeRequired`，选项 `InviteCodeRequired`） |
 | 邀请码拦截点 | 网页 `controller/user.go:Register`、OAuth `controller/oauth.go:findOrCreateOAuthUser`、微信 `controller/wechat.go:WeChatAuth`、App 接口 `zsy/appauth/controllers.go:register` |
 | 前端邀请码输入与透传 | `web/src/features/auth/sign-up/components/sign-up-form.tsx`、`web/src/features/auth/lib/storage.ts` |
