@@ -513,6 +513,55 @@ func GetUserIdByAffCode(affCode string) (int, error) {
 	return user.Id, err
 }
 
+// Errors returned by CheckInviteCode when the site requires an invite code and
+// the supplied one cannot be honoured.
+var (
+	ErrInviteCodeRequired = errors.New("invite code is required")
+	ErrInviteCodeInvalid  = errors.New("invite code is invalid")
+)
+
+// maxInviteCodeLength mirrors the aff_code column width (varchar(32)); a longer
+// value can never match a stored code.
+const maxInviteCodeLength = 32
+
+// CheckInviteCode applies the registration invite-code policy and returns the
+// inviter id to bind to the new account (0 when there is no inviter).
+//
+// The invite code is the inviter's own AffCode. When common.InviteCodeRequired
+// is on, an empty code — or one that resolves to no user — is a hard error and
+// the caller MUST reject the registration. When the switch is off the previous
+// behaviour is preserved: an unknown code simply yields no inviter.
+func CheckInviteCode(code string) (int, error) {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		if common.InviteCodeRequired {
+			return 0, ErrInviteCodeRequired
+		}
+		return 0, nil
+	}
+	if len(code) > maxInviteCodeLength {
+		if common.InviteCodeRequired {
+			return 0, ErrInviteCodeInvalid
+		}
+		return 0, nil
+	}
+	var inviter User
+	err := DB.Select("id").First(&inviter, "aff_code = ?", code).Error
+	if err == nil && inviter.Id != 0 {
+		return inviter.Id, nil
+	}
+	// A genuine database failure is logged but treated like an unknown code:
+	// required mode fails closed, optional mode keeps registering without an
+	// inviter (the historical behaviour).
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		common.SysError("failed to resolve invite code: " + err.Error())
+	}
+	if common.InviteCodeRequired {
+		return 0, ErrInviteCodeInvalid
+	}
+	return 0, nil
+}
+
 func DeleteUserById(id int) (err error) {
 	if id == 0 {
 		return errors.New("id 为空！")

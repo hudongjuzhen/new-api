@@ -157,9 +157,16 @@ export async function createOAuthFlow(
   throw new Error(res.data?.message || 'Failed to initialize OAuth')
 }
 
-// WeChat login by authorization code
-export async function wechatLoginByCode(code: string): Promise<ApiResponse> {
-  const res = await api.get('/api/oauth/wechat', { params: { code } })
+// WeChat login by authorization code. `aff` carries the invite code when the
+// site requires one: WeChat has no registration form, so a first-time WeChat
+// sign-in can only pass the gate with a code supplied here.
+export async function wechatLoginByCode(
+  code: string,
+  aff?: string
+): Promise<ApiResponse> {
+  const res = await api.get('/api/oauth/wechat', {
+    params: { code, aff: aff || undefined },
+  })
   return res.data
 }
 

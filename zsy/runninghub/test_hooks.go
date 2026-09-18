@@ -1,6 +1,8 @@
 package runninghub
 
 import (
+	"context"
+
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/zsy/runninghub/rhparser"
 	"github.com/gin-gonic/gin"
@@ -72,8 +74,14 @@ func TestHookGetPublicAppDetail(c *gin.Context) { getPublicAppDetail(c) }
 // TestHookSubmitAppRun exposes the user-side submit handler for tests.
 func TestHookSubmitAppRun(c *gin.Context) { submitAppRun(c) }
 
+// TestHookCancelAppTask exposes the user-side cancel handler for tests.
+func TestHookCancelAppTask(c *gin.Context) { cancelAppTask(c) }
+
 // TestHookGetAppTaskResult exposes the user-side task query handler for tests.
 func TestHookGetAppTaskResult(c *gin.Context) { getAppTaskResult(c) }
+
+// TestHookGetTaskResultContent exposes the result-file preview proxy for tests.
+func TestHookGetTaskResultContent(c *gin.Context) { getTaskResultContent(c) }
 
 // TestHookUploadAppMedia exposes the user-side upload proxy handler for tests.
 func TestHookUploadAppMedia(c *gin.Context) { uploadAppMedia(c) }
@@ -84,4 +92,45 @@ func TestHookUploadAppMedia(c *gin.Context) { uploadAppMedia(c) }
 func TestHookValidateRunPayload(schema []rhparser.SchemaParam, values map[string]any) error {
 	_, err := validateAndBuildNodeInfoList(schema, values)
 	return err
+}
+
+// --- Concurrency gate hooks ------------------------------------------------
+
+// TestHookReserveSlotOnce grants at most one concurrency slot on the enabled
+// channels of a site type. It returns the granted channel id (0 when every
+// channel of the site is saturated) plus the release function the caller now
+// owns. Repeated calls model concurrent submits of the same process.
+func TestHookReserveSlotOnce(channelType int, group string) (int, func(), error) {
+	candidates, err := siteCandidates(channelType, group)
+	if err != nil {
+		return 0, nil, err
+	}
+	channel, slot, err := reserveSlot(candidates, 0)
+	if err != nil {
+		return 0, nil, err
+	}
+	if channel == nil {
+		return 0, func() {}, nil
+	}
+	return channel.Id, slot.release, nil
+}
+
+// TestHookQueuedTaskCount returns how many tasks currently wait in the queue.
+func TestHookQueuedTaskCount() (int64, error) { return queuedTaskCount() }
+
+// TestHookDispatchQueue runs one dispatcher pass synchronously.
+func TestHookDispatchQueue() { dispatchQueuedTasks(context.Background()) }
+
+// TestHookSetQueueMaxAgeMinutes shrinks the queue-expiry window so the expiry
+// test does not have to wait 12 hours. It returns the previous value.
+func TestHookSetQueueMaxAgeMinutes(minutes int) int {
+	previous := queueMaxAgeMinutes
+	queueMaxAgeMinutes = minutes
+	return previous
+}
+
+// TestHookSubmitPathFor exposes the submit-path composition used both by the
+// adaptor and by the queued dispatcher.
+func TestHookSubmitPathFor(kind AppKind, upstreamID string) (string, bool) {
+	return submitPathFor(kind, upstreamID)
 }

@@ -62,6 +62,7 @@ export function SignUpForm({
   const [isLoading, setIsLoading] = useState(false)
   const [verificationCode, setVerificationCode] = useState('')
   const [agreedToLegal, setAgreedToLegal] = useState(false)
+  const [inviteCode, setInviteCode] = useState(() => getAffiliateCode())
   const [wechatCode, setWeChatCode] = useState('')
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
   const [isWeChatSubmitting, setIsWeChatSubmitting] = useState(false)
@@ -99,6 +100,7 @@ export function SignUpForm({
 
   const emailValue = form.watch('email')
   const emailVerificationRequired = !!status?.email_verification
+  const inviteCodeRequired = Boolean(status?.invite_code_required)
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
   const hasPrivacyPolicy = Boolean(status?.privacy_policy_enabled)
   const requiresLegalConsent = hasUserAgreement || hasPrivacyPolicy
@@ -135,12 +137,26 @@ export function SignUpForm({
     const aff = new URLSearchParams(window.location.search).get('aff')?.trim()
     if (aff) {
       saveAffiliateCode(aff)
+      setInviteCode(aff)
     }
   }, [])
+
+  // The invite code is the inviter's own code. It is persisted on every edit so
+  // the OAuth and WeChat flows — which read it from storage when they build
+  // their request — carry the same code the user typed here.
+  function handleInviteCodeChange(value: string) {
+    setInviteCode(value)
+    saveAffiliateCode(value.trim())
+  }
 
   async function onSubmit(data: z.infer<typeof registerFormSchema>) {
     if (requiresLegalConsent && !agreedToLegal) {
       toast.error(legalConsentErrorMessage)
+      return
+    }
+
+    if (inviteCodeRequired && !inviteCode.trim()) {
+      toast.error(t('Please enter an invite code'))
       return
     }
 
@@ -165,7 +181,7 @@ export function SignUpForm({
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
-        aff_code: getAffiliateCode(),
+        aff_code: inviteCode.trim() || getAffiliateCode(),
         turnstile: turnstileToken,
       })
 
@@ -211,10 +227,17 @@ export function SignUpForm({
       toast.error(t('Please enter the verification code'))
       return
     }
+    if (inviteCodeRequired && !inviteCode.trim()) {
+      toast.error(t('Please enter an invite code'))
+      return
+    }
 
     setIsWeChatSubmitting(true)
     try {
-      const res = await wechatLoginByCode(wechatCode)
+      const res = await wechatLoginByCode(
+        wechatCode,
+        inviteCode.trim() || undefined
+      )
       if (res?.success && isAuthBundle(res.data)) {
         await handleLoginSuccess(res.data)
         toast.success(t('Signed in via WeChat'))
@@ -294,6 +317,28 @@ export function SignUpForm({
             </FormItem>
           )}
         />
+
+        {/* Invite Code Field — registration is invite-only when the site asks
+            for one. The value is the inviter's own invite code. */}
+        {inviteCodeRequired && (
+          <div className='grid gap-2'>
+            <Label htmlFor='invite-code'>
+              {t('Invitation Code')}
+              <span className='text-destructive ml-1'>*</span>
+            </Label>
+            <Input
+              id='invite-code'
+              value={inviteCode}
+              onChange={(event) => handleInviteCodeChange(event.target.value)}
+              placeholder={t("Enter the inviter's invite code")}
+              autoComplete='off'
+              aria-required='true'
+            />
+            <p className='text-muted-foreground text-sm'>
+              {t('This site is invite-only: registration requires a valid invite code.')}
+            </p>
+          </div>
+        )}
 
         {/* Email Verification Section */}
         {emailVerificationRequired && (

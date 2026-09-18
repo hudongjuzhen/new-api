@@ -260,6 +260,8 @@ type RhApp struct {
 
 ### 3.4 Key 并发池（`keypool/pool.go`）
 
+> 实现变更：本节的 Key 级并发池未落地，实际实现为**渠道级并发上限 + 网关侧排队**，见 §3.10。下方内容保留为设计沿革记录。
+
 **对账式设计**（避免进程重启丢计数导致并发泄漏）：
 
 - 有效占用 = `DB 中该渠道该 Key 的未完成任务数` + `提交中窗口 pending 集合`（提交开始到 `tasks` 行落库之间的短暂窗口，内存 set）。
@@ -309,6 +311,19 @@ group.Use(middleware.Distribute()) // 请求体含 "model" 字段，由 Distribu
 
 **计费语义**：应用绑定模型名在"模型价格"表中配置按次价格 → `ModelPriceHelperPerCall` 得 `UsePrice=true` → `PerCallBilling=true`（[relay.go#L593-L600](../controller/relay.go#L593-L600)）→ 轮询阶段自动跳过差额结算；任务失败走 `RefundTaskQuota` 全额退款；超时清扫同样退款。整条链无插件侧算术，无负扣费风险面；v1.5 如引入参数倍率，必须走 `PriceData.AddOtherRatio`（核心已拒绝非正/NaN/Inf）并在 schema 中声明数值边界。
 
+**按秒计费的秒数字段（`App.SecondsExpr`）**：`perSecondBilling` 的预扣需要"这次跑多少秒"。早期实现只扫描 `type ∈ {seconds, duration}` 的参数，而 RH 模板里的秒数节点通常是 `number` 类型（如"执行秒数"），于是静默回退成 1 秒。现改为由管理员显式指定秒数字段，支持表达式（见 `zsy/runninghub/seconds_expr.go`）：
+
+| 写法 | 含义 |
+|---|---|
+| `212` / `nodeId=212` / `@212` | 取 nodeId=212 的提交值 |
+| `212-229` | 两个节点值相减（结束 - 开始） |
+| `(212-229)*2 + 1.5` | 支持 `+ - * /` 与括号，裸数字在 schema 中无同号节点时按字面量解析 |
+| `nodeId=300.seconds` | 同一节点有多个字段时按 `nodeId.fieldName` 精确引用 |
+
+求值结果钳制到 `[1, relaycommon.MaxTaskDurationSeconds]`（3600）；引用不存在/未提交、除零、语法错误一律在提交时返回 400，绝不静默按 1 秒计费。管理端"按秒计费"分支提供该输入框。
+
+**导入不再自动推断数值边界**：`rhparser` 原 `inferRangeHint` 会按样例值猜测 min/max（样例值 `0`/`1` → `[0,1]`，`0.25~4` → `[0.25,4]`），导致"开始秒数"这类计数字段被钉死上限，提交时被 `coerceValueByType` 以"不能大于 1"拒绝。该推断已删除：number 类型默认不写边界，边界只能由管理员在参数模板里显式填写（`Min`/`Max` 输入框，留空表示不限制）。
+
 ### 3.6 上传代理（`controller/upload.go`）
 
 - `POST /zsy/rh/v1/upload`（TokenAuth）：multipart 单文件，大小上限取实例配置 `max_upload_mb`（默认 50，见 §3.2）。
@@ -335,7 +350,7 @@ group.Use(middleware.Distribute()) // 请求体含 "model" 字段，由 Distribu
 | `GetModelList` | 查询 rh_apps 表 enabled 的 model_name 列表 |
 | `GetChannelName` | `"RunningHub"` |
 | `FetchTask(baseURL, key, body, proxy)` | `POST {base_url}/openapi/v2/task/{task_id}/status`，body 含 `task_id`/`action`；Bearer 用传入 key（核心已保证为任务提交时的 Key）。**查询端点为待实测假设（阻塞项），见 §3.9** |
-| `ParseTaskResult` | RH 状态映射：`QUEUED→QUEUED`、`RUNNING→IN_PROGRESS`、`SUCCESS→SUCCESS`（`Url=results[0].url`）、`FAILED→FAILURE`（`Reason=errorMessage`）；完整 results 保留在响应 body 中（核心轮询将原始 body 存入 `task.Data`，多文件结果随 `Data` 透出） |
+| `ParseTaskResult` | RH 状态映射：`QUEUED→QUEUED`、`RUNNING→IN_PROGRESS`、`SUCCESS→SUCCESS`（`Url=results[0].url`）、`FAILED→FAILURE`（`Reason=errorMessage`）；完整 results 保留在响应 body 中（核心轮询将原始 body 存入 `task.Data`，多文件结果随 `Data` 透出）。**上游报错但没有可用 status 时（如 `{"status":"","errorCode":"1004","errorMessage":"Task not found, please check the task ID | 任务不存在或已过期，请检查任务ID"}`）按 FAILURE 处理**：RH 平台在核心 `skipTimeoutForPlatform` 里被豁免超时清扫，只认上游状态，若不处理会永远停在 QUEUED 并占住预扣额度；请求级错误码（1001 Invalid URL / 1007 参数解析）不属于任务状态，保持挂起并记 `SysError`，避免上游地址配错时把在跑的任务批量判失败退款 |
 
 ### 3.8 Webhook（可选增强，v1 保留路由桩）
 
@@ -352,6 +367,27 @@ group.Use(middleware.Distribute()) // 请求体含 "model" 字段，由 Distribu
 - **cn/ai 双域名**路径前缀可能不一致（上传文档用 cn 域、用户示例为 ai 域），实测须双域名覆盖；若不一致，则将 base path 做成实例配置项（默认随域名推导）。
 - 实测内容：提交 → 查询全流程、状态字段枚举与 `taskId`/`task_id` 命名、`results[]` 结构、FAILED 错误样例（如 `errorCode 1501` 内容审核）。
 - 实测结论回写本节，并作为 adaptor 常量与 §9.1 单测 golden 数据的唯一依据。
+
+### 3.10 渠道并发上限与排队队列（已实现，取代 §3.4 的 Key 级方案）
+
+RunningHub 对超并发的请求是**直接拒绝**而不是排队，所以闸门与队列都由网关侧提供。
+
+- **配置**：`ChannelSettings.MaxConcurrency`（渠道设置 JSON 的 `max_concurrency`，`0 = 不限制`，上限 100，前端位于「渠道 → 高级设置 → 最大并发数」）。额度按**渠道**计，不区分 Key；一个渠道放多个 Key 时共享该渠道额度。
+- **占用口径**：按**任务生命周期**占用，而不是按 HTTP 请求——从派发成功开始，到轮询发现终态（SUCCESS/FAILURE）或超时/取消退款时释放。**排队中的任务不占额度**（它还没有渠道、也还没到上游）。
+- **计数来源**：共享 `tasks` 表（按 `channel_id` 统计非终态任务数），因此进程重启、多实例部署下天然一致；"已授槽但任务行尚未可见"的毫秒级窗口由进程内 pending 计数覆盖。
+- **提交行为**：有空位 → 直接提交（`IN_PROGRESS`）；全部打满 → **立即受理并落一条 `QUEUED`（排队中）记录**，返回 `taskId`，不再阻塞等待。排队任务在受理时就完成定价与预扣费（复用 `ModelPriceHelperPerCall` + `EstimateBilling` + `PreConsumeBilling`，与直接提交同价）。
+- **排队记录的两个约定**：`progress = "100%"` 且 `channel_id = 0`。核心轮询只捞 `progress != '100%'` 的任务，而排队任务既没有上游 task id 也没有渠道可查，因此必须留在轮询之外；派发时改写为真实渠道 + `IN_PROGRESS` + `progress = "20%"`，随即恢复被轮询。
+- **队列存储**：插件自有表 `rh_queued_tasks`（受理时构建好的上游请求体、站点、提交路径、token 分组），一次受理写「tasks 记录 + 队列条目」两条。
+- **派发（FIFO）**：`zsy/runninghub/queue.go` 的后台派发循环每 3 秒（或被新任务唤醒）按 `created_at, id` **升序**扫描队列，为每个仍有空位的站点依次派发最早的任务；派发用 `Task.UpdateWithStatus(QUEUED)` 做 CAS 抢占，多实例下同一任务只会提交一次。派发失败会换下一个渠道重试，最终失败则 `FAILURE` + 全额退款。
+- **排队超时**：排队超过 **720 分钟**仍未派发 → `FAILURE` + 原因「排队超时」+ 退款（RH 任务豁免核心超时清扫，队列自己兜住这个上界）。
+- **取消（用户端）**：`POST /api/zsy/rh/apps/task/:task_id/cancel`
+  - **排队中**：纯本地取消（上游还没收到任务），置 `FAILURE` + 原因「用户取消」+ 退款，并移出队列。
+  - **进行中**：先调上游取消接口，上游确认后才置终态 + 退款（上游拒绝取消时不退款，避免"退款了但任务还在跑"）。
+  - **上游取消接口（实测契约）**：`POST {base}/task/openapi/cancel`，body `{"apiKey":"<key>","taskId":"<id>"}`，**不在 `/openapi/v2/*` 下**（v2 前缀下所有猜的路径都返回 `1001 Invalid URL`）；响应为 `{code,msg,data}`：`code=0` 取消成功，`code=817`（`APIKEY_TASK_CANCEL_NOT_ALLOWED`）表示任务已结束/不可中断，其余为业务错误。该端点对 **AI 应用**产生的 taskId 同样有效。
+  - 终态枚举需同时认 `CANCELED` 与 `CANCELLED` 两种拼写（上游两种都会返回），否则取消后的任务会被当成"仍在运行"而永久占用并发额度。
+- **无站点（legacy）应用**：走宿主的「模型 → 渠道」选择，没有候选池可排队，因此满额时直接返回 429（不排队，也绝不超发）。
+- **已知边界**：多实例部署下跨实例的"最后一格"仍可能被同时授予（各实例只对自己的 pending 与数据库快照加锁），属于一个查询周期内的少量超发；此时 RH 会返回并发错误，走既有的换渠道重试即可。
+- **测试**：`zsy/runninghub/concurrency_test.go`（容量分配与饱和、无限额短路、只统计已派发的非终态任务、满额受理为排队记录、按受理顺序派发、取消排队任务退款且不再提交、排队超时退款、取消运行中任务经上游确认后退款、上游拒绝取消不退款、legacy 满额拒绝）。
 
 ---
 
@@ -421,6 +457,20 @@ web/src/extensions/zsy-runninghub/
 ```
 
 **扩展注入类型契约**（`web/src/extensions/` 导出，供 P6/P7 消费）：
+
+**结果渲染（已实现，`lib/result-media.ts` + `pages/rh-portal.tsx`）**：一次运行可能产出图片、音频、视频、压缩包或文本，渲染按类型分发：
+
+| 类型 | 缩略图 | 预览 |
+|---|---|---|
+| image | `<img>` 缩略图 | 图片大图（保留左右切换） |
+| video | `<video preload="metadata">` + 播放角标 | 内联播放器（controls + autoplay） |
+| audio | Music 图标方块 | 内联 `<audio controls>` |
+| text | FileText 图标方块 | 内联文本（`results[].text` 直接渲染；`.txt/.json/.csv` 等经网关代理取回） |
+| archive / file | FileArchive / File 图标方块 | 不预览，直接下载（浏览器无法内联） |
+
+分类规则：URL 扩展名优先，缺失时回退 `results[].outputType`，都没有则 `file`（只下载）。只有绝对 http(s) URL 会被当作文件，相对路径或误入 `url` 的错误文案一律丢弃。
+
+文本预览走 `GET /api/zsy/rh/apps/task/:task_id/content?url=`：上游存储不发 CORS 头，浏览器读不到文件，所以由后端代理取回。该端点**只**允许任务自身的结果 URL（先校验归属，再走 SSRF 防护客户端），仅返回文本类内容，单次上限 1 MiB（超出返回 `truncated: true`），其余类型一律提示下载。
 
 ```ts
 // menus.tsx —— 与 web/src/hooks/use-sidebar-data.ts 的 NavGroup/NavItem 结构对齐

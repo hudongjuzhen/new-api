@@ -47,6 +47,12 @@ export interface AppView {
   fixedQuotaPerCall: number
   perSecondBilling: boolean
   quotaPerSecond: number
+  /**
+   * Per-second billing run length, written as an expression over node ids:
+   * "212", "nodeId=212", "229-212". Empty falls back to a duration/seconds
+   * typed parameter.
+   */
+  secondsExpr: string
   modelBaseRateRatio: number
   site: string
   categoryId: number | null
@@ -76,6 +82,7 @@ export interface AppCreateDTO {
   fixedQuotaPerCall: number
   perSecondBilling: boolean
   quotaPerSecond: number
+  secondsExpr: string
   modelBaseRateRatio: number
   site: string
   categoryId: number | null
@@ -222,8 +229,14 @@ export async function parseCurlRequest(curl: string) {
 export interface RunAppResult {
   taskId: string
   status: string
-  upstreamTaskId: string
-  raw: unknown
+  /**
+   * True when every channel of the app's site was at its concurrency cap: the
+   * run is recorded as QUEUED and started by the backend dispatcher once a slot
+   * frees. In that case there is no upstream id yet.
+   */
+  queued?: boolean
+  upstreamTaskId?: string
+  raw?: unknown
 }
 
 /** TaskDto mirrors the host's relay.TaskModel2Dto envelope used by task logs. */
@@ -347,6 +360,24 @@ export async function getTaskResult(taskId: string): Promise<TaskDto> {
   return res.data.data
 }
 
+/**
+ * Cancel one of the caller's RunningHub runs.
+ *
+ * A queued run is cancelled locally (it never reached the upstream); a running
+ * one is stopped upstream first. Business errors are surfaced to the caller
+ * (e.g. "upstream refuses to cancel") instead of the global interceptor.
+ */
+export async function cancelRhTask(taskId: string): Promise<void> {
+  const res = await api.post<{ success: boolean; message?: string }>(
+    `/api/zsy/rh/apps/task/${taskId}/cancel`,
+    {},
+    { skipBusinessError: true }
+  )
+  if (!res.data.success) {
+    throw new Error(res.data.message || 'Cancel failed')
+  }
+}
+
 /** Paginated list of the current user's RunningHub generation records. */
 export async function listMyRhTasks(params?: {
   status?: string
@@ -358,4 +389,37 @@ export async function listMyRhTasks(params?: {
     { params }
   )
   return res.data.data
+}
+
+export interface TaskResultContent {
+  content: string
+  contentType: string
+  /** The file is longer than the gateway preview cap; only the head is shown. */
+  truncated: boolean
+}
+
+/**
+ * Fetch the text of one result file through the gateway.
+ *
+ * Browsers cannot read RunningHub's result storage directly (it sends no CORS
+ * headers), so the backend proxies the fetch. It only serves text-ish files,
+ * caps the size and only accepts URLs that belong to the caller's own task.
+ */
+export async function fetchTaskResultContent(
+  taskId: string,
+  url: string
+): Promise<TaskResultContent> {
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data?: TaskResultContent
+  }>(`/api/zsy/rh/apps/task/${taskId}/content`, {
+    params: { url },
+    skipBusinessError: true,
+  })
+  const payload = res.data
+  if (!payload.success || !payload.data) {
+    throw new Error(payload.message || 'Failed to load the result file')
+  }
+  return payload.data
 }

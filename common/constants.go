@@ -69,6 +69,11 @@ var TelegramOAuthEnabled = false
 var TurnstileCheckEnabled = false
 var RegisterEnabled = true
 
+// InviteCodeRequired gates every registration entry point behind a valid invite
+// code (the inviter's own aff_code). When it is on, a registration that carries
+// no resolvable invite code is rejected instead of creating an uninvited user.
+var InviteCodeRequired = false
+
 var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制
 var EmailAliasRestrictionEnabled = false  // 是否启用邮箱别名限制
 var EmailDomainWhitelist = []string{

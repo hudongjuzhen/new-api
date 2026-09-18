@@ -642,3 +642,29 @@ func TestChannelSettingsValidateHTTPTransport(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "http2_connection_shards")
 }
+
+func TestChannelSettingsValidateMaxConcurrency(t *testing.T) {
+	// 0 is the documented "unlimited" default and must always be accepted.
+	require.NoError(t, (&ChannelSettings{}).ValidateMaxConcurrency())
+	require.NoError(t, (&ChannelSettings{MaxConcurrency: 0}).ValidateMaxConcurrency())
+	require.NoError(t, (&ChannelSettings{MaxConcurrency: 1}).ValidateMaxConcurrency())
+	require.NoError(t, (&ChannelSettings{MaxConcurrency: MaxChannelConcurrency}).ValidateMaxConcurrency())
+
+	err := (&ChannelSettings{MaxConcurrency: -1}).ValidateMaxConcurrency()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_concurrency")
+
+	err = (&ChannelSettings{MaxConcurrency: MaxChannelConcurrency + 1}).ValidateMaxConcurrency()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "max_concurrency")
+
+	// The unlimited default stays out of the persisted JSON so untouched
+	// channels keep byte-equivalent settings.
+	encoded, err := json.Marshal(ChannelSettings{})
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "max_concurrency")
+
+	encoded, err = json.Marshal(ChannelSettings{MaxConcurrency: 2})
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"max_concurrency":2`)
+}

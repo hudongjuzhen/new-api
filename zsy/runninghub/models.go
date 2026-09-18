@@ -108,6 +108,13 @@ type App struct {
 	// PerSecondBilling=true. Stored as an integer quota unit.
 	QuotaPerSecond int64 `gorm:"default:0;not null"                        json:"quotaPerSecond"`
 
+	// SecondsExpr names the parameter that carries the run length for
+	// per-second billing, written as a small arithmetic expression over node
+	// ids: "212", "nodeId=212", "229-212" (结束秒数 - 开始秒数),
+	// "(229-212)*2 + 1.5". Empty falls back to the legacy scan for a
+	// duration/seconds-typed parameter. See seconds_expr.go.
+	SecondsExpr string `gorm:"type:varchar(191)"                          json:"secondsExpr"`
+
 	// ModelBaseRateRatio is the multiplier applied against the *channel's*
 	// base model price when PerCallBilling is off. 1.0 means "1× standard
 	// base rate". Any non-positive ratio is rejected by the validator so the

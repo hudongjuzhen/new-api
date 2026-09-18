@@ -63,9 +63,11 @@ type pseudoRH struct {
 	mu      sync.Mutex
 	submits []capturedRHRequest
 	queries []capturedRHRequest
+	cancels []capturedRHRequest
 
 	submitResp func(appID string) (int, any)
 	queryResp  func(taskID string) (int, any)
+	cancelResp func(taskID string) (int, any)
 }
 
 func writeRHJSON(w http.ResponseWriter, status int, body any) {
@@ -116,6 +118,21 @@ func newPseudoRH(t *testing.T) *pseudoRH {
 		p.mu.Unlock()
 		require.NotNil(t, fn, "unexpected query call")
 		status, body := fn(qb.TaskID)
+		writeRHJSON(w, status, body)
+	})
+	// Legacy cancel endpoint: the key travels in the body, and the answer is the
+	// flat {code, msg} envelope (see runninghub.PathCancelTask).
+	mux.HandleFunc("/task/openapi/cancel", func(w http.ResponseWriter, r *http.Request) {
+		raw := record(r)
+		parts := strings.SplitN(raw, "\x00", 3)
+		var cb runninghub.CancelBody
+		_ = json.Unmarshal([]byte(parts[2]), &cb)
+		p.mu.Lock()
+		p.cancels = append(p.cancels, capturedRHRequest{Path: parts[0], Authorization: parts[1], Body: parts[2]})
+		fn := p.cancelResp
+		p.mu.Unlock()
+		require.NotNil(t, fn, "unexpected cancel call")
+		status, body := fn(cb.TaskID)
 		writeRHJSON(w, status, body)
 	})
 
@@ -205,6 +222,7 @@ func newRHITestEnv(t *testing.T, upstreamID string) *rhITestEnv {
 		&model.SubscriptionPlan{}, &model.SubscriptionOrder{}, &model.UserSubscription{},
 		&model.Option{},
 		&runninghub.App{},
+		&runninghub.RhQueuedTask{},
 	)
 
 	// Seed user / token / channel / ability wired to the fake upstream.
@@ -242,6 +260,7 @@ func newRHITestEnv(t *testing.T, upstreamID string) *rhITestEnv {
 	})
 	router.POST("/api/zsy/rh/apps/:id/run", runninghub.TestHookSubmitAppRun)
 	router.GET("/api/zsy/rh/apps/task/:task_id", runninghub.TestHookGetAppTaskResult)
+	router.POST("/api/zsy/rh/apps/task/:task_id/cancel", runninghub.TestHookCancelAppTask)
 
 	// A second token belonging to the same user, so the "select a token for
 	// this run" path can be exercised (billed against it, not the default).

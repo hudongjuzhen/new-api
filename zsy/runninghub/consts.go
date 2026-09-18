@@ -43,6 +43,14 @@ const (
 
 	// UploadFieldWorkflow is the multipart field name workflows expect.
 	UploadFieldWorkflow = "file"
+
+	// PathCancelTask is the task-cancel endpoint. It is NOT part of the v2
+	// prefix: /openapi/v2/* has no cancel route (every v2 guess answers
+	// 1001 Invalid URL), while the legacy path below accepts both the key and an
+	// AI-application taskId. Verified against a working integration; the body
+	// carries {"apiKey": …, "taskId": …} and the response is the flat
+	// {code, msg, data} envelope.
+	PathCancelTask = "/task/openapi/cancel"
 )
 
 // Standard status strings RH uses in response.status.
@@ -52,6 +60,11 @@ const (
 	StatusSuccess  = "SUCCESS"
 	StatusFailed   = "FAILED"
 	StatusCanceled = "CANCELED"
+	// StatusCancelled is the same terminal state spelled with a double L —
+	// upstream uses both forms depending on the endpoint, so both must map to a
+	// terminal local state (otherwise a cancelled task keeps occupying a
+	// concurrency slot forever).
+	StatusCancelled = "CANCELLED"
 )
 
 // Error codes RH returns through the flat response shape. When the submit
@@ -62,6 +75,10 @@ const (
 	ErrCodeInvalidURL       = "1001" // 路径拼写错误 (Invalid URL)
 	ErrCodeNodeInfoMismatch = "803"  // nodeId/fieldName 不在工作流里
 	ErrCodeAccessDenied     = "1014" // 个人 Key 调 Standard Model API 被拒等
+	// ErrCodeCancelNotAllowed is what the cancel endpoint answers when the task
+	// can no longer be interrupted (usually already finished). It is a normal
+	// outcome to report, not a transport failure.
+	ErrCodeCancelNotAllowed = "817" // APIKEY_TASK_CANCEL_NOT_ALLOWED
 )
 
 // Field names used for submit bodies (all camelCase to match RH V2 JSON).

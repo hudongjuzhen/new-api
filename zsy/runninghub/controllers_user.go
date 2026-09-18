@@ -2,6 +2,7 @@ package runninghub
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/zsy/runninghub/rhparser"
@@ -182,13 +184,16 @@ func submitAppRun(c *gin.Context) {
 	if strings.TrimSpace(payload.WebhookURL) != "" {
 		metadata["rh"].(map[string]any)["webhookUrl"] = strings.TrimSpace(payload.WebhookURL)
 	}
-	// Per-second billing reads the seconds/duration schema parameter value and
-	// carries it in metadata so the adaptor's EstimateBilling can apply it as
-	// the "seconds" billing multiplier. The value is already validated and
-	// bounded by coerceValueByType (MaxTaskDurationSeconds); default to 1 when
-	// the app declares no seconds parameter.
+	// Per-second billing needs the run length before the task is submitted. The
+	// app's configured seconds expression (e.g. "229-212", "nodeId=212") wins;
+	// apps without one fall back to a duration/seconds-typed parameter. Values
+	// are already bounded by coerceValueByType / secondsFromExpr.
 	if app.PerSecondBilling {
-		seconds := resolveSecondsParam(schema, payload.Values)
+		seconds, secondsErr := resolveAppSeconds(app, schema, payload.Values)
+		if secondsErr != nil {
+			common.ApiErrorMsg(c, secondsErr.Error())
+			return
+		}
 		metadata["rh"].(map[string]any)["seconds"] = seconds
 	}
 	// The host's task validation (ValidateBasicTaskRequest) requires a
@@ -269,6 +274,16 @@ func submitAppRun(c *gin.Context) {
 
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
+	// The site path holds a concurrency slot from channel selection until the
+	// task row is persisted. This defer is the safety net for every early return;
+	// the retry path releases explicitly because it acquires a new slot per
+	// attempt.
+	var activeSlot *channelSlot
+	defer func() {
+		if activeSlot != nil {
+			activeSlot.release()
+		}
+	}()
 	defer func() {
 		if taskErr != nil && relayInfo.Billing != nil {
 			relayInfo.Billing.Refund(c)
@@ -296,17 +311,34 @@ func submitAppRun(c *gin.Context) {
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		var channel *model.Channel
+		var slot *channelSlot
 		if wantSiteType != 0 {
-			// Site-scoped selection: pick a random enabled channel of the site's
-			// type that advertises this app as a model. Kept local (no
-			// request-path filtering) so the existing relay plumbing stays the
-			// selection source of truth.
-			siteChannel, selectErr := selectChannelBySiteType(c, app, wantSiteType, retryParam)
+			// Site-scoped selection: pick an enabled channel of the site's type that
+			// still has a free concurrency slot, queueing until one of them frees
+			// one. Kept local (no request-path filtering) so the existing relay
+			// plumbing stays the selection source of truth.
+			siteChannel, siteSlot, selectErr := selectChannelBySiteType(c, app, wantSiteType, retryParam)
 			if selectErr != nil {
-				taskErr = service.TaskErrorWrapperLocal(selectErr.Err, "get_channel_failed", http.StatusBadRequest)
+				// Every channel of the site is at its cap: accept the task and let
+				// the dispatcher run it as soon as a slot frees (queue.go). The
+				// caller gets a QUEUED record instead of a wait or an error.
+				if errors.Is(selectErr.Err, errChannelSaturated) {
+					queuedTaskID, queueErr := enqueueAppRun(c, app, relayInfo)
+					if queueErr != nil {
+						taskErr = queueErr
+						break
+					}
+					common.ApiSuccess(c, gin.H{
+						"taskId": queuedTaskID,
+						"status": string(model.TaskStatusQueued),
+						"queued": true,
+					})
+					return
+				}
+				taskErr = taskErrorFromSelection(selectErr.Err)
 				break
 			}
-			channel = siteChannel
+			channel, slot = siteChannel, siteSlot
 		} else if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
 			channel = lockedCh
 			if retryParam.GetRetry() > 0 {
@@ -322,7 +354,21 @@ func submitAppRun(c *gin.Context) {
 				taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", http.StatusInternalServerError)
 				break
 			}
+			// The concurrency cap also covers site-less apps. There is no candidate
+			// pool to queue against on this path, so a saturated channel is reported
+			// as busy instead of waiting for it.
+			var slotErr error
+			slot, slotErr = reserveChannelSlot(channel)
+			if slotErr != nil {
+				taskErr = service.TaskErrorWrapperLocal(slotErr, "channel_concurrency_check_failed", http.StatusInternalServerError)
+				break
+			}
+			if slot == nil {
+				taskErr = taskErrorFromSelection(saturatedError(app.Site))
+				break
+			}
 		}
+		activeSlot = slot
 		controller.AddUsedChannel(c, channel.Id)
 		// Body storage must be refreshed per attempt because adaptors can
 		// drain it.
@@ -333,8 +379,12 @@ func submitAppRun(c *gin.Context) {
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
 		if taskErr == nil {
+			// The slot stays reserved: after the task row below is persisted the
+			// database (non-terminal task count) takes the accounting over.
 			break
 		}
+		slot.release()
+		activeSlot = nil
 		if !taskErr.LocalError {
 			controller.ProcessChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
@@ -349,7 +399,9 @@ func submitAppRun(c *gin.Context) {
 	}
 
 	if taskErr != nil {
-		if taskErr.StatusCode == http.StatusTooManyRequests {
+		// A queue timeout already carries a queue-specific message; other 429s
+		// (upstream rate limits) keep the generic wording.
+		if taskErr.StatusCode == http.StatusTooManyRequests && taskErr.Code != errorCodeChannelSaturated {
 			taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 		}
 		c.JSON(taskErr.StatusCode, taskErr)
@@ -368,14 +420,14 @@ func submitAppRun(c *gin.Context) {
 			taskPlatform = channelTypePlatform(channelType)
 		}
 		task := &model.Task{
-			TaskID:     publicTaskID,
-			UserId:     userIdInt,
-			Platform:   taskPlatform,
-			Quota:      quotaFromResult(result),
-			Action:     relayInfo.Action,
-			Status:     model.TaskStatusInProgress,
-			Data:       dataFromResult(result),
-			ChannelId:  c.GetInt("channel_id"),
+			TaskID:    publicTaskID,
+			UserId:    userIdInt,
+			Platform:  taskPlatform,
+			Quota:     quotaFromResult(result),
+			Action:    relayInfo.Action,
+			Status:    model.TaskStatusInProgress,
+			Data:      dataFromResult(result),
+			ChannelId: c.GetInt("channel_id"),
 			// submit_time is what the timeout sweep's cutoff compares against;
 			// without it (0) the task is immediately past every cutoff and would
 			// be a timeout candidate on the very next sweep. It's also the
@@ -396,7 +448,7 @@ func submitAppRun(c *gin.Context) {
 					ModelRatio:      relayInfo.PriceData.ModelRatio,
 					OtherRatios:     relayInfo.PriceData.OtherRatios(),
 					OriginModelName: relayInfo.OriginModelName,
-					PerCallBilling: (common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice) && !app.PerSecondBilling,
+					PerCallBilling:  (common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice) && !app.PerSecondBilling,
 				},
 			},
 		}
@@ -564,6 +616,19 @@ func applySelectedToken(c *gin.Context, tokenID int64) error {
 // when the same fieldName appears across nodes.
 func schemaFieldKey(nodeID, fieldName string) string {
 	return strings.TrimSpace(nodeID) + "." + strings.TrimSpace(fieldName)
+}
+
+// resolveAppSeconds returns the run length used for per-second billing. When
+// the app configures a seconds expression (App.SecondsExpr) that expression is
+// evaluated against the submitted values; otherwise the legacy scan for a
+// duration/seconds-typed parameter applies. Both results are already bounded to
+// [1, MaxTaskDurationSeconds] so the value can never become an unbounded quota
+// multiplier.
+func resolveAppSeconds(app *AppView, schema []rhparser.SchemaParam, values map[string]any) (float64, error) {
+	if expr := strings.TrimSpace(app.SecondsExpr); expr != "" {
+		return secondsFromExpr(expr, schema, values)
+	}
+	return resolveSecondsParam(schema, values), nil
 }
 
 // resolveSecondsParam returns the seconds/duration parameter value for
@@ -750,51 +815,68 @@ func replaceRequestBody(c *gin.Context, body []byte) error {
 }
 
 // selectChannelBySiteType returns an enabled channel of the given channel type
-// for the request's group, drawn from the site's channel pool with the host's
-// weighted-random distribution (priority tier → weight). Channel models are
-// intentionally NOT matched: a RunningHub channel is a site endpoint (one key,
-// one base URL) and any app of the matching site runs through it; the upstream
-// validates the app id itself. The call never returns a channel whose type
-// differs from `channelType`.
-func selectChannelBySiteType(c *gin.Context, app *AppView, channelType int, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+// that still has a free concurrency slot, together with that granted slot.
+//
+// Channels are drawn from the site's pool with the host's priority/weight
+// semantics, but only from those below their cap (ChannelSettings.MaxConcurrency,
+// 0 = unlimited). When every channel of the site is at its cap the call fails
+// with errChannelSaturated — the submit handler turns that into a QUEUED task
+// record (queue.go) instead of making the caller wait.
+//
+// Channel models are intentionally NOT matched: a RunningHub channel is a site
+// endpoint (one key, one base URL) and any app of the matching site runs
+// through it; the upstream validates the app id itself. The call never returns
+// a channel whose type differs from `channelType`.
+func selectChannelBySiteType(c *gin.Context, app *AppView, channelType int, retryParam *service.RetryParam) (*model.Channel, *channelSlot, *types.NewAPIError) {
 	if channelType == 0 {
-		return nil, types.NewError(
+		return nil, nil, types.NewError(
 			fmt.Errorf("站点 %s 未配置 (channelType=0)", siteName(app.Site)),
 			types.ErrorCodeGetChannelFailed,
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	group := ""
+	startTier := 0
 	if retryParam != nil {
-		ch, err := model.GetRandomSatisfiedChannel(retryParam.TokenGroup, "", 0, retryParam.RequestPath)
-		if err == nil && ch != nil && ch.Type == channelType {
-			if setupErr := middleware.SetupContextForSelectedChannel(c, ch, app.UpstreamID); setupErr != nil {
-				return nil, setupErr
-			}
-			return ch, nil
-		}
+		group = retryParam.TokenGroup
+		startTier = retryParam.GetRetry()
 	}
-	// Fallback: any enabled channel of the site's type. Exact model match is
-	// deliberately skipped (see the doc comment above); the pool is the source
-	// of truth.
-	var cands []model.Channel
-	if err := db().
-		Where("type = ? AND status = ?", channelType, common.ChannelStatusEnabled).
-		Order("weight desc").
-		Limit(100).
-		Find(&cands).Error; err == nil {
-		for i := range cands {
-			ch := &cands[i]
-			if setupErr := middleware.SetupContextForSelectedChannel(c, ch, app.UpstreamID); setupErr != nil {
-				return nil, setupErr
-			}
-			return ch, nil
-		}
+
+	candidates, err := siteCandidates(channelType, group)
+	if err != nil {
+		return nil, nil, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
-	return nil, types.NewError(
-		fmt.Errorf("站点 %s 下没有可用渠道 (type=%d)", siteName(app.Site), channelType),
-		types.ErrorCodeGetChannelFailed,
-		types.ErrOptionWithSkipRetry(),
-	)
+	if len(candidates) == 0 {
+		return nil, nil, types.NewError(
+			fmt.Errorf("站点 %s 下没有可用渠道 (type=%d)", siteName(app.Site), channelType),
+			types.ErrorCodeGetChannelFailed,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+
+	channel, slot, reserveErr := reserveSlot(candidates, startTier)
+	if reserveErr != nil {
+		return nil, nil, types.NewError(reserveErr, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	if channel == nil {
+		return nil, nil, types.NewError(saturatedError(app.Site), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+	}
+	if setupErr := middleware.SetupContextForSelectedChannel(c, channel, app.UpstreamID); setupErr != nil {
+		slot.release()
+		return nil, nil, setupErr
+	}
+	return channel, slot, nil
+}
+
+// taskErrorFromSelection maps a channel-selection failure onto the error the
+// submit API returns. A queue timeout (or a saturated channel on the site-less
+// path) is a 429 with its own code so a client can tell "the upstream is busy,
+// try again" apart from "no channel is configured at all".
+func taskErrorFromSelection(selectionErr error) *dto.TaskError {
+	if errors.Is(selectionErr, errChannelSaturated) {
+		return service.TaskErrorWrapperLocal(selectionErr, errorCodeChannelSaturated, http.StatusTooManyRequests)
+	}
+	return service.TaskErrorWrapperLocal(selectionErr, "get_channel_failed", http.StatusBadRequest)
 }
 
 func quotaFromResult(r *relay.TaskSubmitResult) int {
@@ -822,4 +904,251 @@ func rawFromResult(r *relay.TaskSubmitResult) any {
 	var out any
 	_ = common.Unmarshal(r.TaskData, &out)
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// Queued runs
+// ---------------------------------------------------------------------------
+
+// enqueueAppRun accepts a run whose site is at its concurrency cap: it prices
+// and pre-charges the run, records the task as QUEUED ("排队中") and stores the
+// built upstream request for the dispatcher. It returns the public task id.
+//
+// The record is created with progress="100%" and no channel on purpose — the
+// core poller only picks up tasks whose progress is not 100%, and a task that
+// has not reached the upstream has nothing to poll. Dispatch (queue.go) flips it
+// to IN_PROGRESS with a real channel id.
+func enqueueAppRun(c *gin.Context, app *AppView, info *relaycommon.RelayInfo) (string, *dto.TaskError) {
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		return "", taskErr
+	}
+	if taskErr := priceAndPreConsumeQueuedRun(c, info); taskErr != nil {
+		return "", taskErr
+	}
+	bodyReader, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		return "", service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+	}
+	body, err := io.ReadAll(bodyReader)
+	if err != nil {
+		return "", service.TaskErrorWrapper(err, "read_request_body_failed", http.StatusInternalServerError)
+	}
+	if info.PublicTaskID == "" {
+		info.PublicTaskID = model.GenerateTaskID()
+	}
+
+	siteChannelType := siteToChannelType(app.Site)
+	submitPath, pathAbsolute := submitPathFor(app.Kind, app.UpstreamID)
+	quota := info.PriceData.Quota
+	task := &model.Task{
+		TaskID:     info.PublicTaskID,
+		UserId:     info.UserId,
+		Platform:   channelTypePlatform(siteChannelType),
+		Quota:      quota,
+		Action:     info.Action,
+		Status:     model.TaskStatusQueued,
+		Progress:   "100%",
+		SubmitTime: time.Now().Unix(),
+		Properties: model.Properties{OriginModelName: info.OriginModelName},
+		PrivateData: model.TaskPrivateData{
+			BillingSource:  info.BillingSource,
+			SubscriptionId: info.SubscriptionId,
+			TokenId:        info.TokenId,
+			NodeName:       common.NodeName,
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      info.PriceData.ModelPrice,
+				GroupRatio:      info.PriceData.GroupRatioInfo.GroupRatio,
+				ModelRatio:      info.PriceData.ModelRatio,
+				OtherRatios:     info.PriceData.OtherRatios(),
+				OriginModelName: info.OriginModelName,
+				PerCallBilling: (common.StringsContains(constant.TaskPricePatches, info.OriginModelName) ||
+					info.PriceData.UsePrice) && !app.PerSecondBilling,
+			},
+		},
+	}
+	if err := task.Insert(); err != nil {
+		return "", service.TaskErrorWrapper(err, "insert_task_failed", http.StatusInternalServerError)
+	}
+
+	entry := &RhQueuedTask{
+		TaskID:       info.PublicTaskID,
+		UserID:       info.UserId,
+		Platform:     string(task.Platform),
+		Site:         app.Site,
+		SubmitPath:   submitPath,
+		PathAbsolute: pathAbsolute,
+		Body:         string(body),
+		Group:        info.TokenGroup,
+		CreatedAt:    time.Now().Unix(),
+	}
+	if err := enqueueTask(entry); err != nil {
+		// Without a queue entry the task could never run, and the pre-charge is
+		// already taken: fail the record and refund it.
+		failQueuedTask(c.Request.Context(), task, "排队入队失败: "+err.Error())
+		return "", service.TaskErrorWrapper(err, "enqueue_failed", http.StatusInternalServerError)
+	}
+	common.SysLog(fmt.Sprintf(
+		"runninghub queue: task %s queued (site=%s, app=%s, quota=%d)",
+		info.PublicTaskID, app.Site, app.Name, quota,
+	))
+	return info.PublicTaskID, nil
+}
+
+// priceAndPreConsumeQueuedRun mirrors the pricing + pre-consume steps of
+// relay.RelayTaskSubmit so a queued task is charged exactly like a directly
+// submitted one: base price → adaptor ratios → saturation-checked quota →
+// pre-consume. Keep in sync with relay/relay_task.go steps 4-7.
+func priceAndPreConsumeQueuedRun(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	priceData, err := helper.ModelPriceHelperPerCall(c, info)
+	if err != nil {
+		return service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+	}
+	info.PriceData = priceData
+
+	adaptor := &TaskAdaptor{}
+	for ratio, value := range adaptor.EstimateBilling(c, info) {
+		info.PriceData.AddOtherRatio(ratio, value)
+	}
+	if !common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
+		quota, clamp := common.QuotaFromFloatChecked(
+			info.PriceData.ApplyOtherRatiosToFloat(float64(info.PriceData.Quota)),
+		)
+		info.PriceData.Quota = quota
+		// A saturated quota must fail the pre-consume below instead of being
+		// silently charged; PreConsumeBilling rejects a non-nil clamp.
+		if clamp != nil && info.QuotaClamp == nil {
+			info.QuotaClamp = clamp
+		}
+	}
+	if info.PriceData.FreeModel {
+		return nil
+	}
+	info.ForcePreConsume = true
+	if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
+		return service.TaskErrorFromAPIError(apiErr)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Cancel
+// ---------------------------------------------------------------------------
+
+// cancelAppTask cancels one of the caller's RunningHub tasks.
+//
+// A task that is still queued never reached the upstream, so cancelling it is
+// purely local (fail the record and refund the pre-charge). A dispatched task is
+// stopped upstream through the legacy cancel endpoint first; the local record is
+// only closed once the upstream confirms, so a refused cancel cannot hand out a
+// refund for a run that keeps burning upstream quota.
+func cancelAppTask(c *gin.Context) {
+	taskID := strings.TrimSpace(c.Param("task_id"))
+	if taskID == "" {
+		common.ApiErrorMsg(c, "缺少 task_id")
+		return
+	}
+	userId := c.GetInt("id")
+	task, exist, err := model.GetByTaskId(userId, taskID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !exist || task == nil {
+		common.ApiErrorMsg(c, "任务不存在")
+		return
+	}
+	if !isRhFamilyPlatform(task.Platform) {
+		common.ApiErrorMsg(c, "该任务不是 RunningHub 任务，无法在此取消")
+		return
+	}
+	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
+		common.ApiErrorMsg(c, "任务已结束，无法取消")
+		return
+	}
+
+	ctx := c.Request.Context()
+	// Still waiting for a slot: nothing reached the upstream yet.
+	entry, entryErr := queuedTaskByTaskID(taskID)
+	if entryErr == nil && entry != nil {
+		if failQueuedTask(ctx, task, "用户取消") {
+			deleteQueuedTask(taskID)
+			common.ApiSuccess(c, gin.H{
+				"taskId":   taskID,
+				"status":   string(model.TaskStatusFailure),
+				"refunded": true,
+			})
+			return
+		}
+		// The dispatcher claimed the task while we were deciding: fall through and
+		// cancel it upstream instead.
+		refreshed, exists, loadErr := model.GetByTaskId(userId, taskID)
+		if loadErr == nil && exists && refreshed != nil {
+			task = refreshed
+		}
+	}
+
+	if task.ChannelId <= 0 {
+		common.ApiErrorMsg(c, "任务尚未派发到渠道，请稍后重试")
+		return
+	}
+	channel, err := model.CacheGetChannel(task.ChannelId)
+	if err != nil {
+		common.ApiErrorMsg(c, "渠道不可用，无法取消: "+err.Error())
+		return
+	}
+	baseURL, key := channelBaseAndKey(channel)
+	if strings.TrimSpace(task.PrivateData.Key) != "" {
+		key = task.PrivateData.Key
+	}
+	httpClient, err := service.GetHttpClientWithProxySettings(channel.GetSetting().Proxy, channel.GetSetting())
+	if err != nil {
+		common.ApiErrorMsg(c, "构建上游请求失败: "+err.Error())
+		return
+	}
+	outcome, err := NewClientForType(channel.Type, baseURL, key, httpClient).
+		CancelTask(task.GetUpstreamTaskID())
+	if err != nil {
+		common.ApiErrorMsg(c, "上游取消失败: "+err.Error())
+		return
+	}
+	if outcome.NotAllowed {
+		common.ApiErrorMsg(c, "上游不允许取消（任务可能已完成或已进入不可中断阶段）: "+outcome.Message)
+		return
+	}
+
+	previous := task.Status
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.FinishTime = time.Now().Unix()
+	task.FailReason = "用户取消"
+	won, err := task.UpdateWithStatus(previous)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !won {
+		common.ApiErrorMsg(c, "任务状态已被其他操作更新，请刷新后重试")
+		return
+	}
+	quota := task.Quota
+	service.RefundTaskQuota(ctx, task, "用户取消")
+	common.ApiSuccess(c, gin.H{
+		"taskId":   taskID,
+		"status":   string(model.TaskStatusFailure),
+		"refunded": quota > 0,
+		"quota":    quota,
+	})
+}
+
+// isRhFamilyPlatform reports whether a task platform string belongs to the
+// RunningHub family (61 国内站 / 62 国际站 / 63 LiblibAI).
+func isRhFamilyPlatform(platform constant.TaskPlatform) bool {
+	for _, candidate := range rhFamilyPlatforms {
+		if platform == candidate {
+			return true
+		}
+	}
+	return false
 }

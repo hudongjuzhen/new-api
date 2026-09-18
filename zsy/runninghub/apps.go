@@ -60,6 +60,7 @@ type AppView struct {
 	FixedQuotaPerCall  int64                  `json:"fixedQuotaPerCall"`
 	PerSecondBilling   bool                   `json:"perSecondBilling"`
 	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
+	SecondsExpr        string                 `json:"secondsExpr"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	Site               string                 `json:"site"`
 	CategoryID         uint                   `json:"categoryId"`
@@ -84,6 +85,7 @@ type AppCreateDTO struct {
 	FixedQuotaPerCall  int64                  `json:"fixedQuotaPerCall"`
 	PerSecondBilling   bool                   `json:"perSecondBilling"`
 	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
+	SecondsExpr        string                 `json:"secondsExpr"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	Site               string                 `json:"site"`
 	CategoryID         uint                   `json:"categoryId"`
@@ -443,6 +445,7 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 	target.FixedQuotaPerCall = dto.FixedQuotaPerCall
 	target.PerSecondBilling = dto.PerSecondBilling
 	target.QuotaPerSecond = dto.QuotaPerSecond
+	target.SecondsExpr = strings.TrimSpace(dto.SecondsExpr)
 	target.Site = normalizeSite(strings.TrimSpace(dto.Site))
 	target.CategoryID = dto.CategoryID
 	if dto.ModelBaseRateRatio == 0 {
@@ -542,6 +545,7 @@ func appToView(a *App) (*AppView, error) {
 		FixedQuotaPerCall:  a.FixedQuotaPerCall,
 		PerSecondBilling:   a.PerSecondBilling,
 		QuotaPerSecond:     a.QuotaPerSecond,
+		SecondsExpr:        a.SecondsExpr,
 		ModelBaseRateRatio: a.ModelBaseRateRatio,
 		Site:               a.Site,
 		CategoryID:         a.CategoryID,
@@ -640,6 +644,14 @@ func validateApp(a *App) error {
 		return fmt.Errorf("quotaPerSecond 不能为负数")
 	case a.ModelBaseRateRatio <= 0:
 		return fmt.Errorf("modelBaseRateRatio 必须为正数 (当前 %v)", a.ModelBaseRateRatio)
+	}
+	if a.SecondsExpr != "" {
+		if len(a.SecondsExpr) > 191 {
+			return fmt.Errorf("秒数表达式过长 (上限 191 字符)")
+		}
+		if err := validateSecondsExpr(a.SecondsExpr); err != nil {
+			return err
+		}
 	}
 	return nil
 }

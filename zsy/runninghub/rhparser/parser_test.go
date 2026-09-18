@@ -294,3 +294,24 @@ func TestBuildSchemaFromNodes_TypeHints(t *testing.T) {
 		assert.Equalf(t, want[i], p.Type, "param %s (%s) wrong type", p.FieldName, p.Label)
 	}
 }
+
+// An import sample value says nothing about a field's legal range. It used to
+// pin max=1 for any numeric node whose example value was "0" or "1" (and
+// [0.25,4] for 0.25-4), which then rejected every legal submit for counters
+// such as a "开始秒数" node whose example value was 0.
+func TestBuildSchemaFromNodes_NoInferredNumericBounds(t *testing.T) {
+	t.Parallel()
+	nodes := []rhparser.NodeInfo{
+		{NodeID: "229", FieldName: "value", Description: "开始秒数", FieldValue: "0"},
+		{NodeID: "230", FieldName: "value", Description: "执行秒数", FieldValue: "1"},
+		{NodeID: "231", FieldName: "value", Description: "强度", FieldValue: "2"},
+		{NodeID: "232", FieldName: "value", Description: "分辨率", FieldValue: "1024"},
+	}
+	out := rhparser.BuildSchemaFromNodes(nodes)
+	require.Len(t, out.Params, 4)
+	for _, p := range out.Params {
+		require.Equal(t, "number", p.Type, "param %s should still be numeric", p.Label)
+		assert.Nilf(t, p.Min, "param %s must not infer a lower bound", p.Label)
+		assert.Nilf(t, p.Max, "param %s must not infer an upper bound", p.Label)
+	}
+}

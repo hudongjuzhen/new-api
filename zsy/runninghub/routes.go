@@ -24,6 +24,12 @@ import (
 // SetApiRouter/SetDashboardRouter. Admin and user auth are guarded with
 // existing middlewares looked up by name via controller helpers.
 func mountRoutes(router *gin.Engine) {
+	// Admission loop for tasks accepted while every channel of their site was at
+	// its concurrency cap (queue.go). It starts here rather than in init() so it
+	// only runs in the real server process (router.SetRouter), never in the
+	// plugin's own tests; the loop is idle until something is queued.
+	startQueueDispatcher()
+
 	api := router.Group("/api/zsy/rh")
 	{
 		apps := api.Group("/apps")
@@ -32,6 +38,13 @@ func mountRoutes(router *gin.Engine) {
 			apps.GET("/:id", getPublicAppDetail)
 			apps.POST("/:id/run", requireUserAuth, submitAppRun)
 			apps.GET("/task/:task_id", requireUserAuth, getAppTaskResult)
+			// Inline text preview of one result file. Task-scoped: the URL must be
+			// one of the caller's own task results (the upstream storage sends no
+			// CORS headers, so the browser cannot read it directly).
+			apps.GET("/task/:task_id/content", requireUserAuth, getTaskResultContent)
+			// Cancel a queued or running run: local fail+refund while the task is
+			// still queued, upstream cancel (then fail+refund) once it runs.
+			apps.POST("/task/:task_id/cancel", requireUserAuth, cancelAppTask)
 			apps.GET("/tasks", requireUserAuth, listMyRhTasks)
 		}
 		// Media upload proxy: forwards user files to the RunningHub site the

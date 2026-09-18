@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -89,12 +90,27 @@ func WeChatAuth(c *gin.Context) {
 		}
 	} else {
 		if common.RegisterEnabled {
+			// WeChat has no registration form to type an invite code into, so the
+			// caller passes it as ?aff=<inviter's code>. When the site requires an
+			// invite code, a missing or unknown one refuses the registration.
+			inviterId, inviteErr := model.CheckInviteCode(c.Query("aff"))
+			if inviteErr != nil {
+				messageKey := i18n.MsgUserInviteCodeInvalid
+				if errors.Is(inviteErr, model.ErrInviteCodeRequired) {
+					messageKey = i18n.MsgUserInviteCodeRequired
+				}
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": i18n.T(c, messageKey),
+				})
+				return
+			}
 			user.Username = "wechat_" + strconv.Itoa(model.GetMaxUserId()+1)
 			user.DisplayName = "WeChat User"
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
 
-			if err := user.Insert(0); err != nil {
+			if err := user.Insert(inviterId); err != nil {
 				c.JSON(http.StatusOK, gin.H{
 					"success": false,
 					"message": err.Error(),

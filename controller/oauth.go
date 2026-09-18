@@ -199,13 +199,19 @@ func HandleOAuth(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
 			return
 		}
-		switch err.(type) {
+		switch e := err.(type) {
 		case *OAuthUserDeletedError:
 			common.ApiErrorI18n(c, i18n.MsgOAuthUserDeleted)
 		case *OAuthRegistrationDisabledError:
 			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
 		case *OAuthEmailAlreadyTakenError:
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+		case *OAuthInviteCodeError:
+			if e.Required {
+				common.ApiErrorI18n(c, i18n.MsgUserInviteCodeRequired)
+			} else {
+				common.ApiErrorI18n(c, i18n.MsgUserInviteCodeInvalid)
+			}
 		default:
 			common.ApiError(c, err)
 		}
@@ -361,10 +367,12 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	user.Role = common.RoleCommonUser
 	user.Status = common.UserStatusEnabled
 
-	// Handle affiliate code
-	inviterId := 0
-	if affiliateCode != "" {
-		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
+	// Handle affiliate code. The invite-code policy is enforced here as well so
+	// third-party sign-up cannot bypass it: the code travels through the OAuth
+	// flow payload (POST /api/oauth/state -> aff).
+	inviterId, inviteErr := model.CheckInviteCode(affiliateCode)
+	if inviteErr != nil {
+		return nil, &OAuthInviteCodeError{Required: errors.Is(inviteErr, model.ErrInviteCodeRequired)}
 	}
 
 	// Use transaction to ensure user creation and OAuth binding are atomic
@@ -445,6 +453,20 @@ type OAuthEmailAlreadyTakenError struct{}
 
 func (e *OAuthEmailAlreadyTakenError) Error() string {
 	return "email is already in use"
+}
+
+// OAuthInviteCodeError reports that the OAuth flow carried no usable invite
+// code while the site requires one. The registration is refused so an OAuth
+// login cannot bypass the invite gate.
+type OAuthInviteCodeError struct {
+	Required bool
+}
+
+func (e *OAuthInviteCodeError) Error() string {
+	if e.Required {
+		return "invite code is required"
+	}
+	return "invite code is invalid"
 }
 
 // handleOAuthError handles OAuth errors and returns translated message

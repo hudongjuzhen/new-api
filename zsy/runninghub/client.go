@@ -89,6 +89,39 @@ type QueryBody struct {
 	TaskID string `json:"taskId"`
 }
 
+// CancelBody is the body of POST /task/openapi/cancel (legacy endpoint, see
+// PathCancelTask): the key travels in the payload, not in a Bearer header.
+type CancelBody struct {
+	APIKey string `json:"apiKey"`
+	TaskID string `json:"taskId"`
+}
+
+// FlatResp is the {code, msg, data} envelope the legacy endpoints answer with.
+// code is 0 on success; every other value is an upstream business code.
+type FlatResp struct {
+	Code        int    `json:"code"`
+	Msg         string `json:"msg"`
+	MessageText string `json:"message"`
+	Data        any    `json:"data"`
+}
+
+// Message returns the upstream explanation, preferring `msg` (the documented
+// field) over `message`.
+func (r *FlatResp) Message() string {
+	if strings.TrimSpace(r.Msg) != "" {
+		return strings.TrimSpace(r.Msg)
+	}
+	return strings.TrimSpace(r.MessageText)
+}
+
+// CancelOutcome is the result of a cancel request: either the upstream stopped
+// the task, or it refused because the task can no longer be interrupted.
+type CancelOutcome struct {
+	Canceled   bool
+	NotAllowed bool
+	Message    string
+}
+
 // UploadBinaryResp is the response shape of POST /openapi/v2/media/upload/binary.
 // The wrapped data carries fileName (workflow style) and download_url (the
 // actual fetchable URL on RH's media host); the model-API style may omit
@@ -199,6 +232,53 @@ func (c *Client) SubmitWorkflow(workflowID string, nodes []SubmitNodeInfo, webho
 	return out, nil
 }
 
+// SubmitRaw replays a pre-built submit body against an explicit path. The
+// queued-task dispatcher uses it: the body was already built (and priced) when
+// the task was accepted, so it must reach the upstream byte-for-byte identical
+// to a direct submit.
+func (c *Client) SubmitRaw(path string, body []byte) (*SubmitResp, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, fmt.Errorf("runninghub: empty submit path")
+	}
+	out := &SubmitResp{}
+	if err := c.doJSONRaw(http.MethodPost, path, body, out); err != nil {
+		return nil, err
+	}
+	if out.ErrorCode != "" && (out.TaskID == "" || out.Status == StatusFailed) {
+		return out, fmt.Errorf("runninghub submit %s failed: code=%s msg=%s", path, out.ErrorCode, out.ErrorMessage)
+	}
+	return out, nil
+}
+
+// CancelTask asks the upstream to stop a task that is still running.
+//
+// Endpoint and response semantics are the verified contract from a working
+// integration (see PathCancelTask): the API key travels in the body, no Bearer
+// header is required, and the answer is the flat {code, msg} envelope where
+// code 0 means cancelled and 817 means "this task can no longer be cancelled"
+// (usually because it already finished) — a normal outcome the caller reports
+// to the user instead of retrying.
+func (c *Client) CancelTask(taskID string) (CancelOutcome, error) {
+	if strings.TrimSpace(taskID) == "" {
+		return CancelOutcome{}, fmt.Errorf("runninghub: empty taskId")
+	}
+	payload := CancelBody{APIKey: c.Key, TaskID: taskID}
+	out := &FlatResp{}
+	if err := c.doJSON(http.MethodPost, PathCancelTask, payload, out); err != nil {
+		return CancelOutcome{}, err
+	}
+	switch out.Code {
+	case 0:
+		return CancelOutcome{Canceled: true, Message: out.Message()}, nil
+	case 817:
+		return CancelOutcome{NotAllowed: true, Message: out.Message()}, nil
+	}
+	return CancelOutcome{}, fmt.Errorf(
+		"runninghub cancel %s rejected: code=%d msg=%s",
+		taskID, out.Code, out.Message(),
+	)
+}
+
 // Query hits POST /openapi/v2/query and returns the parsed response.
 func (c *Client) Query(taskID string) (*QueryResp, error) {
 	if taskID == "" {
@@ -230,13 +310,21 @@ func pickInstanceType(s string) string {
 }
 
 func (c *Client) doJSON(method, path string, reqBody any, respOut any) error {
-	var bodyReader io.Reader
+	var data []byte
 	if reqBody != nil {
-		data, err := common.Marshal(reqBody)
+		encoded, err := common.Marshal(reqBody)
 		if err != nil {
 			return fmt.Errorf("runninghub marshal request: %w", err)
 		}
-		bodyReader = bytes.NewReader(data)
+		data = encoded
+	}
+	return c.doJSONRaw(method, path, data, respOut)
+}
+
+func (c *Client) doJSONRaw(method, path string, reqBody []byte, respOut any) error {
+	var bodyReader io.Reader
+	if len(reqBody) > 0 {
+		bodyReader = bytes.NewReader(reqBody)
 	}
 	fullURL := c.BaseURL + path
 	req, err := http.NewRequest(method, fullURL, bodyReader)

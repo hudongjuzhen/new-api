@@ -23,12 +23,20 @@ type ChannelSettings struct {
 	// HTTP2ConnectionShards spreads HTTP/2 traffic across N independent transports
 	// (1-8). Zero/unset means 1. Ignored when HTTPProtocol is "http1".
 	HTTP2ConnectionShards int `json:"http2_connection_shards,omitempty"`
+	// MaxConcurrency caps how many tasks one channel may keep in flight at the
+	// same time (granted slot → terminal state). Zero/unset means unlimited.
+	// Providers that reject over-limit concurrency instead of queueing it
+	// (RunningHub) use this cap to queue on the gateway side.
+	MaxConcurrency int `json:"max_concurrency,omitempty"`
 }
 
 const (
 	HTTPProtocolAuto         = "auto"
 	HTTPProtocolHTTP1        = "http1"
 	MaxHTTP2ConnectionShards = 8
+	// MaxChannelConcurrency bounds the configurable per-channel task
+	// concurrency so a typo cannot park every request of a site in a queue.
+	MaxChannelConcurrency = 100
 )
 
 // ValidateHTTPTransport validates save-time HTTP transport channel settings.
@@ -47,6 +55,22 @@ func (s *ChannelSettings) ValidateHTTPTransport() error {
 	}
 	if protocol == HTTPProtocolHTTP1 && s.HTTP2ConnectionShards > 1 {
 		return fmt.Errorf("http2_connection_shards must be 1 when http_protocol is http1")
+	}
+	return nil
+}
+
+// ValidateMaxConcurrency validates the save-time per-channel task concurrency
+// cap. Zero means "unlimited" and is always accepted.
+func (s *ChannelSettings) ValidateMaxConcurrency() error {
+	if s == nil {
+		return nil
+	}
+	if s.MaxConcurrency < 0 || s.MaxConcurrency > MaxChannelConcurrency {
+		return fmt.Errorf(
+			"invalid max_concurrency: %d (0 means unlimited, maximum %d)",
+			s.MaxConcurrency,
+			MaxChannelConcurrency,
+		)
 	}
 	return nil
 }

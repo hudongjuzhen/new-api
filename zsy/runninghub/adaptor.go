@@ -428,6 +428,15 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 // format. Status mapping follows §3.9: QUEUED/RUNNING → PENDING; SUCCESS →
 // SUCCESS; FAILED/CANCELED → FAILURE. Charges from usage.consumeCoins are
 // fed back as CompletionTokens so the billing chain can settle.
+//
+// A response that carries an upstream error but no usable status
+// ("errorCode":"1004", "errorMessage":"Task not found, please check the task
+// ID | 任务不存在或已过期，请检查任务ID", "status":"") is a terminal failure: RH
+// drops the task record, and since the RunningHub platforms are exempt from the
+// local timeout sweep (see service.skipTimeoutForPlatform) nothing else would
+// ever move the record out of QUEUED — the pre-charged quota stayed held while
+// the panel kept showing "生成中". Mapping it to FAILURE lets the poller's
+// failure branch close the record and refund.
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	if len(respBody) == 0 {
 		return nil, fmt.Errorf("runninghub empty query response")
@@ -436,9 +445,30 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if err := common.Unmarshal(respBody, rh); err != nil {
 		return nil, fmt.Errorf("runninghub parse query: %w", err)
 	}
+	rawStatus := strings.ToUpper(strings.TrimSpace(rh.Status))
+	if rh.hasError() && !isRHStatusKnown(rawStatus) {
+		reason := pickFailureReason(rh)
+		if isRHRequestError(rh.ErrorCode) {
+			// Request-level errors (bad URL / unparseable body) describe our
+			// own call, not the task. Failing every in-flight task on a
+			// misconfigured base URL would refund live runs, so keep them
+			// pending and leave a trace for the operator instead.
+			common.SysError(fmt.Sprintf(
+				"runninghub query returned request-level error code=%s msg=%s; keeping task %s in-flight",
+				rh.ErrorCode, rh.ErrorMessage, rh.TaskID,
+			))
+		} else {
+			return &relaycommon.TaskInfo{
+				TaskID:   rh.TaskID,
+				Status:   model.TaskStatusFailure,
+				Reason:   reason,
+				Progress: "100%",
+			}, nil
+		}
+	}
 	out := &relaycommon.TaskInfo{
 		TaskID: rh.TaskID,
-		Status: mapRHStatus(rh.Status),
+		Status: mapRHStatus(rawStatus),
 	}
 	switch out.Status {
 	case model.TaskStatusSuccess:
@@ -573,28 +603,67 @@ func (a *TaskAdaptor) AdjustBillingOnCompleteChecked(_ *model.Task, taskResult *
 
 // mapRHStatus translates RH upstream status to the host task status set.
 func mapRHStatus(s string) string {
-	switch s {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
 	case StatusQueued:
 		return model.TaskStatusQueued
 	case StatusRunning:
 		return model.TaskStatusInProgress
 	case StatusSuccess:
 		return model.TaskStatusSuccess
-	case StatusFailed, StatusCanceled:
+	case StatusFailed, StatusCanceled, StatusCancelled:
 		return model.TaskStatusFailure
 	}
 	// Unknown status string → treat as pending so the poller keeps trying.
 	return model.TaskStatusQueued
 }
 
+// isRHStatusKnown reports whether s is one of the task statuses RH is known to
+// return for a live task. An empty or unrecognised value means the response
+// carries no usable task state.
+func isRHStatusKnown(s string) bool {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case StatusQueued, StatusRunning, StatusSuccess, StatusFailed, StatusCanceled, StatusCancelled:
+		return true
+	}
+	return false
+}
+
+// isRHRequestError reports whether an error code describes the query call
+// itself (bad path, unparseable body) rather than the task's state. Those codes
+// are excluded from the "error means the task failed" rule so a broken base URL
+// cannot mass-fail and mass-refund live tasks.
+func isRHRequestError(code string) bool {
+	switch strings.TrimSpace(code) {
+	case ErrCodeInvalidURL, ErrCodeParams:
+		return true
+	}
+	return false
+}
+
+// hasError reports whether the upstream response carries a task-level error.
+func (rh *QueryResp) hasError() bool {
+	if rh == nil {
+		return false
+	}
+	return strings.TrimSpace(rh.ErrorCode) != "" || strings.TrimSpace(rh.ErrorMessage) != ""
+}
+
+// pickFailureReason prefers the upstream failedReason, then the error message;
+// an empty JSON container (RH sends failedReason: {} on error-only responses)
+// counts as absent so the reason is never the literal "{}".
 func pickFailureReason(rh *QueryResp) string {
-	switch {
-	case common.JsonRawMessageToString(rh.FailedReason) != "":
-		return common.JsonRawMessageToString(rh.FailedReason)
-	case rh.ErrorMessage != "":
-		return fmt.Sprintf("[%s] %s", rh.ErrorCode, rh.ErrorMessage)
+	if reason := common.JsonRawMessageToString(rh.FailedReason); !isEmptyJSONContainer(reason) {
+		return reason
+	}
+	if msg := strings.TrimSpace(rh.ErrorMessage); msg != "" {
+		return fmt.Sprintf("[%s] %s", rh.ErrorCode, msg)
 	}
 	return "runninghub task failed"
+}
+
+func isEmptyJSONContainer(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "" || s == "{}" || s == "[]" || s == "null"
 }
 
 // parseFloatRelaxed parses a string or string-shaped number, tolerating null

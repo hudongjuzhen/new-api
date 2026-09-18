@@ -59,10 +59,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import {
-  getCurrencyDisplay,
-  getCurrencyLabel,
-} from '@/lib/currency'
+import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import {
   getEditableQuotaStep,
   parseQuotaFromDollars,
@@ -96,6 +93,25 @@ const TYPE_CHOICES = [
   'select',
 ]
 
+/** Types the submit validator treats as numbers, i.e. the ones that honour
+ * min/max bounds. Kept in sync with coerceValueByType in controllers_user.go. */
+const NUMERIC_TYPES = new Set([
+  'number',
+  'int',
+  'integer',
+  'float',
+  'duration',
+  'seconds',
+])
+
+/** Optional numeric bound: an empty input clears the bound. */
+function parseBound(raw: string): number | undefined {
+  const trimmed = raw.trim()
+  if (trimmed === '') return undefined
+  const n = Number(trimmed)
+  return Number.isFinite(n) ? n : undefined
+}
+
 const emptyDTO: AppCreateDTO = {
   name: '',
   slug: '',
@@ -110,6 +126,7 @@ const emptyDTO: AppCreateDTO = {
   fixedQuotaPerCall: 0,
   perSecondBilling: false,
   quotaPerSecond: 0,
+  secondsExpr: '',
   modelBaseRateRatio: 1.0,
   site: '',
   categoryId: null,
@@ -118,7 +135,11 @@ const emptyDTO: AppCreateDTO = {
 /** Billing mode selector value → the two mutually-exclusive flags. */
 type BillingMode = 'dynamic' | 'per-call' | 'per-second'
 
-const BILLING_MODE_CHOICES: BillingMode[] = ['dynamic', 'per-call', 'per-second']
+const BILLING_MODE_CHOICES: BillingMode[] = [
+  'dynamic',
+  'per-call',
+  'per-second',
+]
 
 const BILLING_MODE_LABEL: Record<BillingMode, string> = {
   dynamic: 'Dynamic Billing',
@@ -306,7 +327,7 @@ function AppForm({
                 <SelectItem value='intl'>{t('RunningHub Intl')}</SelectItem>
               </SelectContent>
             </Select>
-            <p className='text-xs text-muted-foreground'>
+            <p className='text-muted-foreground text-xs'>
               {t('Which site handles this app')}
             </p>
           </div>
@@ -314,7 +335,9 @@ function AppForm({
             <Label htmlFor='rh-app-category'>{t('Category')}</Label>
             <Select
               value={catId == null ? '' : String(catId)}
-              onValueChange={(v) => set('categoryId', v === '' ? null : Number(v))}
+              onValueChange={(v) =>
+                set('categoryId', v === '' ? null : Number(v))
+              }
             >
               <SelectTrigger id='rh-app-category'>
                 <SelectValue placeholder={t('Uncategorized')} />
@@ -328,7 +351,7 @@ function AppForm({
                 ))}
               </SelectContent>
             </Select>
-            <p className='text-xs text-muted-foreground'>
+            <p className='text-muted-foreground text-xs'>
               {t('Select a category for this app')}
             </p>
           </div>
@@ -382,8 +405,10 @@ function AppForm({
                 ))}
               </SelectContent>
             </Select>
-            <p className='text-xs text-muted-foreground'>
-              {t('Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.')}
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.'
+              )}
             </p>
           </div>
           {billingModeOf(dto) === 'dynamic' && (
@@ -446,6 +471,23 @@ function AppForm({
                   )
                 }
               />
+              <Label htmlFor='rh-app-seconds-expr'>{t('Seconds Field')}</Label>
+              <Input
+                id='rh-app-seconds-expr'
+                value={dto.secondsExpr}
+                placeholder='nodeId=212 / 229-212'
+                onChange={(e) => set('secondsExpr', e.target.value)}
+              />
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'Seconds field expression over node ids, e.g. "212" or "229-212".'
+                )}
+              </p>
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'Leave empty to use a seconds/duration parameter; the result is clamped to 1-3600 seconds.'
+                )}
+              </p>
             </div>
           )}
           <div className='space-y-1.5'>
@@ -538,63 +580,87 @@ function AppForm({
                       placeholder={t('Label')}
                       onChange={(e) => setParam(i, { label: e.target.value })}
                     />
-                  <Select
-                    value={p.type}
-                    onValueChange={(v) => {
-                      if (v != null) setParam(i, { type: v })
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {TYPE_CHOICES.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className='grid grid-cols-[1fr_140px] gap-2'>
-                  <Input
-                    value={p.fieldName}
-                    placeholder={t('Field name')}
-                    onChange={(e) => setParam(i, { fieldName: e.target.value })}
-                  />
-                  <label className='flex items-center gap-2'>
-                    <Switch
-                      checked={!!p.required}
-                      onCheckedChange={(v) => setParam(i, { required: !!v })}
+                    <Select
+                      value={p.type}
+                      onValueChange={(v) => {
+                        if (v != null) setParam(i, { type: v })
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TYPE_CHOICES.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className='grid grid-cols-[1fr_140px] gap-2'>
+                    <Input
+                      value={p.fieldName}
+                      placeholder={t('Field name')}
+                      onChange={(e) =>
+                        setParam(i, { fieldName: e.target.value })
+                      }
                     />
-                    <span className='text-xs'>{t('Required')}</span>
-                  </label>
-                </div>
-                {p.type === 'select' && (
-                  <textarea
-                    className='min-h-16 w-full rounded-md border bg-transparent px-2 py-1 font-mono text-xs'
-                    placeholder={t(
-                      'Options as JSON, e.g. [{"label":"1:1","value":"1:1"}]'
-                    )}
-                    value={JSON.stringify(p.options ?? [])}
-                    onChange={(e) =>
-                      setParam(i, { options: parseOptions(e.target.value) })
-                    }
-                  />
-                )}
-                <div className='flex items-center justify-between'>
-                  <span className='text-muted-foreground text-xs'>
-                    {p.nodeId ? `nodeId=${p.nodeId}` : ''}
-                  </span>
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='icon-sm'
-                    onClick={() => removeParam(i)}
-                  >
-                    <X className='size-3.5' />
-                  </Button>
-                </div>
+                    <label className='flex items-center gap-2'>
+                      <Switch
+                        checked={!!p.required}
+                        onCheckedChange={(v) => setParam(i, { required: !!v })}
+                      />
+                      <span className='text-xs'>{t('Required')}</span>
+                    </label>
+                  </div>
+                  {NUMERIC_TYPES.has(p.type) && (
+                    <div className='grid grid-cols-2 gap-2'>
+                      <Input
+                        type='number'
+                        value={p.min ?? ''}
+                        placeholder={t('Min')}
+                        aria-label={t('Min')}
+                        onChange={(e) =>
+                          setParam(i, { min: parseBound(e.target.value) })
+                        }
+                      />
+                      <Input
+                        type='number'
+                        value={p.max ?? ''}
+                        placeholder={t('Max')}
+                        aria-label={t('Max')}
+                        onChange={(e) =>
+                          setParam(i, { max: parseBound(e.target.value) })
+                        }
+                      />
+                    </div>
+                  )}
+                  {p.type === 'select' && (
+                    <textarea
+                      className='min-h-16 w-full rounded-md border bg-transparent px-2 py-1 font-mono text-xs'
+                      placeholder={t(
+                        'Options as JSON, e.g. [{"label":"1:1","value":"1:1"}]'
+                      )}
+                      value={JSON.stringify(p.options ?? [])}
+                      onChange={(e) =>
+                        setParam(i, { options: parseOptions(e.target.value) })
+                      }
+                    />
+                  )}
+                  <div className='flex items-center justify-between'>
+                    <span className='text-muted-foreground text-xs'>
+                      {p.nodeId ? `nodeId=${p.nodeId}` : ''}
+                    </span>
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='icon-sm'
+                      onClick={() => removeParam(i)}
+                    >
+                      <X className='size-3.5' />
+                    </Button>
+                  </div>
                 </div>
               )
             })
@@ -683,18 +749,10 @@ function renderTableBody(
       <TableCell className='text-xs'>{siteLabel(app.site)}</TableCell>
       <TableCell>{billingBadge(app, t)}</TableCell>
       <TableCell className='text-right'>
-        <Button
-          variant='ghost'
-          size='icon-sm'
-          onClick={() => onEdit(app)}
-        >
+        <Button variant='ghost' size='icon-sm' onClick={() => onEdit(app)}>
           <Pencil className='size-3.5' />
         </Button>
-        <Button
-          variant='ghost'
-          size='icon-sm'
-          onClick={() => onDelete(app.id)}
-        >
+        <Button variant='ghost' size='icon-sm' onClick={() => onDelete(app.id)}>
           <Trash2 className='size-3.5' />
         </Button>
       </TableCell>
@@ -778,7 +836,7 @@ export function CategoryManageDialog({
           </DialogHeader>
           <div className='space-y-4'>
             <form onSubmit={save} className='flex items-end gap-2'>
-              <div className='space-y-1.5 flex-1'>
+              <div className='flex-1 space-y-1.5'>
                 <Label htmlFor='rh-cat-name'>{t('Category Name')}</Label>
                 <Input
                   id='rh-cat-name'
@@ -796,9 +854,7 @@ export function CategoryManageDialog({
                   onChange={(e) => setSortOrder(Number(e.target.value) || 0)}
                 />
               </div>
-              <Button type='submit'>
-                {editing ? t('Save') : t('Add')}
-              </Button>
+              <Button type='submit'>{editing ? t('Save') : t('Add')}</Button>
             </form>
 
             <div className='max-h-72 space-y-1 overflow-y-auto'>
@@ -821,31 +877,31 @@ export function CategoryManageDialog({
                       className='border-border/60 bg-muted/20 flex items-center justify-between gap-2 rounded-md border px-2 py-1.5'
                     >
                       <div className='flex min-w-0 items-center gap-2'>
-                      <span className='text-sm font-medium'>{cat.name}</span>
-                      <CategoryBadge name={`${cat.appCount ?? 0}`} />
+                        <span className='text-sm font-medium'>{cat.name}</span>
+                        <CategoryBadge name={`${cat.appCount ?? 0}`} />
+                      </div>
+                      <div className='flex shrink-0 items-center gap-1'>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon-sm'
+                          onClick={() => startEdit(cat)}
+                          title={t('Edit')}
+                        >
+                          <Pencil className='size-3.5' />
+                        </Button>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon-sm'
+                          onClick={() => setDeleteId(cat.id)}
+                          title={t('Delete')}
+                        >
+                          <Trash2 className='size-3.5' />
+                        </Button>
+                      </div>
                     </div>
-                    <div className='flex shrink-0 items-center gap-1'>
-                      <Button
-                        type='button'
-                        variant='ghost'
-                        size='icon-sm'
-                        onClick={() => startEdit(cat)}
-                        title={t('Edit')}
-                      >
-                        <Pencil className='size-3.5' />
-                      </Button>
-                      <Button
-                        type='button'
-                        variant='ghost'
-                        size='icon-sm'
-                        onClick={() => setDeleteId(cat.id)}
-                        title={t('Delete')}
-                      >
-                        <Trash2 className='size-3.5' />
-                      </Button>
-                    </div>
-                  </div>
-                ))
+                  ))
                 })()
               )}
             </div>
@@ -953,7 +1009,11 @@ export function RhAppsPage() {
           {t('RunningHub Apps')}
         </SectionPageLayout.Title>
         <SectionPageLayout.Actions>
-          <Button size='sm' variant='outline' onClick={() => setCatManageOpen(true)}>
+          <Button
+            size='sm'
+            variant='outline'
+            onClick={() => setCatManageOpen(true)}
+          >
             <FolderOpen className='size-4' />
             {t('Category Management')}
           </Button>
@@ -1012,6 +1072,7 @@ export function RhAppsPage() {
                     fixedQuotaPerCall: editing.fixedQuotaPerCall,
                     perSecondBilling: editing.perSecondBilling,
                     quotaPerSecond: editing.quotaPerSecond,
+                    secondsExpr: editing.secondsExpr ?? '',
                     modelBaseRateRatio: editing.modelBaseRateRatio,
                     site: editing.site ?? '',
                     categoryId: editing.categoryId ?? null,
@@ -1030,7 +1091,8 @@ export function RhAppsPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('Delete App')}</AlertDialogTitle>            <AlertDialogDescription>
+            <AlertDialogTitle>{t('Delete App')}</AlertDialogTitle>{' '}
+            <AlertDialogDescription>
               {t('Are you sure you want to delete this app?')}
             </AlertDialogDescription>
           </AlertDialogHeader>

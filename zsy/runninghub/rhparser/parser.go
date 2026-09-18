@@ -22,13 +22,13 @@ import (
 // through untouched. FieldData carries the upstream's enum/metadata blob for
 // fields that render as select in the admin UI.
 type NodeInfo struct {
-	NodeID         string `json:"nodeId,omitempty"`
-	FieldName      string `json:"fieldName,omitempty"`
-	Field          string `json:"field,omitempty"`
-	FieldValue     string `json:"fieldValue,omitempty"`
-	FieldData      string `json:"fieldData,omitempty"`
-	Description    string `json:"description,omitempty"`
-	DescriptionEn  string `json:"descriptionEn,omitempty"`
+	NodeID        string `json:"nodeId,omitempty"`
+	FieldName     string `json:"fieldName,omitempty"`
+	Field         string `json:"field,omitempty"`
+	FieldValue    string `json:"fieldValue,omitempty"`
+	FieldData     string `json:"fieldData,omitempty"`
+	Description   string `json:"description,omitempty"`
+	DescriptionEn string `json:"descriptionEn,omitempty"`
 }
 
 // ParsedCurl is the normalised output of ParseCurl.
@@ -430,23 +430,23 @@ type ErrSchemaReport struct {
 
 // SchemaSummary is the validated & enriched result of BuildSchemaFromNodes.
 type SchemaSummary struct {
-	Params []SchemaParam `json:"params"`
+	Params []SchemaParam     `json:"params"`
 	Errors []ErrSchemaReport `json:"errors,omitempty"`
 }
 
 // SchemaParam mirrors the plugin-level FieldParam but lives in rhparser so it
 // can be used from pure tests without pulling the full runninghub package.
 type SchemaParam struct {
-	NodeID      string                `json:"nodeId"`
-	FieldName   string                `json:"fieldName"`
-	Label       string                `json:"label"`
-	Type        string                `json:"type"` // text / textarea / number / image / audio / video / select
-	Required    bool                  `json:"required"`
-	Default     string                `json:"defaultValue,omitempty"`
-	Placeholder string                `json:"placeholder,omitempty"`
-	Min         *float64              `json:"min,omitempty"`
-	Max         *float64              `json:"max,omitempty"`
-	Options     []SchemaParamOption   `json:"options,omitempty"`
+	NodeID      string              `json:"nodeId"`
+	FieldName   string              `json:"fieldName"`
+	Label       string              `json:"label"`
+	Type        string              `json:"type"` // text / textarea / number / image / audio / video / select
+	Required    bool                `json:"required"`
+	Default     string              `json:"defaultValue,omitempty"`
+	Placeholder string              `json:"placeholder,omitempty"`
+	Min         *float64            `json:"min,omitempty"`
+	Max         *float64            `json:"max,omitempty"`
+	Options     []SchemaParamOption `json:"options,omitempty"`
 }
 
 // SchemaParamOption is one enum entry for Type == "select".
@@ -501,12 +501,11 @@ func BuildSchemaFromNodes(nodes []NodeInfo) SchemaSummary {
 		if required {
 			param.Required = true
 		}
-		if param.Type == "number" {
-			if min, max, ok := inferRangeHint(n.FieldValue); ok {
-				param.Min = &min
-				param.Max = &max
-			}
-		}
+		// Numeric bounds are intentionally left unset: the sample value in a
+		// curl/example body says nothing about the field's legal range (a
+		// sample of "0" or "1" once pinned max=1 onto counters such as
+		// "开始秒数", which then rejected every legal value at submit time).
+		// Admins who need a bound set min/max explicitly in the app editor.
 		out.Params = append(out.Params, param)
 	}
 	return out
@@ -593,27 +592,4 @@ func looksNumeric(s string) bool {
 	}
 	_, err := strconv.ParseFloat(s, 64)
 	return err == nil
-}
-
-// inferRangeHint returns a (min,max) pair for obvious enumerations. When the
-// field value is a plain number and no context exists, ok is false (caller
-// will not pin a range).
-func inferRangeHint(value string) (min, max float64, ok bool) {
-	v, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-	if err != nil {
-		return 0, 0, false
-	}
-	// Common known heuristics.
-	switch value {
-	case "0", "1":
-		return 0, 1, true
-	}
-	switch {
-	case v >= 0.25 && v <= 4.0:
-		// audio / prompt weights.
-		return 0.25, 4.0, true
-	case v > 0 && v <= 1.0:
-		return 0, 1, true
-	}
-	return 0, 0, false
 }
