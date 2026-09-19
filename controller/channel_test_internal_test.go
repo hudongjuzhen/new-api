@@ -446,6 +446,87 @@ func TestRunChannelTestWorkersStopsAfterCancellation(t *testing.T) {
 	assert.Equal(t, []int{0}, progress)
 }
 
+// testChannel 把方舟（VolcEngine）Seedream 模型的请求路径切成
+// /v1/images/generations，此时 buildTestRequest 必须给出图片请求体：路径与请求体
+// 不一致会在类型断言处直接失败（invalid image request type），测试永远打不到上游。
+func TestBuildTestRequestForVolcengineSeedreamUsesImageRequest(t *testing.T) {
+	tests := []struct {
+		name         string
+		channelType  int
+		model        string
+		endpointType string
+		wantImage    bool
+		wantSize     string
+	}{
+		{
+			name:        "volcengine seedream auto detect",
+			channelType: constant.ChannelTypeVolcEngine,
+			model:       "doubao-seedream-5-0-260128",
+			wantImage:   true,
+			wantSize:    "2048x2048",
+		},
+		{
+			name:         "volcengine seedream explicit image endpoint",
+			channelType:  constant.ChannelTypeVolcEngine,
+			model:        "doubao-seedream-4-0-250828",
+			endpointType: string(constant.EndpointTypeImageGeneration),
+			wantImage:    true,
+			wantSize:     "2048x2048",
+		},
+		{
+			name:         "other channel explicit image endpoint keeps openai size",
+			channelType:  constant.ChannelTypeOpenAI,
+			model:        "gpt-image-1",
+			endpointType: string(constant.EndpointTypeImageGeneration),
+			wantImage:    true,
+			wantSize:     "1024x1024",
+		},
+		{
+			name:        "volcengine seedance is not an image model",
+			channelType: constant.ChannelTypeVolcEngine,
+			model:       "doubao-seedance-2-0-260128",
+			wantImage:   false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			channel := &model.Channel{Type: test.channelType}
+			request := buildTestRequest(test.model, test.endpointType, channel, false)
+
+			imageRequest, isImageRequest := request.(*dto.ImageRequest)
+			if !test.wantImage {
+				require.False(t, isImageRequest)
+				return
+			}
+			require.True(t, isImageRequest)
+			assert.Equal(t, test.wantSize, imageRequest.Size)
+			assert.NotEmpty(t, imageRequest.Prompt)
+		})
+	}
+}
+
+func TestVolcengineSeedreamImageTestRejectsUnrelatedChannels(t *testing.T) {
+	tests := []struct {
+		name    string
+		channel *model.Channel
+		model   string
+		want    bool
+	}{
+		{name: "seedream on volcengine", channel: &model.Channel{Type: constant.ChannelTypeVolcEngine}, model: "doubao-seedream-5-0-260128", want: true},
+		{name: "non seedream on volcengine", channel: &model.Channel{Type: constant.ChannelTypeVolcEngine}, model: "doubao-seed-2-1-pro-260915", want: false},
+		{name: "seedream on other channel", channel: &model.Channel{Type: constant.ChannelTypeOpenAI}, model: "doubao-seedream-5-0-260128", want: false},
+		{name: "seedream on doubao video channel", channel: &model.Channel{Type: constant.ChannelTypeDoubaoVideo}, model: "doubao-seedream-5-0-260128", want: false},
+		{name: "nil channel", model: "doubao-seedream-5-0-260128", want: false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, volcengineSeedreamImageTest(test.channel, test.model))
+		})
+	}
+}
+
 func TestTestAllChannelsRejectsExistingActiveTask(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))

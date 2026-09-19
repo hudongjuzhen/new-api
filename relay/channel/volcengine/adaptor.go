@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	channelconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/claude"
@@ -108,9 +109,10 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
 	switch info.RelayMode {
 	case constant.RelayModeImagesGenerations:
-		return request, nil
-	// 根据官方文档,并没有发现豆包生图支持表单请求:https://www.volcengine.com/docs/82379/1824121
-	//case constant.RelayModeImagesEdits:
+		return forwardImageRequest(info, request)
+
+		// 根据官方文档,并没有发现豆包生图支持表单请求:https://www.volcengine.com/docs/82379/1824121
+		//case constant.RelayModeImagesEdits:
 	//
 	//	var requestBody bytes.Buffer
 	//	writer := multipart.NewWriter(&requestBody)
@@ -212,8 +214,45 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 	//	return bytes.NewReader(requestBody.Bytes()), nil
 
 	default:
-		return request, nil
+		return forwardImageRequest(info, request)
 	}
+}
+
+// forwardImageRequest 构造上游图片请求体，并把 dto.ImageRequest 未声明的方舟自
+// 有参数补回去。
+//
+// 方舟的图片接口与 OpenAI 同形（model/prompt/image/size/response_format/
+// watermark...），但额外提供一批自有参数：sequential_image_generation（组图开
+// 关）、sequential_image_generation_options.max_images、
+// optimize_prompt_options.mode、tools（联网搜索）等。这些参数在
+// dto.ImageRequest 中没有对应字段，会落进 ImageRequest.Extra，而
+// ImageRequest.MarshalJSON 刻意不合并 Extra（部分渠道的适配器要自行解释
+// Extra），所以必须在这里补回，否则客户端请求的组图/提示词优化会被静默丢弃：
+// 上游按默认值只返回一张图。
+//
+// 方舟对不认识的参数一律忽略（实测多传 n 既不报错也不改变行为），因此整体透传
+// 是安全的；已声明字段优先，避免 Extra 覆盖标准字段语义。
+func forwardImageRequest(info *relaycommon.RelayInfo, request dto.ImageRequest) (map[string]json.RawMessage, error) {
+	encoded, err := common.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("marshal volcengine image request: %w", err)
+	}
+	body := make(map[string]json.RawMessage, len(request.Extra)+8)
+	if err := common.Unmarshal(encoded, &body); err != nil {
+		return nil, fmt.Errorf("decode volcengine image request: %w", err)
+	}
+	for key, value := range request.Extra {
+		if _, declared := body[key]; declared {
+			continue
+		}
+		body[key] = value
+	}
+	// 返回值不再是 dto.ImageRequest，调用方的转换链推断会失手，这里补记一次，
+	// 保证日志里的 request_conversion 与其它图片渠道一致。
+	if info != nil {
+		info.AppendRequestConversion(types.RelayFormatOpenAIImage)
+	}
+	return body, nil
 }
 
 func detectImageMimeType(filename string) string {

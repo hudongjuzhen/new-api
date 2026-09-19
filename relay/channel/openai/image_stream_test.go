@@ -339,6 +339,14 @@ func TestOpenaiImageHandlerUsesPositiveActualCountForFixedPrice(t *testing.T) {
 			wantCount: 3,
 		},
 		{
+			// 方舟组图会把失败的图片也放进 data（带 error），只有
+			// usage.generated_images 是真实出图数，不能按 data 长度收费。
+			name:      "ark generated_images wins over data length",
+			body:      `{"data":[{"url":"a"},{"error":{"code":"OutputImageSensitiveContentDetected"}},{"url":"c"}],"usage":{"generated_images":2,"output_tokens":100,"total_tokens":100}}`,
+			usePrice:  true,
+			wantCount: 2,
+		},
+		{
 			name:      "ratio billing ignores data length",
 			body:      `{"data":[{"b64_json":"first"},{"b64_json":"second"}]}`,
 			usePrice:  false,
@@ -408,6 +416,106 @@ func TestOpenaiImageHandlersReturnJSONError(t *testing.T) {
 		require.Empty(t, recorder.Body.String())
 		require.NotContains(t, recorder.Header().Get("Content-Type"), "text/event-stream")
 	})
+}
+
+// TestImageStreamCountIgnoresFailedArkImages covers the Ark (VolcEngine)组图
+// counter contract: only successfully generated images are billed, duplicate
+// indexes are deduplicated, and completion events still count when they exceed
+// the per-image events (OpenAI shape).
+func TestImageStreamCountIgnoresFailedArkImages(t *testing.T) {
+	index := func(i int64) *int64 { return &i }
+
+	t.Run("ark partial events deduplicate and skip failures", func(t *testing.T) {
+		var count imageStreamCount
+		count.observe("image_generation.partial_succeeded", index(0))
+		count.observe("image_generation.partial_failed", index(1))
+		count.observe("image_generation.partial_succeeded", index(2))
+		count.observe("image_generation.completed", nil)
+
+		require.Equal(t, int64(2), count.total())
+	})
+
+	t.Run("completion events win when they are more numerous", func(t *testing.T) {
+		var count imageStreamCount
+		count.observe("image_generation.completed", nil)
+		count.observe("image_generation.completed", nil)
+		count.observe("image_generation.partial_succeeded", index(0))
+
+		require.Equal(t, int64(2), count.total())
+	})
+
+	t.Run("partial success without index is ignored", func(t *testing.T) {
+		var count imageStreamCount
+		count.observe("image_generation.partial_succeeded", nil)
+
+		require.Equal(t, int64(0), count.total())
+	})
+}
+
+// 方舟（VolcEngine）Seedream 组图的流式形状与 OpenAI 不同：每张成功图片只发一次
+// image_generation.partial_succeeded，整条流末尾才发一次 completed。只按
+// completed 计数会把一次组图按 1 张计费。
+func TestOpenaiImageStreamHandlerCountsArkPartialSucceededImages(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	body := strings.Join([]string{
+		`data: {"type":"image_generation.partial_succeeded","image_index":0,"url":"https://example.com/0.jpeg"}`,
+		``,
+		`data: {"type":"image_generation.partial_failed","image_index":1,"error":{"code":"OutputImageSensitiveContentDetected"}}`,
+		``,
+		`data: {"type":"image_generation.partial_succeeded","image_index":2,"url":"https://example.com/2.jpeg"}`,
+		``,
+		`data: {"type":"image_generation.completed","usage":{"output_tokens":35600,"total_tokens":35600}}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	c, recorder, resp, info := newImageTestContext(t, body, "text/event-stream", true)
+	info.PriceData.UsePrice = true
+	info.PriceData.AddOtherRatio("n", 1)
+
+	usage, err := OpenaiImageStreamHandler(c, info, resp)
+
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	require.Equal(t, 35600, usage.TotalTokens)
+	require.Equal(t, 2.0, info.PriceData.OtherRatios()["n"], "two successful images must be billed, the failed one must not")
+	require.Contains(t, recorder.Body.String(), `event: image_generation.partial_succeeded`)
+	require.Contains(t, recorder.Body.String(), `event: image_generation.completed`)
+}
+
+// 方舟组图流中途断开时同样适用防降价保护：已生成但未数完的图片必须按请求的 n
+// 计费，不能因为只看到第一张成功事件就降到 1。
+func TestOpenaiImageStreamHandlerArkAbortKeepsRequestedCount(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	body := "data: {\"type\":\"image_generation.partial_succeeded\",\"image_index\":0,\"url\":\"https://example.com/0.jpeg\"}\n\n"
+	c, _, resp, info := newDisconnectingImageStream(t, body, "partial_succeeded")
+	info.PriceData.UsePrice = true
+	info.PriceData.AddOtherRatio("n", 3)
+
+	usage, err := OpenaiImageStreamHandler(c, info, resp)
+
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	require.NotNil(t, info.StreamStatus)
+	require.Contains(t,
+		[]relaycommon.StreamEndReason{relaycommon.StreamEndReasonClientGone, relaycommon.StreamEndReasonHandlerStop},
+		info.StreamStatus.EndReason)
+	require.Equal(t, 3.0, info.PriceData.OtherRatios()["n"], "client abort must not reduce the billed image count")
 }
 
 // TestOpenaiImageStreamHandlerRecordsUpstreamErrorEvent verifies that an error

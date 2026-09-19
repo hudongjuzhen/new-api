@@ -22,11 +22,63 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// openAIImageCount 返回本次请求实际产出的图片张数。
+//
+// 默认取响应 data 数组的长度（OpenAI 语义：数组里每一项都是一张成功的图）。
+// 火山方舟（VolcEngine）的组图会把生成失败的图片也作为一个 data 项返回（该项带
+// error，没有 url），此时 data 长度大于实际出图数，必须以 usage.generated_images
+// 为准（方舟文档：仅对成功生成的图片按张数计费），否则会为失败的图片收费。
+func openAIImageCount(responseBody []byte) int64 {
+	if generated := gjson.GetBytes(responseBody, "usage.generated_images").Int(); generated > 0 {
+		return generated
+	}
+	return gjson.GetBytes(responseBody, "data.#").Int()
+}
+
 func updateOpenAIImageCount(info *relaycommon.RelayInfo, count int64) {
 	if info == nil || !info.PriceData.UsePrice || count <= 0 || count > int64(dto.MaxImageN) {
 		return
 	}
 	info.PriceData.AddOtherRatio("n", float64(count))
+}
+
+// imageStreamCount 统计一次图片流式响应里实际产出的图片张数，供按张计费使用。
+//
+// 上游的计数方式不同：
+//   - OpenAI / Azure：每张图产出一个 image_generation.completed（编辑为
+//     image_edit.completed）事件；
+//   - 火山方舟（VolcEngine，Seedream 5.0 组图）：每张成功图片发一个
+//     image_generation.partial_succeeded（带 0 起始的 image_index），整条流只
+//     在最后发一次 image_generation.completed。只数 completed 会把一次组图按
+//     1 张计费，因此这里同时按 image_index 去重统计 partial_succeeded。
+//
+// 两类事件取较大值：完成事件多于成功事件时以完成事件为准，计数只升不降。
+type imageStreamCount struct {
+	completed      int64
+	succeededIndex map[int64]struct{}
+}
+
+func (count *imageStreamCount) observe(eventType string, imageIndex *int64) {
+	switch eventType {
+	case "image_generation.completed", "image_edit.completed":
+		count.completed++
+	case "image_generation.partial_succeeded":
+		if imageIndex == nil {
+			return
+		}
+		if count.succeededIndex == nil {
+			count.succeededIndex = make(map[int64]struct{})
+		}
+		count.succeededIndex[*imageIndex] = struct{}{}
+	}
+}
+
+func (count *imageStreamCount) total() int64 {
+	succeeded := int64(len(count.succeededIndex))
+	if succeeded > count.completed {
+		return succeeded
+	}
+	return count.completed
 }
 
 // OpenaiImageHandler handles non-streaming OpenAI image responses
@@ -49,7 +101,7 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
-	updateOpenAIImageCount(info, gjson.GetBytes(responseBody, "data.#").Int())
+	updateOpenAIImageCount(info, openAIImageCount(responseBody))
 
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -111,7 +163,7 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 	// field (real OpenAI image events keep event == type).
 	usage := &dto.Usage{}
 	var lastStreamData []byte
-	var completedImages int64
+	var imageCount imageStreamCount
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		raw := common.StringToByteSlice(data)
@@ -122,17 +174,16 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 			sr.Error(fmt.Errorf("%s", extractOpenAIImageStreamErrorMessage(raw)))
 		}
 		var chunk struct {
-			Type  string    `json:"type"`
-			Usage dto.Usage `json:"usage"`
+			Type       string    `json:"type"`
+			Usage      dto.Usage `json:"usage"`
+			ImageIndex *int64    `json:"image_index"`
 		}
 		if err := common.Unmarshal(raw, &chunk); err == nil {
 			normalizeOpenAIUsage(&chunk.Usage)
 			if service.ValidUsage(&chunk.Usage) {
 				usage = &chunk.Usage
 			}
-			if chunk.Type == "image_generation.completed" || chunk.Type == "image_edit.completed" {
-				completedImages++
-			}
+			imageCount.observe(chunk.Type, chunk.ImageIndex)
 		}
 		if err := writeOpenaiImageStreamChunk(c, raw); err != nil {
 			sr.Stop(err)
@@ -146,12 +197,12 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 	}
 
 	applyUsagePostProcessing(info, usage, lastStreamData)
-	// Only trust completedImages when upstream finished the stream (done/eof).
+	// Only trust the streamed count when upstream finished the stream (done/eof).
 	// On client-side aborts (client_gone, or handler_stop from a failed client
 	// write) the counter undercounts what upstream actually generated and
 	// charged, so keep the requested n — otherwise a client could pay for one
 	// image by disconnecting right after the first completed event. The abort
-	// guard only blocks lowering the charge: if completed events already
+	// guard only blocks lowering the charge: if observed events already
 	// exceed the recorded n, bill the higher actual count regardless.
 	if info.StreamStatus != nil {
 		upstreamFinished := info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone ||
@@ -160,8 +211,9 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 		if n, ok := info.PriceData.OtherRatios()["n"]; ok {
 			requestedN = n
 		}
-		if upstreamFinished || float64(completedImages) > requestedN {
-			updateOpenAIImageCount(info, completedImages)
+		actualImages := imageCount.total()
+		if upstreamFinished || float64(actualImages) > requestedN {
+			updateOpenAIImageCount(info, actualImages)
 		}
 	}
 	return usage, nil
@@ -252,7 +304,7 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 	normalizeOpenAIUsage(&usageResp.Usage)
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
 
-	imageCount := gjson.GetBytes(responseBody, "data.#").Int()
+	imageCount := openAIImageCount(responseBody)
 	updateOpenAIImageCount(info, imageCount)
 
 	helper.SetEventStreamHeaders(c)

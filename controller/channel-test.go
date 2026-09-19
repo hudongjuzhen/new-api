@@ -133,7 +133,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 
 		// VolcEngine 图像生成模型
-		if channel.Type == constant.ChannelTypeVolcEngine && strings.Contains(testModel, "seedream") {
+		if volcengineSeedreamImageTest(channel, testModel) {
 			requestPath = "/v1/images/generations"
 		}
 
@@ -690,6 +690,28 @@ func detectErrorMessageFromJSONBytes(jsonBytes []byte) string {
 	return message
 }
 
+// volcengineSeedreamImageTest 判断本次渠道测试是否应走方舟（VolcEngine）的图片
+// 生成接口。方舟 Seedream 系列只有 /v1/images/generations 一条路，而通用自动
+// 检测只认 chat / embedding / rerank，所以路径与测试请求体必须一起判定：只把
+// 路径改成图片接口，请求体仍是 chat 请求，测试会在类型断言处直接失败
+// （invalid image request type），永远打不到上游。
+func volcengineSeedreamImageTest(channel *model.Channel, testModel string) bool {
+	return channel != nil &&
+		channel.Type == constant.ChannelTypeVolcEngine &&
+		strings.Contains(testModel, "seedream")
+}
+
+// channelTestImageSize 返回渠道测试使用的图片尺寸。方舟 Seedream 5.0/4.5 对生成
+// 图片的总像素有下限（5.0-lite 最低 2560x1440 = 3,686,400 px），OpenAI 惯例的
+// 1024x1024 会被方舟判为 InvalidParameter；2048x2048 同时落在 5.0/4.5/4.0 的
+// 合法区间内。
+func channelTestImageSize(channel *model.Channel, testModel string) string {
+	if volcengineSeedreamImageTest(channel, testModel) {
+		return "2048x2048"
+	}
+	return "1024x1024"
+}
+
 func buildTestRequest(model string, endpointType string, channel *model.Channel, isStream bool) dto.Request {
 	testResponsesInput := json.RawMessage(`[{"role":"user","content":"hi"}]`)
 
@@ -708,7 +730,7 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 				Model:  model,
 				Prompt: "a cute cat",
 				N:      lo.ToPtr(uint(1)),
-				Size:   "1024x1024",
+				Size:   channelTestImageSize(channel, model),
 			}
 		case constant.EndpointTypeJinaRerank:
 			// 返回 RerankRequest
@@ -792,6 +814,16 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 		return &dto.EmbeddingRequest{
 			Model: model,
 			Input: []any{"hello world"},
+		}
+	}
+
+	// 方舟图片模型：testChannel 已把请求路径切成 /v1/images/generations，
+	// 这里必须给出与之匹配的图片请求体，否则测试在类型断言处就失败。
+	if volcengineSeedreamImageTest(channel, model) {
+		return &dto.ImageRequest{
+			Model:  model,
+			Prompt: "a cute cat",
+			Size:   channelTestImageSize(channel, model),
 		}
 	}
 
