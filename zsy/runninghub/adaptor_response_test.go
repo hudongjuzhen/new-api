@@ -205,6 +205,9 @@ func TestConvertToOpenAIVideo(t *testing.T) {
 // TestGetModelList_PublishesAppUpstreamIDs pins the channel model list to the
 // published apps, so the channel form's model fetch cannot inject placeholder
 // names that no channel can route.
+//
+// 两种命名形态（`rh-app-<行号>` 与裸上游 ID）都在 `app_model_name_test.go` 里
+// 逐项断言过，这里只钉"未发布的应用不出现"。
 func TestGetModelList_PublishesAppUpstreamIDs(t *testing.T) {
 	const upstreamID = "9301-model-list"
 	env := newRHITestEnv(t, upstreamID)
@@ -221,5 +224,6 @@ func TestGetModelList_PublishesAppUpstreamIDs(t *testing.T) {
 	require.NotZero(t, hidden.ID)
 
 	models := (&runninghub.TaskAdaptor{}).GetModelList()
-	assert.Equal(t, []string{upstreamID}, models)
+	assert.Contains(t, models, upstreamID)
+	assert.NotContains(t, models, "9302-draft", "未发布的应用不该出现在模型表里")
 }

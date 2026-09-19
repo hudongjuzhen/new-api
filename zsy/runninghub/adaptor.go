@@ -78,17 +78,27 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 // GetChannelName returns the short, stable name used in logs.
 func (a *TaskAdaptor) GetChannelName() string { return "RunningHub" }
 
-// GetModelList exposes the published apps / workflows as channel "models": an
-// app is addressed by its bare upstream id (the convention
-// stats_sync.modelToUpstreamID also accepts), so the channel's model list is
-// exactly what a client sends as `model`. Querying the app table keeps the
-// channel form's "fetch models" button honest — the previous placeholder list
-// would have written three unusable names into the channel.
+// GetModelList exposes the published apps as channel "models", in the gateway
+// form `rh-app-<row id>` — that is the name a client sends to the standard relay
+// endpoints and the name this adaptor resolves back to the app (see
+// resolveUpstreamIDForModel).
+//
+// The bare-upstream-id convention still works for models added by hand (and for
+// channels synced from the app table), so this list is additive, not a
+// replacement. Querying the app table keeps the channel form's "fetch models"
+// button honest — the previous placeholder list wrote three unusable names.
 func (a *TaskAdaptor) GetModelList() []string {
-	models, err := publishedAppUpstreamIDs()
+	apps, err := publishedApps()
 	if err != nil {
 		common.SysError("runninghub: load app models failed: " + err.Error())
 		return nil
+	}
+	models := make([]string, 0, len(apps)*2)
+	for _, app := range apps {
+		models = append(models, fmt.Sprintf("%s%d", RhAppModelPrefix, app.ID))
+		if upstream := strings.TrimSpace(app.UpstreamID); upstream != "" {
+			models = append(models, upstream)
+		}
 	}
 	return models
 }
@@ -158,11 +168,60 @@ func extractKindFromMetadata(m map[string]any) string {
 
 // --- Request construction ------------------------------------------------
 
+// RhAppModelPrefix is the model-name form that addresses a RunningHub app by its
+// row id on this gateway: `rh-app-3` → rh_apps.id = 3.
+//
+// Why a name form at all: clients (the MV desktop app, and any third-party
+// service) pick a *model* on the standard relay endpoints
+// (/v1/video/generations, /v1/videos, /suno/submit/:action) — they have no other
+// channel to say "run gateway app 3". Resolving it here keeps the client free of
+// gateway ids and lets the model name appear in channel model lists / pricing
+// like any other model.
+//
+// The plugin's own submit path (/api/zsy/rh/apps/:id/run) passes the app id in
+// the URL instead and is unaffected.
+const RhAppModelPrefix = "rh-app-"
+
+// resolveUpstreamIDForModel maps a model name to the upstream app id used in the
+// submit URL.
+//
+//   - `rh-app-<id>` → that app row's UpstreamID (and, when the row is missing,
+//     an error so the caller reports a readable cause instead of posting to
+//     `/run/ai-app/rh-app-3`, which upstream answers with a generic 901).
+//   - anything else → returned unchanged: the historical convention (the bare
+//     upstream id is the model name) keeps working, as do hand-written channel
+//     entries.
+//
+// A DB failure is reported to the caller rather than silently falling back: a
+// fallback would submit a request upstream cannot resolve, and the resulting
+// error would point at the wrong place.
+func resolveUpstreamIDForModel(model string) (string, error) {
+	model = strings.TrimSpace(model)
+	rawID, ok := strings.CutPrefix(model, RhAppModelPrefix)
+	if !ok {
+		return model, nil
+	}
+	if rawID == "" {
+		return "", fmt.Errorf("模型名 %q 缺少应用 ID（应为 %s<应用行号>）", model, RhAppModelPrefix)
+	}
+	appID, convErr := strconv.ParseUint(rawID, 10, 32)
+	if convErr != nil {
+		return "", fmt.Errorf("模型名 %q 里的应用 ID 不是数字", model)
+	}
+	app, err := AppGetByID(uint(appID))
+	if err != nil {
+		return "", fmt.Errorf("模型 %q 指向的应用不存在或不合法: %w", model, err)
+	}
+	if strings.TrimSpace(app.UpstreamID) == "" {
+		return "", fmt.Errorf("应用 %s 没有配置上游应用 ID，无法提交", model)
+	}
+	return app.UpstreamID, nil
+}
+
 // BuildRequestURL composes the submit URL using info.Action to decide which
-// RH path to POST to. The app id is resolved from info.OriginModelName and
-// stored by the router's metadata hook. Skeleton does not yet decode the app
-// id from model; it passes model as <id> directly so unit tests can verify
-// the URL without touching a DB.
+// RH path to POST to. The app id travels in the model name (see
+// resolveUpstreamIDForModel): either the bare upstream id (historical
+// convention) or the gateway form `rh-app-<row id>`.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info == nil {
 		return "", fmt.Errorf("nil relay info")
@@ -181,12 +240,20 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 		if model == "" {
 			return "", fmt.Errorf("runninghub: origin model (app id) is empty")
 		}
-		return base + PathSubmitAICApp + model, nil
+		upstreamID, err := resolveUpstreamIDForModel(model)
+		if err != nil {
+			return "", err
+		}
+		return base + PathSubmitAICApp + upstreamID, nil
 	case "rh_workflow":
 		if model == "" {
 			return "", fmt.Errorf("runninghub: origin model (workflow id) is empty")
 		}
-		return base + PathSubmitWorkflow + model, nil
+		upstreamID, err := resolveUpstreamIDForModel(model)
+		if err != nil {
+			return "", err
+		}
+		return base + PathSubmitWorkflow + upstreamID, nil
 	case "rh_model":
 		// Model API path is stored as originModelName; callers prefix the
 		// /openapi/v2/ prefix when appropriate.

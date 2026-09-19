@@ -98,6 +98,13 @@ func TestHookMountUserRoutes(router *gin.Engine) {
 // can pin the adaptor's "the run handler already answered" behaviour.
 func TestHookMarkControllerResponds(c *gin.Context) { c.Set(contextKeyControllerResponds, true) }
 
+// TestHookResolveUpstreamIDForModel exposes the `rh-app-<id>` model-name resolver
+// (see RhAppModelPrefix) so the external test package can pin both the
+// pass-through convention and the error messages.
+func TestHookResolveUpstreamIDForModel(model string) (string, error) {
+	return resolveUpstreamIDForModel(model)
+}
+
 // TestHookValidateRunPayload runs the in-memory validation path used by
 // submitAppRun without hitting the relay pipeline. Exported for table-driven
 // unit tests covering the typed schema validator.
