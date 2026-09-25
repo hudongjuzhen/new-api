@@ -1,17 +1,20 @@
 /*
 Copyright (C) 2023-2026 QuantumNous
 
-RunningHub Apps admin page: list, create, edit, delete.
+RunningHub Apps admin page: list, create, edit, copy, delete.
 
 The app form uses a two-column layout — basic info on the left, the
 parameter-template editor on the right (with a one-click fetch that calls
-RunningHub's apiCallDemo through the selected channel).
+RunningHub's apiCallDemo through the selected channel). "Copy" opens the same
+form pre-filled with an existing record (new name, everything else identical)
+so a variant can be created without retyping the parameter template.
 */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Plus,
   Pencil,
+  Copy,
   Trash2,
   Wand2,
   Loader2,
@@ -38,6 +41,7 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -82,6 +86,7 @@ import {
   type AppCreateDTO,
   type SchemaParam,
 } from '../api'
+import { appCopyDraft, appToCreateDTO } from '../lib/app-copy'
 
 const TYPE_CHOICES = [
   'text',
@@ -145,6 +150,15 @@ const BILLING_MODE_LABEL: Record<BillingMode, string> = {
   dynamic: 'Dynamic Billing',
   'per-call': 'Per-Call Billing',
   'per-second': 'Per-Second Billing',
+}
+
+/** What the form dialog is doing: blank / editing a record / duplicating one. */
+type FormMode = 'create' | 'edit' | 'copy'
+
+const FORM_TITLE: Record<FormMode, string> = {
+  create: 'Create App',
+  edit: 'Edit App',
+  copy: 'Copy App',
 }
 
 function billingModeOf(d: {
@@ -713,6 +727,7 @@ function renderTableBody(
   data: { items?: AppView[] } | undefined,
   t: (key: string) => string,
   onEdit: (app: AppView) => void,
+  onCopy: (app: AppView) => void,
   onDelete: (id: number) => void
 ) {
   if (isLoading) {
@@ -749,10 +764,31 @@ function renderTableBody(
       <TableCell className='text-xs'>{siteLabel(app.site)}</TableCell>
       <TableCell>{billingBadge(app, t)}</TableCell>
       <TableCell className='text-right'>
-        <Button variant='ghost' size='icon-sm' onClick={() => onEdit(app)}>
+        <Button
+          variant='ghost'
+          size='icon-sm'
+          onClick={() => onEdit(app)}
+          title={t('Edit')}
+          aria-label={t('Edit')}
+        >
           <Pencil className='size-3.5' />
         </Button>
-        <Button variant='ghost' size='icon-sm' onClick={() => onDelete(app.id)}>
+        <Button
+          variant='ghost'
+          size='icon-sm'
+          onClick={() => onCopy(app)}
+          title={t('Copy App')}
+          aria-label={t('Copy App')}
+        >
+          <Copy className='size-3.5' />
+        </Button>
+        <Button
+          variant='ghost'
+          size='icon-sm'
+          onClick={() => onDelete(app.id)}
+          title={t('Delete')}
+          aria-label={t('Delete')}
+        >
           <Trash2 className='size-3.5' />
         </Button>
       </TableCell>
@@ -939,6 +975,7 @@ export function RhAppsPage() {
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<AppView | null>(null)
+  const [copySource, setCopySource] = useState<AppView | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [catManageOpen, setCatManageOpen] = useState(false)
 
@@ -946,6 +983,8 @@ export function RhAppsPage() {
     queryKey: ['rh-apps'],
     queryFn: () => listApps({ page: 1, pageSize: 100 }),
   })
+
+  const apps = data?.items ?? []
 
   const createMutation = useMutation({
     mutationFn: (dto: AppCreateDTO) => createApp(dto),
@@ -986,11 +1025,19 @@ export function RhAppsPage() {
 
   const openCreate = () => {
     setEditing(null)
+    setCopySource(null)
     setDialogOpen(true)
   }
 
   const openEdit = (app: AppView) => {
     setEditing(app)
+    setCopySource(null)
+    setDialogOpen(true)
+  }
+
+  const openCopy = (app: AppView) => {
+    setEditing(null)
+    setCopySource(app)
     setDialogOpen(true)
   }
 
@@ -1000,6 +1047,21 @@ export function RhAppsPage() {
     } else {
       createMutation.mutate(dto)
     }
+  }
+
+  // The form owns its state once mounted, so each target gets a fresh instance:
+  // a copy opens as a create form pre-filled from the source record.
+  let formMode: FormMode = 'create'
+  let formInitial = emptyDTO
+  if (editing) {
+    formMode = 'edit'
+    formInitial = appToCreateDTO(editing)
+  } else if (copySource) {
+    formMode = 'copy'
+    formInitial = appCopyDraft(
+      copySource,
+      apps.map((app) => app.name)
+    )
   }
 
   return (
@@ -1037,7 +1099,14 @@ export function RhAppsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {renderTableBody(isLoading, data, t, openEdit, setDeleteId)}
+              {renderTableBody(
+                isLoading,
+                data,
+                t,
+                openEdit,
+                openCopy,
+                setDeleteId
+              )}
             </TableBody>
           </Table>
         </SectionPageLayout.Content>
@@ -1051,34 +1120,19 @@ export function RhAppsPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className='max-h-[85vh] w-[80vw] max-w-[80vw] overflow-y-auto sm:max-w-[80vw]'>
           <DialogHeader>
-            <DialogTitle>
-              {editing ? t('Edit App') : t('Create App')}
-            </DialogTitle>
+            <DialogTitle>{t(FORM_TITLE[formMode])}</DialogTitle>
+            {formMode === 'copy' && copySource && (
+              <DialogDescription>
+                {t(
+                  'Copied from {{name}}. Adjust the fields and save to create a new app.',
+                  { name: copySource.name }
+                )}
+              </DialogDescription>
+            )}
           </DialogHeader>
           <AppForm
-            initial={
-              editing
-                ? {
-                    name: editing.name,
-                    slug: editing.slug,
-                    kind: editing.kind,
-                    upstreamId: editing.upstreamId,
-                    description: editing.description,
-                    coverUrl: editing.coverUrl,
-                    published: editing.published,
-                    adminOnly: editing.adminOnly,
-                    paramSchema: editing.paramSchema,
-                    perCallBilling: editing.perCallBilling,
-                    fixedQuotaPerCall: editing.fixedQuotaPerCall,
-                    perSecondBilling: editing.perSecondBilling,
-                    quotaPerSecond: editing.quotaPerSecond,
-                    secondsExpr: editing.secondsExpr ?? '',
-                    modelBaseRateRatio: editing.modelBaseRateRatio,
-                    site: editing.site ?? '',
-                    categoryId: editing.categoryId ?? null,
-                  }
-                : emptyDTO
-            }
+            key={`${formMode}-${editing?.id ?? copySource?.id ?? 'new'}`}
+            initial={formInitial}
             onSubmit={handleSubmit}
             onCancel={() => setDialogOpen(false)}
           />

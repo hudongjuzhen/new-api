@@ -450,10 +450,11 @@ web/src/extensions/zsy-runninghub/
 │   └── api-examples.tsx  # 应用中心「About this app」下方的 run/query/cancel 调用示例（Tab 切端点 × 语言）
 ├── lib/
 │   ├── api-samples.ts    # 示例文本的纯构造函数（可单测：路径 / 凭据头 / values 键名）
+│   ├── app-copy.ts       # 应用记录 → 提交 DTO 的纯构造函数（编辑照搬；复制仅改名，名称唯一）
 │   ├── result-media.ts   # results[] → 类型化结果项
 │   └── task-status.ts    # 任务状态 → i18n key / 取消可用性
 ├── pages/
-│   ├── apps-page.tsx     # 应用管理：列表 + curl 解析器 + schema 编辑表格 + 定价 + 分类
+│   ├── apps-page.tsx     # 应用管理：列表 + curl 解析器 + schema 编辑表格 + 定价 + 分类 + 一键复制记录
 │   └── rh-portal.tsx     # 应用中心：分类 / 应用列表 / 参数表单 / 应用介绍 / 生成记录 / API 示例
 └── __tests__/
     └── api-samples.test.ts
