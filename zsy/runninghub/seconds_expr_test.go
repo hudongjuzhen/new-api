@@ -161,3 +161,150 @@ func TestResolveAppSeconds_PrefersConfiguredExpression(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 12.0, got)
 }
+
+// ---------------------------------------------------------------------------
+// Per-character billing reads its multiplier from the same expression language
+// with one addition: len() counts a referenced value as text. These tests pin
+// the accepted forms, the rune (not byte) counting, the billing-safe clamp, and
+// the rejection paths that keep an unresolvable field from billing a guess.
+// ---------------------------------------------------------------------------
+
+// charsTestSchema is an app whose billed text is a prompt on one node plus a
+// second text node, so expressions can combine two counted fields.
+func charsTestSchema() []rhparser.SchemaParam {
+	return []rhparser.SchemaParam{
+		{NodeID: "122", FieldName: "prompt", Label: "提示词", Type: "textarea"},
+		{NodeID: "212", FieldName: "text", Label: "文案", Type: "text"},
+		{NodeID: "300", FieldName: "count", Label: "数量", Type: "number"},
+	}
+}
+
+func charsTestValues() map[string]any {
+	return map[string]any{
+		"122.prompt": "a cute cat", // 10 runes
+		"212.text":   "人像精修",       // 4 runes / 12 bytes: must not count bytes
+		"300.count":  "2500",
+	}
+}
+
+func TestCharsFromExpr_AcceptedForms(t *testing.T) {
+	schema := charsTestSchema()
+
+	cases := []struct {
+		name string
+		expr string
+		want float64
+	}{
+		{"bare node id counts the submitted text", "212", 4},
+		{"explicit node id", "nodeId=212", 4},
+		{"field-qualified reference", "nodeId=122.prompt", 10},
+		{"len of a node id", "len(212)", 4},
+		{"len of an explicit reference", "len(nodeId=122.prompt)", 10},
+		{"two counted fields add up", "len(122) + len(212)", 14},
+		{"arithmetic over a counted field", "len(212)*2 + 10", 18},
+		{"a numeric node keeps its value", "300", 2500},
+		{"a numeric node stays usable in arithmetic", "300+1", 2501},
+		{"len of a numeric node counts its digits", "len(300)", 4},
+		{"literal when no such node exists", "999-2", 997},
+		{"literals only", "7", 7},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := charsFromExpr(tc.expr, schema, charsTestValues())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestCharsFromExpr_ClampsAndKeepsEmptyFree(t *testing.T) {
+	schema := charsTestSchema()
+
+	cases := []struct {
+		name   string
+		expr   string
+		values map[string]any
+		want   float64
+	}{
+		{
+			name:   "empty text costs nothing",
+			expr:   "len(122)",
+			values: map[string]any{"122.prompt": ""},
+			want:   0,
+		},
+		{
+			name:   "contrived difference floors at zero, never credits",
+			expr:   "len(122)-len(212)",
+			values: map[string]any{"122.prompt": "ab", "212.text": "abcdef"},
+			want:   0,
+		},
+		{
+			name:   "oversized count saturates at the ceiling",
+			expr:   "len(122)*1000000",
+			values: map[string]any{"122.prompt": "a cute cat"},
+			want:   maxExprRunes,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := charsFromExpr(tc.expr, schema, tc.values)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestCharsFromExpr_Rejects(t *testing.T) {
+	schema := charsTestSchema()
+
+	cases := []struct {
+		name     string
+		expr     string
+		values   map[string]any
+		wantPart string
+	}{
+		{"unknown node reference", "nodeId=999", charsTestValues(), "不可用"},
+		{"submitted text omitted from this run", "nodeId=123", map[string]any{"122.prompt": "hi"}, "不可用"},
+		{"division by zero", "len(122)/0", charsTestValues(), "除以 0"},
+		{"dangling operator", "len(122)+", charsTestValues(), "缺少数字或字段引用"},
+		{"len without parentheses", "len 212", charsTestValues(), "无法识别"},
+		{"unterminated len", "len(122", charsTestValues(), "右括号"},
+		{"unbalanced parenthesis", "(len(122)", charsTestValues(), "右括号"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := charsFromExpr(tc.expr, schema, tc.values)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantPart)
+		})
+	}
+}
+
+func TestValidateCharCountExpr_SyntaxOnly(t *testing.T) {
+	require.NoError(t, validateCharCountExpr("len(122)"))
+	require.NoError(t, validateCharCountExpr("nodeId=212"))
+	require.NoError(t, validateCharCountExpr("len(122) + len(212)*2"))
+	// References are resolved at submit time, so an unknown node id is not a
+	// syntax error for the admin save path.
+	require.NoError(t, validateCharCountExpr("nodeId=999"))
+
+	require.Error(t, validateCharCountExpr(""))
+	require.Error(t, validateCharCountExpr("len("))
+	require.Error(t, validateCharCountExpr("abc"))
+}
+
+func TestResolveAppChars(t *testing.T) {
+	schema := charsTestSchema()
+	values := charsTestValues()
+
+	app := &AppView{PerCharBilling: true, CharCountExpr: "len(122)"}
+	got, err := resolveAppChars(app, schema, values)
+	require.NoError(t, err)
+	assert.Equal(t, 10.0, got)
+
+	// An app saved without a field expression cannot be priced at all; guessing
+	// a field would bill text the user never sent.
+	_, err = resolveAppChars(&AppView{PerCharBilling: true}, schema, values)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "未配置字符数字段")
+}

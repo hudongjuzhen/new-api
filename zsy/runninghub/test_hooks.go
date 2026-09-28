@@ -113,6 +113,13 @@ func TestHookValidateRunPayload(schema []rhparser.SchemaParam, values map[string
 	return err
 }
 
+// TestHookBuildNodeInfoList exposes the validated nodeInfoList submitAppRun
+// sends upstream, so tests can pin the exact fieldValue strings a typed schema
+// produces.
+func TestHookBuildNodeInfoList(schema []rhparser.SchemaParam, values map[string]any) ([]SubmitNodeInfo, error) {
+	return validateAndBuildNodeInfoList(schema, values)
+}
+
 // --- Concurrency gate hooks ------------------------------------------------
 
 // TestHookReserveSlotOnce grants at most one concurrency slot on the enabled

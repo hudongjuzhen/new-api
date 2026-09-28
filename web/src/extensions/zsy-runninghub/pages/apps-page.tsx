@@ -96,6 +96,7 @@ const TYPE_CHOICES = [
   'audio',
   'video',
   'select',
+  'switch',
 ]
 
 /** Types the submit validator treats as numbers, i.e. the ones that honour
@@ -132,24 +133,29 @@ const emptyDTO: AppCreateDTO = {
   perSecondBilling: false,
   quotaPerSecond: 0,
   secondsExpr: '',
+  perCharBilling: false,
+  quotaPerChar: 0,
+  charCountExpr: '',
   modelBaseRateRatio: 1.0,
   site: '',
   categoryId: null,
 }
 
-/** Billing mode selector value → the two mutually-exclusive flags. */
-type BillingMode = 'dynamic' | 'per-call' | 'per-second'
+/** Billing mode selector value → the mutually-exclusive flags. */
+type BillingMode = 'dynamic' | 'per-call' | 'per-second' | 'per-char'
 
 const BILLING_MODE_CHOICES: BillingMode[] = [
   'dynamic',
   'per-call',
   'per-second',
+  'per-char',
 ]
 
 const BILLING_MODE_LABEL: Record<BillingMode, string> = {
   dynamic: 'Dynamic Billing',
   'per-call': 'Per-Call Billing',
   'per-second': 'Per-Second Billing',
+  'per-char': 'Per-Character Billing',
 }
 
 /** What the form dialog is doing: blank / editing a record / duplicating one. */
@@ -164,9 +170,11 @@ const FORM_TITLE: Record<FormMode, string> = {
 function billingModeOf(d: {
   perCallBilling: boolean
   perSecondBilling: boolean
+  perCharBilling: boolean
 }): BillingMode {
   if (d.perCallBilling) return 'per-call'
   if (d.perSecondBilling) return 'per-second'
+  if (d.perCharBilling) return 'per-char'
   return 'dynamic'
 }
 
@@ -406,6 +414,7 @@ function AppForm({
                 const mode = v as BillingMode
                 set('perCallBilling', mode === 'per-call')
                 set('perSecondBilling', mode === 'per-second')
+                set('perCharBilling', mode === 'per-char')
               }}
             >
               <SelectTrigger id='rh-app-billing-mode'>
@@ -500,6 +509,45 @@ function AppForm({
               <p className='text-muted-foreground text-xs'>
                 {t(
                   'Leave empty to use a seconds/duration parameter; the result is clamped to 1-3600 seconds.'
+                )}
+              </p>
+            </div>
+          )}
+          {billingModeOf(dto) === 'per-char' && (
+            <div className='space-y-1.5'>
+              <Label htmlFor='rh-app-per-char'>
+                {t('Quota Per Character ({{currency}})', {
+                  currency: isTokensMode ? t('Tokens') : getCurrencyLabel(),
+                })}
+              </Label>
+              <Input
+                id='rh-app-per-char'
+                type='number'
+                min='0'
+                step={getEditableQuotaStep()}
+                value={quotaToDisplay(dto.quotaPerChar)}
+                onChange={(e) =>
+                  set(
+                    'quotaPerChar',
+                    displayToQuota(Number(e.target.value) || 0)
+                  )
+                }
+              />
+              <Label htmlFor='rh-app-char-count-expr'>{t('Character Field')}</Label>
+              <Input
+                id='rh-app-char-count-expr'
+                value={dto.charCountExpr}
+                placeholder='nodeId=212 / len(212)'
+                onChange={(e) => set('charCountExpr', e.target.value)}
+              />
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'Character field expression over node ids, e.g. "212", "nodeId=212" or "len(122) + len(123)".'
+                )}
+              </p>
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'The billed run is the character count of the named text field; an unresolvable field rejects the run instead of guessing.'
                 )}
               </p>
             </div>
@@ -718,6 +766,9 @@ function billingBadge(app: AppView, t: (key: string) => string) {
   }
   if (app.perSecondBilling) {
     return <Badge variant='outline'>{t('Per-Second Billing')}</Badge>
+  }
+  if (app.perCharBilling) {
+    return <Badge variant='outline'>{t('Per-Character Billing')}</Badge>
   }
   return <Badge variant='outline'>{t('Dynamic')}</Badge>
 }

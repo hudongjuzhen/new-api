@@ -146,8 +146,8 @@ func TestConvertToOpenAIVideo(t *testing.T) {
 				Progress: "50%",
 				Data:     []byte(`{"taskId":"rh-up-run","status":"RUNNING"}`),
 			},
-			wantStatus:   dto.VideoStatusInProgress,
-			wantProgress: 50,
+			wantStatus:           dto.VideoStatusInProgress,
+			wantProgress:         50,
 			wantNoErrorOnSuccess: true,
 		},
 		{

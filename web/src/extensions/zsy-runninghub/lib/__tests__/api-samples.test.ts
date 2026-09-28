@@ -42,6 +42,12 @@ const schema: SchemaParam[] = [
       { label: '方法二', value: '2' },
     ],
   },
+  {
+    nodeId: '256',
+    fieldName: 'value',
+    label: '启用高清',
+    type: 'switch',
+  },
 ]
 
 describe('endpointUrl', () => {
@@ -70,6 +76,7 @@ describe('buildRunBody', () => {
             '122.prompt': 'your text',
             '275.reference_image': 'openapi/example.png',
             '293.posture_method': '1',
+            '256.value': 'true',
           },
           instanceType: 'default',
         },

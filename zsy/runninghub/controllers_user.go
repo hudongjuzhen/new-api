@@ -196,12 +196,28 @@ func submitAppRun(c *gin.Context) {
 		}
 		metadata["rh"].(map[string]any)["seconds"] = seconds
 	}
+	// Per-character billing needs the billed text length before the task is
+	// submitted. Unlike seconds there is no fallback scan: the admin states
+	// exactly which node carries the billed text, so a misconfigured app is a
+	// 400 instead of a silently mispriced run.
+	if app.PerCharBilling {
+		chars, charsErr := resolveAppChars(app, schema, payload.Values)
+		if charsErr != nil {
+			common.ApiErrorMsg(c, charsErr.Error())
+			return
+		}
+		metadata["rh"].(map[string]any)["chars"] = chars
+	}
 	// The host's task validation (ValidateBasicTaskRequest) requires a
 	// non-empty prompt even for schema-driven apps. Derive it from the first
 	// non-empty string field value; the upstream payload itself is carried by
 	// metadata.rh.nodes, so this prompt is bookkeeping only.
 	prompt := ""
 	for _, p := range schema {
+		// A toggle submits "true"/"false", which never describes the run.
+		if strings.EqualFold(strings.TrimSpace(p.Type), "switch") {
+			continue
+		}
 		v, ok := payload.Values[schemaFieldKey(p.NodeID, p.FieldName)]
 		if !ok {
 			continue
@@ -275,9 +291,11 @@ func submitAppRun(c *gin.Context) {
 	//     quota.
 	//   - per-second → EstimateBilling contributes the "seconds" OtherRatio
 	//     (QuotaPerSecond × seconds, bounded by MaxTaskDurationSeconds).
+	//   - per-char → EstimateBilling contributes the "chars" OtherRatio
+	//     (QuotaPerChar × characters, bounded by maxExprRunes).
 	//   - dynamic billing → EstimateBilling contributes the "app_rate_ratio"
 	//     OtherRatio (ModelBaseRateRatio) scaling the model's base price.
-	// All three are fixed-price: their tasks are recorded with PerCallBilling so
+	// All four are fixed-price: their tasks are recorded with PerCallBilling so
 	// the completion poll keeps the pre-charge instead of replacing it with RH's
 	// coin usage (see taskChargeIsFinal).
 	c.Set("rh_app", app)
@@ -671,6 +689,20 @@ func resolveAppSeconds(app *AppView, schema []rhparser.SchemaParam, values map[s
 	return resolveSecondsParam(schema, values), nil
 }
 
+// resolveAppChars returns the character count billed by per-character apps.
+// The count comes from the app's configured character expression
+// (App.CharCountExpr), which the admin save path already required to be
+// non-empty and syntactically valid. An expression that cannot be resolved
+// against this submission is an error, never a silent fallback: guessing which
+// text to bill would charge the user for a field they did not send.
+func resolveAppChars(app *AppView, schema []rhparser.SchemaParam, values map[string]any) (float64, error) {
+	expr := strings.TrimSpace(app.CharCountExpr)
+	if expr == "" {
+		return 0, fmt.Errorf("按字符计费的应用未配置字符数字段，请联系管理员")
+	}
+	return charsFromExpr(expr, schema, values)
+}
+
 // resolveSecondsParam returns the seconds/duration parameter value for
 // per-second billing, bounded to [1, MaxTaskDurationSeconds] so the value can
 // never grow into a quota multiplier that overflows (the same bound
@@ -752,7 +784,7 @@ func coerceValueByType(p *rhparser.SchemaParam, raw any) (string, error) {
 			}
 		}
 		return s, nil
-	case "boolean", "bool", "checkbox", "toggle":
+	case "boolean", "bool", "checkbox", "toggle", "switch":
 		b, ok := asBool(raw)
 		if !ok {
 			return "", fmt.Errorf("%s 必须为布尔值", label)

@@ -83,6 +83,9 @@ func TestRunPayloadValidator_Table(t *testing.T) {
 		Options:   []rhparser.SchemaParamOption{{Label: "写实", Value: "real"}, {Label: "动漫", Value: "anime"}},
 	}
 	imageSchema := rhparser.SchemaParam{NodeID: "121", FieldName: "image", Label: "底图", Type: "image", Required: false}
+	// A switch is what the curl import infers for a boolean node sample such as
+	// {"nodeId":"256","fieldName":"value","fieldValue":"false"}.
+	switchSchema := rhparser.SchemaParam{NodeID: "256", FieldName: "value", Label: "启用高清", Type: "switch"}
 
 	type tc struct {
 		name    string
@@ -137,8 +140,27 @@ func TestRunPayloadValidator_Table(t *testing.T) {
 				"124.style":    "anime",
 			},
 		},
+		{
+			name: "switch accepts both toggle states as strings",
+			values: map[string]any{
+				"122.prompt":   "hi",
+				"123.duration": "5",
+				"124.style":    "real",
+				"256.value":    "false",
+			},
+		},
+		{
+			name: "switch rejects a non-boolean value",
+			values: map[string]any{
+				"122.prompt":   "hi",
+				"123.duration": "5",
+				"124.style":    "real",
+				"256.value":    "maybe",
+			},
+			wantErr: "启用高清 必须为布尔值",
+		},
 	}
-	schema := []rhparser.SchemaParam{promptSchema, durationSchema, selectSchema, imageSchema}
+	schema := []rhparser.SchemaParam{promptSchema, durationSchema, selectSchema, imageSchema, switchSchema}
 	for _, tt := range cases {
 		tc := tt
 		t.Run(tc.name, func(t *testing.T) {
@@ -152,6 +174,30 @@ func TestRunPayloadValidator_Table(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+// A switch reaches the upstream as the string "true"/"false" — never as the
+// "0"/"1" spelling a workflow node may carry — because that is the fieldValue
+// RH accepts for a boolean node.
+func TestBuildNodeInfoList_SwitchValueIsCanonicalString(t *testing.T) {
+	t.Parallel()
+	schema := []rhparser.SchemaParam{
+		{NodeID: "256", FieldName: "value", Label: "启用高清", Type: "switch", Required: true},
+		{NodeID: "122", FieldName: "prompt", Label: "提示词", Type: "text", Required: true},
+	}
+	nodes, err := runninghub.TestHookBuildNodeInfoList(schema, map[string]any{
+		"256.value":  "1",
+		"122.prompt": "hi",
+	})
+	require.NoError(t, err)
+	require.Len(t, nodes, 2)
+
+	values := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		values[n.NodeID+"."+n.FieldName] = n.FieldValue
+	}
+	assert.Equal(t, "true", values["256.value"])
+	assert.Equal(t, "hi", values["122.prompt"])
 }
 
 // ---------------------------------------------------------------------------

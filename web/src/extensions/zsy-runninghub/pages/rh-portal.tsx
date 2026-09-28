@@ -103,6 +103,23 @@ const MEDIA_ACCEPT: Record<string, string> = {
 }
 
 /**
+ * Types rendered as an on/off switch. `switch` is what the curl import infers
+ * for a boolean sample; the other spellings are kept so a hand-written schema
+ * still renders the same control.
+ */
+const SWITCH_TYPES = new Set([
+  'switch',
+  'boolean',
+  'bool',
+  'checkbox',
+  'toggle',
+])
+
+function isSwitchType(type: string | undefined): boolean {
+  return SWITCH_TYPES.has((type ?? '').toLowerCase())
+}
+
+/**
  * Upload-capable renderer for image/audio/video parameters.
  *
  * Apps no longer bind a channel: both the submit and the upload paths route to
@@ -280,8 +297,12 @@ function MediaParamField({
   )
 }
 
-/** Render a single schema parameter as the matching control. */
-function ParamField({
+/**
+ * Render a single schema parameter as the matching control.
+ *
+ * Exported for the control-mapping regression tests.
+ */
+export function ParamField({
   param,
   value,
   onChange,
@@ -378,6 +399,7 @@ function ParamField({
       case 'boolean':
       case 'bool':
       case 'checkbox':
+      case 'switch':
         return (
           <div className='flex items-center gap-2'>
             <Switch
@@ -385,7 +407,7 @@ function ParamField({
               onCheckedChange={(v) => onChange(String(v))}
             />
             <span className='text-muted-foreground text-xs'>
-              {t('Enabled')}
+              {value === 'true' ? t('Enabled') : t('Disabled')}
             </span>
           </div>
         )
@@ -923,7 +945,9 @@ function AppRunForm({
       const k = fieldKey(p)
       if (p.defaultValue !== undefined && p.defaultValue !== null) {
         init[k] = p.defaultValue
-      } else if (p.type === 'boolean') {
+      } else if (isSwitchType(p.type)) {
+        // A toggle is never "empty": without this the required check below
+        // would reject every untouched switch before it could submit "false".
         init[k] = 'false'
       }
     }

@@ -231,7 +231,7 @@ type RhApp struct {
 }
 ```
 
-- `type ∈ {string, text, number, boolean, select, image, video}`；`field` 保留 RH 原始 `fieldName` 原样透传。
+- `type ∈ {string, text, number, switch, select, image, video}`（`boolean` 为 `switch` 的兼容别名）；`field` 保留 RH 原始 `fieldName` 原样透传。
 - `fieldValue` 一律以字符串保存/提交（RH 示例中 `"usePersonalQueue": "false"` 为字符串、数值带浮点尾巴 `1.0000000000000002`），解析与提交均**不做数值清洗**，仅做校验。
 
 ### 3.3 curl 示例解析器（`parser/curl.go`）
@@ -240,7 +240,8 @@ type RhApp struct {
 
 1. 提取 URL：`/openapi/v2/run/ai-app/{id}` → `kind=ai-app`；`/run/workflow/{id}` → `kind=workflow`（兼容 `.cn` / `.ai` 域名）。
 2. 提取 `--data-raw`（含单双引号包裹的转义变体）JSON 体。
-3. `nodeInfoList[]` → 参数项：`description` → `label`（空则用 `fieldName+nodeId`）、`fieldName` → `field` 与类型推断（`select→select`、`image→image`、`video→video`、`value` 按样本值推断 `boolean`/`number`/`string`）、样本值 → `default`。
+3. `nodeInfoList[]` → 参数项：`description` → `label`（空则用 `fieldName+nodeId`）、`fieldName` → `field` 与类型推断（`select→select`、`image→image`、`video→video`、`value` 按样本值推断 `switch`/`number`/`string`）、样本值 → `default`。
+   - `fieldData` 是上游自己的控件声明，优先于样本值推断。典型形态 `["COMBO", {"default": "...", "options": [...], "tooltip": "...", "multiselect": false}]` → `select`（`default` → `defaultValue`，`tooltip` → `placeholder`，`multiselect` 暂未建模）；`["BOOLEAN", {...}]` 等布尔标记 → `switch`；无 `default` 时保留样本值作为默认值。仅凭样本值推断 `switch` 时只认字面 `true`/`false`，`0`/`1` 仍按数字处理（计数器同样使用它们）。
 4. `instanceType` / `usePersonalQueue` 原样保留。
 5. 输出 schema 预览（管理端可编辑后再保存，保存时经 `schema/validate.go` 校验 schema 自身合法性：nodeId 唯一、name 唯一且为合法标识符、select 必须有 options、number 的 min/max 合法）。
 
@@ -306,7 +307,18 @@ type RhApp struct {
 
 求值结果钳制到 `[1, relaycommon.MaxTaskDurationSeconds]`（3600）；引用不存在/未提交、除零、语法错误一律在提交时返回 400，绝不静默按 1 秒计费。管理端"按秒计费"分支提供该输入框。
 
-**按秒计费是固定价，不参与"币结算"**：`perSecondBilling` 的任务与按次、动态倍率三种模式一样，以 `BillingContext.PerCallBilling=true` 落库（`controllers_user.go` 的 `taskChargeIsFinal`，直提与排队两条路径共用），轮询阶段跳过差额结算，最终扣费恒为 `QuotaPerSecond × 秒数 × 分组倍率`（失败/超时仍全额退款）。原因：RH 的 `usage.consumeCoins` 与 new-api 的 quota 量纲不同，`ParseTaskResult` 里"1 币 = 1 quota"的换算等价于 **500000 币 = $1**，比真实币价低数个数量级。线上 `task_U4n7F7SxBdO4TdrfbWADfYd7XEiF9CRq`（8 秒 × $0.03/秒）预扣 120000 quota 后被 adaptor 调整覆盖为 49 quota（$0.000098）即由此缺陷导致。**该通道已整体关闭**：adaptor 不再重写 `AdjustBillingOnComplete`（继承 `taskcommon.BaseBilling` 的"返回 0 = 保持预扣"），`ParseTaskResult` 也不再读取 `usage.consumeCoins` 参与计费（原始 usage 仍留在 `task.Data` 里可查）。恢复"按上游实际消耗结算"前必须先确定真实"币 → quota"汇率。
+**按字符计费的字符字段（`App.CharCountExpr`）**：`perCharBilling` 的预扣需要"这次提交了多少字符"。与按秒共用同一套表达式语言（`zsy/runninghub/seconds_expr.go`），并额外支持 `len()` 把引用当文本计数：
+
+| 写法 | 含义 |
+|---|---|
+| `212` / `nodeId=212` / `@212` | 取 nodeId=212 提交文本的字符数 |
+| `len(212)` / `len(nodeId=122.prompt)` | 同上，显式形式（同一节点多字段时用 `nodeId.fieldName`） |
+| `len(122) + len(212)` | 多个文本字段合并计数 |
+| `len(212)*2 + 10` | 计数结果参与 `+ - * /` 与括号运算 |
+
+同一表达式在按秒模式下裸数字取节点的数值，在按字符模式下只有**文本**类型的提交值才计字符数（数字节点仍取数值，`len()` 显式计数时按字符数）；引用不存在/未提交、除零、语法错误一律在提交时返回 400。结果按 **Unicode 字符（rune）** 计数，钳制到 `[0, maxExprRunes]`（1000000）；空文本计 0 字符、不收费，负值（如 `len(a)-len(b)` 为负）归零而不会变成负数扣费。与按秒不同，按字符**没有回退扫描**：管理员必须显式指定字符字段（`validateApp` 在 `perCharBilling=true` 且 `charCountExpr` 为空时拒绝保存），避免按猜测的字段给用户计费。管理端"按字符计费"分支提供该输入框。
+
+**三种固定价模式共用同一条结算链**：`perSecondBilling`、`perCharBilling` 与按次、动态倍率一样，以 `BillingContext.PerCallBilling=true` 落库（`controllers_user.go` 的 `taskChargeIsFinal`，直提与排队两条路径共用），轮询阶段跳过差额结算，最终扣费恒为 `QuotaPerSecond × 秒数 × 分组倍率`（失败/超时仍全额退款）。原因：RH 的 `usage.consumeCoins` 与 new-api 的 quota 量纲不同，`ParseTaskResult` 里"1 币 = 1 quota"的换算等价于 **500000 币 = $1**，比真实币价低数个数量级。线上 `task_U4n7F7SxBdO4TdrfbWADfYd7XEiF9CRq`（8 秒 × $0.03/秒）预扣 120000 quota 后被 adaptor 调整覆盖为 49 quota（$0.000098）即由此缺陷导致。**该通道已整体关闭**：adaptor 不再重写 `AdjustBillingOnComplete`（继承 `taskcommon.BaseBilling` 的"返回 0 = 保持预扣"），`ParseTaskResult` 也不再读取 `usage.consumeCoins` 参与计费（原始 usage 仍留在 `task.Data` 里可查）。恢复"按上游实际消耗结算"前必须先确定真实"币 → quota"汇率。
 
 **导入不再自动推断数值边界**：`rhparser` 原 `inferRangeHint` 会按样例值猜测 min/max（样例值 `0`/`1` → `[0,1]`，`0.25~4` → `[0.25,4]`），导致"开始秒数"这类计数字段被钉死上限，提交时被 `coerceValueByType` 以"不能大于 1"拒绝。该推断已删除：number 类型默认不写边界，边界只能由管理员在参数模板里显式填写（`Min`/`Max` 输入框，留空表示不限制）。
 
@@ -325,7 +337,7 @@ type RhApp struct {
 |---|---|
 | `Init` | no-op |
 | `ValidateRequestAndSetAction` | 从 context 取 RhApp，设置 `info.Action = app.Kind`；兜底校验请求体存在 |
-| `EstimateBilling` | 返回 nil（纯按次，无 OtherRatios） |
+| `EstimateBilling` | 按应用计费模式返回 OtherRatios：按次 → nil（平价走模型价格表）；按秒 → `{"seconds": N}`（N 由提交端按 `SecondsExpr` 求出并写入 `metadata.rh.seconds`，缺省 1）；按字符 → `{"chars": N}`（N 由提交端按 `CharCountExpr` 求出并写入 `metadata.rh.chars`）；动态倍率 → `{"app_rate_ratio": ModelBaseRateRatio}`（=1.0 时省略）。两条计数都在读取处重新钳制上界，裸任务 API（绕过插件控制器）传入的越界值无法成为无界倍率 |
 | `AdjustBillingOnSubmit` | 返回 nil |
 | `AdjustBillingOnComplete` | 不重写：继承 `taskcommon.BaseBilling` 的"返回 0 = 保持预扣"（插件三种模式均在提交时定价） |
 | `BuildRequestURL` | `{base_url}/openapi/v2/run/ai-app/{appID}` 或 `/openapi/v2/run/workflow/{appID}`（按 kind；路径已由用户示例佐证） |
@@ -511,7 +523,7 @@ export const EXT_CHANNEL_TYPES: ExtChannelTypeContribution
 | string | Input | 原样字符串 |
 | text | Textarea | 原样 |
 | number | InputNumber | 输出十进制字符串，尊重 min/max/step |
-| boolean | Switch | 输出 `"true"/"false"` |
+| switch | Switch | 输出 `"true"/"false"`（`boolean`/`bool`/`checkbox`/`toggle` 为兼容别名；未填默认值时表单初始为 `"false"`，保证必填校验不会拦住一个从未被触碰的开关） |
 | select | Select | options 单选 |
 | image | 上传组件 + URL 输入二合一 | 先调 `/zsy/rh/v1/upload`，回填 `file_name`；或直接填公网 URL/base64 |
 | video | 同上（视频） | 同上 |

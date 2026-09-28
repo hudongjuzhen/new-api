@@ -27,6 +27,7 @@ const (
 	FieldTypeAudio    ParameterFieldType = "audio"
 	FieldTypeVideo    ParameterFieldType = "video"
 	FieldTypeSelect   ParameterFieldType = "select"
+	FieldTypeSwitch   ParameterFieldType = "switch"
 )
 
 // FieldParam records one user-facing editable parameter on an app or
@@ -117,6 +118,26 @@ type App struct {
 	// "(229-212)*2 + 1.5". Empty falls back to the legacy scan for a
 	// duration/seconds-typed parameter. See seconds_expr.go.
 	SecondsExpr string `gorm:"type:varchar(191)"                          json:"secondsExpr"`
+
+	// PerCharBilling charges the task by the length of the text the customer
+	// submits (prompt / copy), read through App.CharCountExpr:
+	// pre-charge = QuotaPerChar × characters. Like per-second it is a fixed
+	// price recorded with the PerCallBilling flag, so the completion poll
+	// keeps the pre-charge instead of settling against RH's
+	// usage.consumeCoins. Mutually exclusive with PerCallBilling and
+	// PerSecondBilling — enforced by validateApp.
+	PerCharBilling bool `gorm:"index"                                 json:"perCharBilling"`
+
+	// QuotaPerChar is the quota charged per one character when
+	// PerCharBilling=true. Stored as an integer quota unit.
+	QuotaPerChar int64 `gorm:"default:0;not null"                        json:"quotaPerChar"`
+
+	// CharCountExpr names the text whose length is billed for per-character
+	// apps, written as the same kind of expression as SecondsExpr plus len():
+	// "212", "nodeId=212", "len(212)", "len(122) + len(123)". Required when
+	// PerCharBilling=true so a run is never billed for a guessed field.
+	// See seconds_expr.go.
+	CharCountExpr string `gorm:"type:varchar(191)"                          json:"charCountExpr"`
 
 	// ModelBaseRateRatio is the multiplier applied against the *channel's*
 	// base model price when PerCallBilling is off. 1.0 means "1× standard

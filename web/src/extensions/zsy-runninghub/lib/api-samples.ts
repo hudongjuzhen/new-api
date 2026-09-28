@@ -59,6 +59,7 @@ export function exampleValue(param: SchemaParam): string {
     case 'number':
       return '1'
     case 'boolean':
+    case 'switch':
       return 'true'
     case 'select':
       return param.options?.[0]?.value ?? '1'

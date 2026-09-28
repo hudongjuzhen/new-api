@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -339,6 +340,25 @@ func (e *rhITestEnv) createAppWithSchema(name, upstreamID string, schema []rhpar
 	return view.ID
 }
 
+// createPerCharApp inserts a per-character billed app whose billed text is the
+// textarea on node 122.
+func (e *rhITestEnv) createPerCharApp(name, upstreamID string, quotaPerChar int64) uint {
+	e.t.Helper()
+	view, err := runninghub.AppInsert(&runninghub.AppCreateDTO{
+		Name:               name,
+		Kind:               runninghub.AppKindAICApp,
+		UpstreamID:         upstreamID,
+		Published:          true,
+		ParamSchema:        []rhparser.SchemaParam{{NodeID: "122", FieldName: "prompt", Label: "提示词", Type: "textarea", Required: true}},
+		PerCharBilling:     true,
+		QuotaPerChar:       quotaPerChar,
+		CharCountExpr:      "len(122)",
+		ModelBaseRateRatio: 1.0,
+	})
+	require.NoError(e.t, err)
+	return view.ID
+}
+
 // submitApp runs the user-side submit endpoint and returns the envelope data
 // (taskId / status / upstreamTaskId).
 func (e *rhITestEnv) submitApp(appID uint) (int, *apiEnvelope, map[string]any) {
@@ -652,9 +672,99 @@ func TestIntegration_PerSecondBilling_KeepsPrecharge(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Failure: full refund, CAS-idempotent under repeated polling
+// 2c. Per-character billing: pre-charge = QuotaPerChar × characters of the
+// configured text field, and the completion poll keeps it.
 // ---------------------------------------------------------------------------
 
+func TestIntegration_PerCharBilling_KeepsPrecharge(t *testing.T) {
+	const upstreamID = "9006-perchar-app"
+	const quotaPerChar = int64(100)
+	const prompt = "人像精修ab" // 6 runes / 14 bytes: the count must be runes
+	const preConsumed = quotaPerChar * 6
+	env := newRHITestEnv(t, upstreamID)
+
+	appID := env.createPerCharApp("itest-perchar", upstreamID, quotaPerChar)
+	require.Equal(t, 6, utf8.RuneCountInString(prompt))
+	require.NotEqual(t, len(prompt), 6, "a byte-counting implementation would overcharge this fixture")
+
+	// Like per-second, the per-character base price is one character's worth of
+	// quota, kept in sync with the persisted model price table.
+	prices := ratio_setting.GetModelPriceCopy()
+	require.Contains(t, prices, upstreamID)
+	require.Equal(t, float64(quotaPerChar)/common.QuotaPerUnit, prices[upstreamID])
+	var opt model.Option
+	require.NoError(t, model.DB.First(&opt, "key = ?", "ModelPrice").Error)
+	stored := map[string]float64{}
+	require.NoError(t, json.Unmarshal([]byte(opt.Value), &stored))
+	require.Contains(t, stored, upstreamID)
+
+	upstreamTaskID := "rh-task-per-char-1"
+	env.rh.submitResp = func(string) (int, any) {
+		return http.StatusOK, runninghub.SubmitResp{TaskID: upstreamTaskID, Status: runninghub.StatusRunning}
+	}
+	pollResponses := []runninghub.QueryResp{
+		{TaskID: upstreamTaskID, Status: runninghub.StatusRunning},
+		{
+			TaskID:  upstreamTaskID,
+			Status:  runninghub.StatusSuccess,
+			Usage:   &runninghub.TaskUsage{ConsumeCoins: "123000"},
+			Results: []runninghub.TaskResult{{URL: "https://img.rh-itest.local/char.png"}},
+		},
+	}
+	env.rh.queryResp = func(string) (int, any) {
+		require.NotEmpty(t, pollResponses, "unexpected extra poll")
+		next := pollResponses[0]
+		pollResponses = pollResponses[1:]
+		return http.StatusOK, next
+	}
+
+	w, raw := doJSON(t, env.router, http.MethodPost, fmt.Sprintf("/api/zsy/rh/apps/%d/run", appID),
+		map[string]any{"values": map[string]any{"122.prompt": prompt}})
+	envResp := parseAPIEnvelope(t, raw)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.True(t, envResp.Success, "submit failed: %s", envResp.Message)
+	data, _ := envResp.Data.(map[string]any)
+	publicTaskID, _ := data["taskId"].(string)
+	require.NotEmpty(t, publicTaskID)
+
+	// Pre-charge = QuotaPerChar × characters × groupRatio(1), counted in runes.
+	assert.Equal(t, itestInitQuota-int(preConsumed), env.userQuota())
+	assert.Equal(t, itestInitQuota-int(preConsumed), env.tokenRemain())
+	task := env.taskByTaskID(publicTaskID)
+	require.NotNil(t, task.PrivateData.BillingContext)
+	assert.True(t, task.PrivateData.BillingContext.PerCallBilling,
+		"per-character billing is fixed-price: the task must skip diff settlement")
+	assert.Equal(t, int(preConsumed), task.Quota)
+	assert.Equal(t, float64(6), task.PrivateData.BillingContext.OtherRatios["chars"],
+		"the billed character count must be recorded on the task")
+
+	env.pollOnce() // RUNNING
+	env.pollOnce() // SUCCESS — the reported consumeCoins (123000) must be ignored
+
+	assert.Equal(t, itestInitQuota-int(preConsumed), env.userQuota(),
+		"per-character billing must keep the pre-charge, not settle against RH coins")
+	assert.Equal(t, itestInitQuota-int(preConsumed), env.tokenRemain())
+	task = env.taskByTaskID(publicTaskID)
+	assert.Equal(t, model.TaskStatusSuccess, string(task.Status))
+	assert.Equal(t, int(preConsumed), task.Quota)
+
+	// No settlement/refund log rows: the per-character charge was final at
+	// submit time.
+	var logCount int64
+	require.NoError(t, model.DB.Model(&model.Log{}).Where("user_id = ?", itestUserID).Count(&logCount).Error)
+	assert.Zero(t, logCount)
+
+	// The billed text still reaches the upstream verbatim.
+	require.Len(t, env.rh.submits, 1)
+	var sentBody runninghub.SubmitBody
+	require.NoError(t, json.Unmarshal([]byte(env.rh.submits[0].Body), &sentBody))
+	require.Len(t, sentBody.NodeInfoList, 1)
+	assert.Equal(t, prompt, sentBody.NodeInfoList[0].FieldValue)
+}
+
+// ---------------------------------------------------------------------------
+// 3. Failure: full refund, CAS-idempotent under repeated polling
+// ---------------------------------------------------------------------------
 func TestIntegration_FailureRefund_IsIdempotent(t *testing.T) {
 	const upstreamID = "9003-fail-app"
 	env := newRHITestEnv(t, upstreamID)

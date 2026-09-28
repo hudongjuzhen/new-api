@@ -221,87 +221,138 @@ func extractNodeInfo(body []byte) ([]NodeInfo, error) {
 	return out, nil
 }
 
-// SelectOptionsFromFieldData parses a RunningHub fieldData blob into a select
-// option list plus an optional default value. Three shapes are accepted:
+// FieldDataSpec is the decoded form of a RunningHub fieldData blob — the
+// upstream's own declaration of how a node is edited. Request examples ship
+// four shapes:
 //
-//  1. List + default object: [["1k","2k","4k"],{"default":"1k"}]
-//  2. Plain string list:     ["1:1","16:9","9:16"]
-//  3. Demo / enum objects:   [{"name":"1k","index":"1k",...}, ...]
+//  1. Typed descriptor:
+//     ["COMBO", {"default":"1:1 (Square)","options":["1:1 (Square)",...],
+//     "tooltip":"The aspect ratio for the output dimensions.",
+//     "multiselect":false}]
+//  2. List + default object: [["1k","2k","4k"],{"default":"1k"}]
+//  3. Plain string list:     ["1:1","16:9","9:16"]
+//  4. Demo / enum objects:   [{"name":"1k","index":"1k",...}, ...]
 //
-// ok=false when the blob is not a usable enumeration so callers can fall back
-// to the text/image/... heuristics.
-func SelectOptionsFromFieldData(fieldData string) (opts []SchemaParamOption, def string, ok bool) {
+// Type is the schema type the blob declares: "select" when it carries enum
+// choices, "switch" for a boolean descriptor. It stays empty when the blob
+// declares nothing usable, and the caller then keeps its sample-based
+// heuristic. A "multiselect" flag is not modelled — RH submits one string per
+// node and the join format for several choices is undocumented — so such a
+// field imports as a single-choice select with its full option list.
+type FieldDataSpec struct {
+	Type    string
+	Options []SchemaParamOption
+	Default string
+	Tooltip string
+}
+
+// ParseFieldData decodes a fieldData blob. ok=false means the blob is missing,
+// malformed, or carries no usable declaration, so callers fall back to the
+// text/image/... heuristics.
+func ParseFieldData(fieldData string) (FieldDataSpec, bool) {
 	ft := strings.TrimSpace(fieldData)
 	if ft == "" || !strings.HasPrefix(ft, "[") {
-		return nil, "", false
+		return FieldDataSpec{}, false
 	}
 	var raw any
 	if err := json.Unmarshal([]byte(ft), &raw); err != nil {
-		return nil, "", false
+		return FieldDataSpec{}, false
 	}
 	list, ok := raw.([]any)
 	if !ok || len(list) == 0 {
-		return nil, "", false
+		return FieldDataSpec{}, false
 	}
-	// Case 1: [["a","b"],{"default":"a"}]
-	if names, isNested := list[0].([]any); isNested {
-		for _, item := range names {
-			s, err := asStringPreserveNumbers(item)
-			if err != nil || s == "" {
-				continue
-			}
-			opts = append(opts, SchemaParamOption{Label: s, Value: s})
+	// Shape 1: a type marker followed by its config object. A plain string
+	// list never carries an object in second position, so this is unambiguous.
+	if marker, isMarker := list[0].(string); isMarker && len(list) > 1 {
+		if cfg, isConfig := list[1].(map[string]any); isConfig {
+			return descriptorSpec(marker, cfg)
+		}
+	}
+	// Shape 2: nested choice list plus its config object.
+	if choices, isNested := list[0].([]any); isNested {
+		spec := FieldDataSpec{Type: "select", Options: optionsFromValue(choices)}
+		if len(spec.Options) == 0 {
+			return FieldDataSpec{}, false
 		}
 		if len(list) > 1 {
-			if m, ok3 := list[1].(map[string]any); ok3 {
-				def, _ = asStringPreserveNumbers(m["default"])
+			if cfg, isConfig := list[1].(map[string]any); isConfig {
+				spec.Default = asString(cfg["default"])
+				spec.Tooltip = asString(cfg["tooltip"])
 			}
 		}
-		if len(opts) == 0 {
-			return nil, "", false
-		}
-		return opts, def, true
+		return spec, true
 	}
-	// Case 2: plain string list.
-	if _, isString := list[0].(string); isString {
-		for _, item := range list {
+	// Shapes 3 and 4: the enum entries sit at the top level.
+	opts := optionsFromValue(list)
+	if len(opts) == 0 {
+		return FieldDataSpec{}, false
+	}
+	return FieldDataSpec{Type: "select", Options: opts}, true
+}
+
+// descriptorSpec maps a typed descriptor onto a spec. Any marker that brings
+// enum choices is a select, so a marker RH has not shipped yet cannot silently
+// downgrade an enumerable field to free text; the boolean markers become
+// switches, whose value the caller normalizes to "true"/"false".
+func descriptorSpec(marker string, cfg map[string]any) (FieldDataSpec, bool) {
+	spec := FieldDataSpec{
+		Options: optionsFromValue(cfg["options"]),
+		Default: asString(cfg["default"]),
+		Tooltip: asString(cfg["tooltip"]),
+	}
+	switch strings.ToUpper(strings.TrimSpace(marker)) {
+	case "BOOLEAN", "BOOL", "SWITCH", "TOGGLE", "CHECKBOX":
+		spec.Type = "switch"
+		return spec, true
+	}
+	if len(spec.Options) == 0 {
+		return FieldDataSpec{}, false
+	}
+	spec.Type = "select"
+	return spec, true
+}
+
+// optionsFromValue turns a fieldData choice array into select options. Entries
+// are either plain scalars or the enum objects RH ships — {"name","index",...}
+// in demo payloads, {"label","value"} in descriptors.
+func optionsFromValue(v any) []SchemaParamOption {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	opts := make([]SchemaParamOption, 0, len(items))
+	for _, item := range items {
+		m, isObject := item.(map[string]any)
+		if !isObject {
 			s, err := asStringPreserveNumbers(item)
 			if err != nil || s == "" {
 				continue
 			}
 			opts = append(opts, SchemaParamOption{Label: s, Value: s})
-		}
-		if len(opts) == 0 {
-			return nil, "", false
-		}
-		return opts, "", true
-	}
-	// Case 3: demo / enum objects.
-	for _, item := range list {
-		m, ok2 := item.(map[string]any)
-		if !ok2 {
 			continue
 		}
-		value := asString(m["index"])
-		if value == "" {
-			value = asString(m["name"])
-		}
+		value := firstNonEmpty(asString(m["value"]), asString(m["index"]), asString(m["name"]))
 		if value == "" {
 			continue
 		}
-		label := asString(m["name"])
-		if label == "" {
-			label = asString(m["description"])
-		}
+		label := firstNonEmpty(asString(m["label"]), asString(m["name"]), asString(m["description"]))
 		if label == "" {
 			label = value
 		}
 		opts = append(opts, SchemaParamOption{Label: label, Value: value})
 	}
-	if len(opts) == 0 {
-		return nil, "", false
+	return opts
+}
+
+// firstNonEmpty returns the first candidate that is not the empty string.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
 	}
-	return opts, "", true
+	return ""
 }
 
 // CurlSlug derives a compact, unique identifier suitable for the app's slug
@@ -440,7 +491,7 @@ type SchemaParam struct {
 	NodeID      string              `json:"nodeId"`
 	FieldName   string              `json:"fieldName"`
 	Label       string              `json:"label"`
-	Type        string              `json:"type"` // text / textarea / number / image / audio / video / select
+	Type        string              `json:"type"` // text / textarea / number / image / audio / video / select / switch
 	Required    bool                `json:"required"`
 	Default     string              `json:"defaultValue,omitempty"`
 	Placeholder string              `json:"placeholder,omitempty"`
@@ -490,13 +541,7 @@ func BuildSchemaFromNodes(nodes []NodeInfo) SchemaSummary {
 			Default:   n.FieldValue,
 			Required:  false,
 		}
-		if opts, def, ok := SelectOptionsFromFieldData(n.FieldData); ok {
-			// An enumerable fieldData from a curl import becomes a real select;
-			// "选填" (optional) fields with an enum set still render a dropdown.
-			param.Type = "select"
-			param.Default = def
-			param.Options = opts
-		}
+		applyFieldData(&param, n.FieldData)
 		required := !strings.Contains(strings.ToLower(n.Description), "选填")
 		if required {
 			param.Required = true
@@ -549,10 +594,56 @@ func humanizeSnake(s string) string {
 	return b.String()
 }
 
+// applyFieldData folds a node's fieldData blob into its draft parameter. The
+// blob is the upstream's own editor declaration, so it outranks the
+// sample-based heuristics; a blob that declares nothing usable leaves them
+// untouched.
+func applyFieldData(p *SchemaParam, fieldData string) {
+	spec, ok := ParseFieldData(fieldData)
+	if ok {
+		if spec.Type != "" {
+			p.Type = spec.Type
+		}
+		if len(spec.Options) > 0 {
+			p.Options = spec.Options
+		}
+		// The declared default replaces the request sample; without one the
+		// sample keeps pre-filling the form instead of being dropped.
+		if spec.Default != "" {
+			p.Default = spec.Default
+		}
+		if spec.Tooltip != "" {
+			p.Placeholder = spec.Tooltip
+		}
+	}
+	if p.Type != "switch" {
+		return
+	}
+	// A dropdown needs an exact option match, but a toggle only ever submits
+	// "true"/"false": normalize both spellings RH uses ("true"/"false" from
+	// JSON, "1"/"0" from workflow node values) so the run form's switch starts
+	// in the position the sample asked for.
+	switch strings.ToLower(strings.TrimSpace(p.Default)) {
+	case "true", "1":
+		p.Default = "true"
+	case "false", "0":
+		p.Default = "false"
+	}
+}
+
 // inferParamType inspects a node entry and returns a best-effort param type.
 func inferParamType(n NodeInfo) string {
 	name := strings.ToLower(n.FieldName)
-	value := strings.ToLower(n.FieldValue)
+	value := strings.ToLower(strings.TrimSpace(n.FieldValue))
+	// A literal JSON boolean sample is the only type signal some nodes carry
+	// (e.g. {"nodeId":"256","fieldName":"value","fieldValue":"false"}), and it
+	// outranks the fieldName hints because those names are generic tokens such
+	// as "value"/"video" that say nothing about the editor. "0"/"1" are left to
+	// the numeric branch below, where counters use them too.
+	switch value {
+	case "true", "false":
+		return "switch"
+	}
 	// URL-only fields are assumed to be media uploads.
 	switch {
 	case strings.Contains(name, "image") || strings.Contains(name, "img") || strings.HasSuffix(name, "_pic"):

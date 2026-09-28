@@ -195,6 +195,167 @@ func TestParseCurl_RawBodyPreservesIntegerJsonNumbers(t *testing.T) {
 }
 
 // =========================================================================
+// ParseFieldData — the fieldData blob is RunningHub's own editor declaration.
+// =========================================================================
+
+func TestParseFieldData(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		field  string
+		want   rhparser.FieldDataSpec
+		wantOK bool
+	}{
+		{
+			// The exact blob the app editor's request example carries for its
+			// aspect-ratio node.
+			name: "typed COMBO descriptor",
+			field: `["COMBO", {"default": "1:1 (Square)", "options": ["1:1 (Square)", "16:9 (Widescreen)"], ` +
+				`"tooltip": "The aspect ratio for the output dimensions.", "multiselect": false}]`,
+			want: rhparser.FieldDataSpec{
+				Type:    "select",
+				Default: "1:1 (Square)",
+				Tooltip: "The aspect ratio for the output dimensions.",
+				Options: []rhparser.SchemaParamOption{
+					{Label: "1:1 (Square)", Value: "1:1 (Square)"},
+					{Label: "16:9 (Widescreen)", Value: "16:9 (Widescreen)"},
+				},
+			},
+			wantOK: true,
+		},
+		{
+			name:   "boolean descriptor",
+			field:  `["BOOLEAN", {"default": false}]`,
+			want:   rhparser.FieldDataSpec{Type: "switch", Default: "false"},
+			wantOK: true,
+		},
+		{
+			// A marker RH has not shipped yet must not degrade an enumerable
+			// node into free text.
+			name:   "unknown marker keeps its choices",
+			field:  `["SLIDER", {"options": ["a", "b"]}]`,
+			want:   rhparser.FieldDataSpec{Type: "select", Options: []rhparser.SchemaParamOption{{Label: "a", Value: "a"}, {Label: "b", Value: "b"}}},
+			wantOK: true,
+		},
+		{
+			name:   "label/value option objects",
+			field:  `["COMBO", {"options": [{"label": "方法一", "value": "1"}]}]`,
+			want:   rhparser.FieldDataSpec{Type: "select", Options: []rhparser.SchemaParamOption{{Label: "方法一", Value: "1"}}},
+			wantOK: true,
+		},
+		{
+			name:   "marker without choices declares nothing",
+			field:  `["COMBO", {"multiselect": false}]`,
+			wantOK: false,
+		},
+		{
+			name:   "nested list plus default object",
+			field:  `[["1k","2k"],{"default":"2k"}]`,
+			want:   rhparser.FieldDataSpec{Type: "select", Default: "2k", Options: []rhparser.SchemaParamOption{{Label: "1k", Value: "1k"}, {Label: "2k", Value: "2k"}}},
+			wantOK: true,
+		},
+		{
+			name:   "plain string list",
+			field:  `["1:1","16:9"]`,
+			want:   rhparser.FieldDataSpec{Type: "select", Options: []rhparser.SchemaParamOption{{Label: "1:1", Value: "1:1"}, {Label: "16:9", Value: "16:9"}}},
+			wantOK: true,
+		},
+		{
+			// Demo payloads name the choice and carry the wire value in index.
+			name:   "demo enum objects",
+			field:  `[{"name":"1k","index":"1k","description":"1024"},{"name":"2k","index":"2k"}]`,
+			want:   rhparser.FieldDataSpec{Type: "select", Options: []rhparser.SchemaParamOption{{Label: "1k", Value: "1k"}, {Label: "2k", Value: "2k"}}},
+			wantOK: true,
+		},
+		{
+			name:   "empty blob",
+			field:  "   ",
+			wantOK: false,
+		},
+		{
+			name:   "truncated json",
+			field:  `["COMBO",`,
+			wantOK: false,
+		},
+		{
+			name:   "empty list",
+			field:  `[]`,
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := rhparser.ParseFieldData(tc.field)
+			require.Equal(t, tc.wantOK, ok, "ok mismatch for %s", tc.field)
+			if !tc.wantOK {
+				return
+			}
+			assert.Equal(t, tc.want.Type, got.Type, "type mismatch")
+			assert.Equal(t, tc.want.Default, got.Default, "default mismatch")
+			assert.Equal(t, tc.want.Tooltip, got.Tooltip, "tooltip mismatch")
+			assert.Equal(t, tc.want.Options, got.Options, "options mismatch")
+		})
+	}
+}
+
+// The two node shapes the app editor has to survive verbatim: a COMBO select
+// whose fieldData carries both the choices and the default, and a boolean node
+// with no fieldData at all.
+func TestBuildSchemaFromNodes_RequestExampleNodes(t *testing.T) {
+	t.Parallel()
+	nodes := []rhparser.NodeInfo{
+		{
+			NodeID:    "13",
+			FieldName: "aspect_ratio",
+			FieldData: `["COMBO", {"default": "1:1 (Square)", "options": ["1:1 (Square)", "2:3 (Portrait Photo)", ` +
+				`"3:2 (Photo)", "3:4 (Portrait Standard)", "4:3 (Standard)", "9:16 (Portrait Widescreen)", ` +
+				`"16:9 (Widescreen)", "21:9 (Ultrawide)"], ` +
+				`"tooltip": "The aspect ratio for the output dimensions.", "multiselect": false}]`,
+			FieldValue: "16:9 (Widescreen)",
+		},
+		{NodeID: "256", FieldName: "value", FieldValue: "false"},
+	}
+	out := rhparser.BuildSchemaFromNodes(nodes)
+	require.Empty(t, out.Errors)
+	require.Len(t, out.Params, 2)
+
+	ratio := out.Params[0]
+	assert.Equal(t, "select", ratio.Type)
+	assert.Len(t, ratio.Options, 8)
+	assert.Equal(t, "21:9 (Ultrawide)", ratio.Options[7].Value)
+	assert.Equal(t, "1:1 (Square)", ratio.Default, "the declared default pre-fills the dropdown")
+	assert.Equal(t, "The aspect ratio for the output dimensions.", ratio.Placeholder)
+
+	toggle := out.Params[1]
+	assert.Equal(t, "switch", toggle.Type)
+	assert.Equal(t, "false", toggle.Default)
+	assert.Equal(t, "Value", toggle.Label)
+}
+
+// A switch only ever submits "true"/"false", so both spellings RH ships are
+// canonicalized; a select without a declared default keeps the request sample.
+func TestBuildSchemaFromNodes_FieldDataDefaults(t *testing.T) {
+	t.Parallel()
+	nodes := []rhparser.NodeInfo{
+		{NodeID: "1", FieldName: "enabled", FieldData: `["BOOLEAN", {"default": 1}]`, FieldValue: "0"},
+		{NodeID: "2", FieldName: "value", FieldValue: "true"},
+		{NodeID: "3", FieldName: "mode", FieldData: `["COMBO", {"options": ["a", "b"]}]`, FieldValue: "b"},
+	}
+	out := rhparser.BuildSchemaFromNodes(nodes)
+	require.Empty(t, out.Errors)
+	require.Len(t, out.Params, 3)
+
+	assert.Equal(t, "switch", out.Params[0].Type)
+	assert.Equal(t, "true", out.Params[0].Default, "a numeric boolean default is normalized")
+	assert.Equal(t, "switch", out.Params[1].Type)
+	assert.Equal(t, "true", out.Params[1].Default)
+	assert.Equal(t, "select", out.Params[2].Type)
+	assert.Equal(t, "b", out.Params[2].Default, "without a declared default the sample pre-fills the form")
+}
+
+// =========================================================================
 // BuildSchemaFromNodes
 // =========================================================================
 

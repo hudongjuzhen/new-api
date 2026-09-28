@@ -53,6 +53,14 @@ export interface AppView {
    * typed parameter.
    */
   secondsExpr: string
+  perCharBilling: boolean
+  quotaPerChar: number
+  /**
+   * Per-character billing length, written as an expression over node ids with
+   * len() to count a text field: "212", "nodeId=212", "len(212)",
+   * "len(122) + len(123)".
+   */
+  charCountExpr: string
   modelBaseRateRatio: number
   site: string
   categoryId: number | null
@@ -83,6 +91,9 @@ export interface AppCreateDTO {
   perSecondBilling: boolean
   quotaPerSecond: number
   secondsExpr: string
+  perCharBilling: boolean
+  quotaPerChar: number
+  charCountExpr: string
   modelBaseRateRatio: number
   site: string
   categoryId: number | null

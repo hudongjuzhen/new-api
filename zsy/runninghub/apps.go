@@ -61,6 +61,9 @@ type AppView struct {
 	PerSecondBilling   bool                   `json:"perSecondBilling"`
 	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
 	SecondsExpr        string                 `json:"secondsExpr"`
+	PerCharBilling     bool                   `json:"perCharBilling"`
+	QuotaPerChar       int64                  `json:"quotaPerChar"`
+	CharCountExpr      string                 `json:"charCountExpr"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	Site               string                 `json:"site"`
 	CategoryID         uint                   `json:"categoryId"`
@@ -86,6 +89,9 @@ type AppCreateDTO struct {
 	PerSecondBilling   bool                   `json:"perSecondBilling"`
 	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
 	SecondsExpr        string                 `json:"secondsExpr"`
+	PerCharBilling     bool                   `json:"perCharBilling"`
+	QuotaPerChar       int64                  `json:"quotaPerChar"`
+	CharCountExpr      string                 `json:"charCountExpr"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
 	Site               string                 `json:"site"`
 	CategoryID         uint                   `json:"categoryId"`
@@ -350,6 +356,31 @@ func appPerCallModelPrice(fixedQuota int64) float64 {
 	return float64(fixedQuota) / common.QuotaPerUnit
 }
 
+// appSyncedModelPrice returns the base price an app contributes to the host
+// model price table. For a metered app that is the price of ONE billing unit
+// (one second, one character), which the submit path then multiplies by the
+// run's measured count through PriceData OtherRatios; for a per-call app it is
+// the whole call price. A dynamic app (no flag set) contributes nothing.
+func appSyncedModelPrice(a *App) float64 {
+	switch {
+	case a.PerCallBilling:
+		return appPerCallModelPrice(a.FixedQuotaPerCall)
+	case a.PerSecondBilling:
+		return appPerCallModelPrice(a.QuotaPerSecond)
+	case a.PerCharBilling:
+		return appPerCallModelPrice(a.QuotaPerChar)
+	default:
+		return 0
+	}
+}
+
+// appMetersBilling reports whether the app owns its price through the host
+// model price table. Dynamic apps do not, so switching one back to dynamic must
+// not delete a price entry the admin configured by hand.
+func appMetersBilling(a *App) bool {
+	return a.PerCallBilling || a.PerSecondBilling || a.PerCharBilling
+}
+
 // syncAppBillingPrice keeps ratio_setting's model price table aligned with the
 // app's billing config. The submit path bills the app under its UpstreamID as
 // the model name, and RelayTaskSubmit rebuilds PriceData from that table — so
@@ -359,10 +390,11 @@ func appPerCallModelPrice(fixedQuota int64) float64 {
 //
 //   - PerCallBilling=true    → upsert price = FixedQuotaPerCall / QuotaPerUnit
 //   - PerSecondBilling=true  → upsert price = QuotaPerSecond / QuotaPerUnit
+//   - PerCharBilling=true    → upsert price = QuotaPerChar / QuotaPerUnit
 //   - switch to dynamic      → drop the entry only while it still equals the
 //     previously synced value (an admin-edited price is left untouched)
 //
-// Both mutations persist the whole model-price table through
+// All mutations persist the whole model-price table through
 // model.UpdateOption("ModelPrice", …) so the entry survives a restart
 // (UpdateModelPriceByJSONString alone only refreshes memory, and the boot-time
 // option reload would otherwise wipe it — the root cause of the
@@ -378,26 +410,16 @@ func syncAppBillingPrice(old *App, updated *App) {
 	prices := ratio_setting.GetModelPriceCopy()
 	changed := false
 
-	syncing := updated.PerCallBilling || updated.PerSecondBilling
-	var want float64
-	if updated.PerCallBilling {
-		want = appPerCallModelPrice(updated.FixedQuotaPerCall)
-	} else if updated.PerSecondBilling {
-		want = appPerCallModelPrice(updated.QuotaPerSecond)
-	}
+	syncing := updated.PerCallBilling || updated.PerSecondBilling || updated.PerCharBilling
+	want := appSyncedModelPrice(updated)
 
 	if syncing {
 		if cur, ok := prices[updated.UpstreamID]; !ok || cur != want {
 			prices[updated.UpstreamID] = want
 			changed = true
 		}
-	} else if old != nil && (old.PerCallBilling || old.PerSecondBilling) && old.UpstreamID == updated.UpstreamID {
-		var prev float64
-		if old.PerCallBilling {
-			prev = appPerCallModelPrice(old.FixedQuotaPerCall)
-		} else {
-			prev = appPerCallModelPrice(old.QuotaPerSecond)
-		}
+	} else if old != nil && appMetersBilling(old) && old.UpstreamID == updated.UpstreamID {
+		prev := appSyncedModelPrice(old)
 		if cur, ok := prices[old.UpstreamID]; ok && cur == prev {
 			delete(prices, old.UpstreamID)
 			changed = true
@@ -465,6 +487,9 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 	target.PerSecondBilling = dto.PerSecondBilling
 	target.QuotaPerSecond = dto.QuotaPerSecond
 	target.SecondsExpr = strings.TrimSpace(dto.SecondsExpr)
+	target.PerCharBilling = dto.PerCharBilling
+	target.QuotaPerChar = dto.QuotaPerChar
+	target.CharCountExpr = strings.TrimSpace(dto.CharCountExpr)
 	target.Site = normalizeSite(strings.TrimSpace(dto.Site))
 	target.CategoryID = dto.CategoryID
 	if dto.ModelBaseRateRatio == 0 {
@@ -565,6 +590,9 @@ func appToView(a *App) (*AppView, error) {
 		PerSecondBilling:   a.PerSecondBilling,
 		QuotaPerSecond:     a.QuotaPerSecond,
 		SecondsExpr:        a.SecondsExpr,
+		PerCharBilling:     a.PerCharBilling,
+		QuotaPerChar:       a.QuotaPerChar,
+		CharCountExpr:      a.CharCountExpr,
 		ModelBaseRateRatio: a.ModelBaseRateRatio,
 		Site:               a.Site,
 		CategoryID:         a.CategoryID,
@@ -649,18 +677,26 @@ func validateApp(a *App) error {
 	if a.Slug != "" && len(a.Slug) > 191 {
 		return fmt.Errorf("slug 过长 (上限 191 字符)")
 	}
-	// Billing invariants. The per-call / per-second / dynamic modes are
-	// mutually exclusive; enforce it here so the store layer can never persist
-	// a contradictory config.
+	// Billing invariants. The per-call / per-second / per-character / dynamic
+	// modes are mutually exclusive; enforce it here so the store layer can never
+	// persist a contradictory config.
 	switch {
 	case a.PerCallBilling && a.PerSecondBilling:
 		return fmt.Errorf("按次计费与按秒计费互斥，只能选择一种")
+	case a.PerCallBilling && a.PerCharBilling:
+		return fmt.Errorf("按次计费与按字符计费互斥，只能选择一种")
+	case a.PerSecondBilling && a.PerCharBilling:
+		return fmt.Errorf("按秒计费与按字符计费互斥，只能选择一种")
 	case a.FixedQuotaPerCall < 0:
 		return fmt.Errorf("fixedQuotaPerCall 不能为负数")
 	case a.PerSecondBilling && a.QuotaPerSecond <= 0:
 		return fmt.Errorf("按秒计费必须设置正数的每单位秒额度 (quotaPerSecond)")
 	case a.QuotaPerSecond < 0:
 		return fmt.Errorf("quotaPerSecond 不能为负数")
+	case a.PerCharBilling && a.QuotaPerChar <= 0:
+		return fmt.Errorf("按字符计费必须设置正数的每字符额度 (quotaPerChar)")
+	case a.QuotaPerChar < 0:
+		return fmt.Errorf("quotaPerChar 不能为负数")
 	case a.ModelBaseRateRatio <= 0:
 		return fmt.Errorf("modelBaseRateRatio 必须为正数 (当前 %v)", a.ModelBaseRateRatio)
 	}
@@ -669,6 +705,19 @@ func validateApp(a *App) error {
 			return fmt.Errorf("秒数表达式过长 (上限 191 字符)")
 		}
 		if err := validateSecondsExpr(a.SecondsExpr); err != nil {
+			return err
+		}
+	}
+	if a.PerCharBilling && a.CharCountExpr == "" {
+		// Without an expression there is nothing to count: refuse rather than
+		// guess a field, which would silently bill the wrong amount.
+		return fmt.Errorf("按字符计费必须设置字符数字段 (charCountExpr)")
+	}
+	if a.CharCountExpr != "" {
+		if len(a.CharCountExpr) > 191 {
+			return fmt.Errorf("字符数表达式过长 (上限 191 字符)")
+		}
+		if err := validateCharCountExpr(a.CharCountExpr); err != nil {
 			return err
 		}
 	}

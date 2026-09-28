@@ -97,25 +97,33 @@ func (c *Client) ApiCallDemo(webappID string) (*ApiCallDemoResp, error) {
 // ---------------------------------------------------------------------------
 
 // buildSchemaFromDemoNodes converts apiCallDemo node entries into an inferred
-// SchemaParam list. Nodes backed by an enumerable fieldData become "select";
-// the rest go through rhparser's BuildSchemaFromNodes heuristics (text/
-// textarea/number/image/audio/video). It returns any dropped/ambiguous nodes
-// as warnings.
+// SchemaParam list. Nodes whose fieldData declares enum choices become
+// "select"; everything else goes through rhparser's BuildSchemaFromNodes
+// heuristics (text/textarea/number/switch/image/audio/video), which applies the
+// remaining fieldData declarations (boolean descriptors) itself. It returns any
+// dropped/ambiguous nodes as warnings.
 func buildSchemaFromDemoNodes(nodes []DemoNode) ([]rhparser.SchemaParam, []rhparser.ErrSchemaReport) {
 	schema := make([]rhparser.SchemaParam, 0, len(nodes))
 	warnings := make([]rhparser.ErrSchemaReport, 0)
 
 	plain := make([]rhparser.NodeInfo, 0, len(nodes))
 	for _, n := range nodes {
-		if opts, def, ok := rhparser.SelectOptionsFromFieldData(n.FieldData); ok {
+		if spec, ok := rhparser.ParseFieldData(n.FieldData); ok && spec.Type == "select" {
+			def := spec.Default
+			if def == "" {
+				// Without a declared default the sample keeps pre-filling the
+				// form on the value the request example used.
+				def = n.FieldValue
+			}
 			schema = append(schema, rhparser.SchemaParam{
-				NodeID:    n.NodeID,
-				FieldName: n.FieldName,
-				Label:     labelForDemoNode(&n),
-				Type:      "select",
-				Default:   def,
-				Required:  true,
-				Options:   opts,
+				NodeID:      n.NodeID,
+				FieldName:   n.FieldName,
+				Label:       labelForDemoNode(&n),
+				Type:        "select",
+				Default:     def,
+				Required:    true,
+				Options:     spec.Options,
+				Placeholder: spec.Tooltip,
 			})
 			continue
 		}

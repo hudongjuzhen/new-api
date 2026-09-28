@@ -112,7 +112,6 @@ const (
 // not write a second body onto the same response.
 const contextKeyControllerResponds = "rh_controller_responds"
 
-
 // NodeInfo struct fields (matches both V2 submit JSON and the curl parser).
 const (
 	NodeFieldNodeID    = "nodeId"

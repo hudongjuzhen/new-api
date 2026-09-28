@@ -679,6 +679,10 @@ func (rh *QueryResp) resultURLs() []string {
 //     QuotaPerSecond × N × groupRatio and is final: like per-call, the task is
 //     recorded with PerCallBilling so the completion poll keeps it instead of
 //     settling against RH usage.consumeCoins.
+//   - per-char apps      → {"chars": N} where N is the billed text length the
+//     submit controller computed from the app's character expression
+//     (metadata.rh.chars). Pre-charge becomes QuotaPerChar × N × groupRatio and
+//     is final for the same reason.
 //   - dynamic apps       → {"app_rate_ratio": ModelBaseRateRatio} (skipped at
 //     1.0).
 //
@@ -711,6 +715,17 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 		}
 		return map[string]float64{"seconds": n}
 	}
+	if app.PerCharBilling {
+		req, err := relaycommon.GetTaskRequest(c)
+		if err != nil {
+			return nil
+		}
+		// A missing count is not defaulted here: no multiplier means the charge
+		// stays at the per-character base price, which is at most one
+		// character — an under-charge on a request that never reached the
+		// plugin controller, never an unbounded one.
+		return map[string]float64{"chars": charsFromMetadata(req.Metadata)}
+	}
 	if app.ModelBaseRateRatio == 1.0 {
 		return nil
 	}
@@ -718,11 +733,22 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 }
 
 // secondsFromMetadata reads the bounded seconds/duration value the submit
-// controller stored under metadata.rh.seconds. Values already outside
-// [1, MaxTaskDurationSeconds] are re-clamped here so a raw task-API caller
-// (which bypasses the controller) can never feed an unbounded multiplier into
-// the billing chain.
+// controller stored under metadata.rh.seconds.
 func secondsFromMetadata(m map[string]any) float64 {
+	return meteredCountFromMetadata(m, "seconds", float64(relaycommon.MaxTaskDurationSeconds))
+}
+
+// charsFromMetadata reads the bounded character count the submit controller
+// stored under metadata.rh.chars.
+func charsFromMetadata(m map[string]any) float64 {
+	return meteredCountFromMetadata(m, "chars", maxExprRunes)
+}
+
+// meteredCountFromMetadata re-clamps a count the submit controller already
+// bounded, so a raw task-API caller (which bypasses the controller) can never
+// feed an unbounded multiplier into the billing chain. Missing, non-numeric and
+// non-positive values read as 0, i.e. "no multiplier".
+func meteredCountFromMetadata(m map[string]any, key string, max float64) float64 {
 	if m == nil {
 		return 0
 	}
@@ -730,12 +756,12 @@ func secondsFromMetadata(m map[string]any) float64 {
 	if !ok {
 		return 0
 	}
-	raw, ok := rh["seconds"].(float64)
-	if !ok || raw < 1 {
+	raw, ok := asNumber(rh[key])
+	if !ok || raw <= 0 {
 		return 0
 	}
-	if raw > float64(relaycommon.MaxTaskDurationSeconds) {
-		return float64(relaycommon.MaxTaskDurationSeconds)
+	if raw > max {
+		return max
 	}
 	return raw
 }
