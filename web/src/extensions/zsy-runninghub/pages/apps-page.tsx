@@ -533,7 +533,9 @@ function AppForm({
                   )
                 }
               />
-              <Label htmlFor='rh-app-char-count-expr'>{t('Character Field')}</Label>
+              <Label htmlFor='rh-app-char-count-expr'>
+                {t('Character Field')}
+              </Label>
               <Input
                 id='rh-app-char-count-expr'
                 value={dto.charCountExpr}
@@ -633,7 +635,10 @@ function AppForm({
             </p>
           ) : (
             dto.paramSchema.map((p, i) => {
-              const key = `${p.nodeId ?? 'p'}-${p.fieldName ?? 'f'}-${i}`
+              // Identity is the row position, never the (nodeId, fieldName) it
+              // holds: those are edited in place, and a value-derived key would
+              // remount — and blur — the input after every keystroke.
+              const key = `rh-app-param-${i}`
               return (
                 <div key={key} className='space-y-2 rounded-md border p-2'>
                   <div className='grid grid-cols-[1fr_140px] gap-2'>
@@ -660,21 +665,21 @@ function AppForm({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className='grid grid-cols-[1fr_140px] gap-2'>
+                  <div className='grid grid-cols-2 gap-2'>
+                    <Input
+                      value={p.nodeId ?? ''}
+                      placeholder={t('Node ID')}
+                      aria-label={t('Node ID')}
+                      onChange={(e) => setParam(i, { nodeId: e.target.value })}
+                    />
                     <Input
                       value={p.fieldName}
                       placeholder={t('Field name')}
+                      aria-label={t('Field name')}
                       onChange={(e) =>
                         setParam(i, { fieldName: e.target.value })
                       }
                     />
-                    <label className='flex items-center gap-2'>
-                      <Switch
-                        checked={!!p.required}
-                        onCheckedChange={(v) => setParam(i, { required: !!v })}
-                      />
-                      <span className='text-xs'>{t('Required')}</span>
-                    </label>
                   </div>
                   {NUMERIC_TYPES.has(p.type) && (
                     <div className='grid grid-cols-2 gap-2'>
@@ -711,9 +716,13 @@ function AppForm({
                     />
                   )}
                   <div className='flex items-center justify-between'>
-                    <span className='text-muted-foreground text-xs'>
-                      {p.nodeId ? `nodeId=${p.nodeId}` : ''}
-                    </span>
+                    <label className='flex items-center gap-2'>
+                      <Switch
+                        checked={!!p.required}
+                        onCheckedChange={(v) => setParam(i, { required: !!v })}
+                      />
+                      <span className='text-xs'>{t('Required')}</span>
+                    </label>
                     <Button
                       type='button'
                       variant='ghost'

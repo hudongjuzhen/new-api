@@ -3207,6 +3207,7 @@
     "No X Found": "X не найдено",
     "Node": "Узел",
     "Node filters": "Фильтры узлов",
+    "Node ID": "ID узла",
     "Node Name": "Имя узла",
     "Node role": "Роль узла",
     "Nodes reporting from this deployment and their latest heartbeat.": "Узлы этого развертывания и их последнее сердцебиение.",

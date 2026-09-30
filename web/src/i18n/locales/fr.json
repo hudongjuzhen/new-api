@@ -3207,6 +3207,7 @@
     "No X Found": "Aucun X trouvé",
     "Node": "Nœud",
     "Node filters": "Filtres de nœuds",
+    "Node ID": "ID du nœud",
     "Node Name": "Nom du nœud",
     "Node role": "Rôle du nœud",
     "Nodes reporting from this deployment and their latest heartbeat.": "Nœuds signalés par ce déploiement et leur dernier battement de cœur.",

@@ -3207,6 +3207,7 @@
     "No X Found": "X が見つかりません",
     "Node": "ノード",
     "Node filters": "ノードフィルター",
+    "Node ID": "ノード ID",
     "Node Name": "ノード名",
     "Node role": "ノードの役割",
     "Nodes reporting from this deployment and their latest heartbeat.": "このデプロイから報告されたノードと最新のハートビート。",

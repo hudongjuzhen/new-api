@@ -3207,6 +3207,7 @@
     "No X Found": "Không tìm thấy X",
     "Node": "Nút",
     "Node filters": "Bộ lọc nút",
+    "Node ID": "ID nút",
     "Node Name": "Tên nút",
     "Node role": "Vai trò node",
     "Nodes reporting from this deployment and their latest heartbeat.": "Các node đang báo cáo từ bản triển khai này và nhịp tim mới nhất của chúng.",
