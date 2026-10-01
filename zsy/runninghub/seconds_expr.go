@@ -302,6 +302,12 @@ func nodeTextResolver(schema []rhparser.SchemaParam, values map[string]any) expr
 
 // lookupSubmittedValue finds the submitted value a reference points at. A
 // nodeId-only reference matches the first submitted field on that node.
+//
+// Flat model-API schemas (imported from a flat JSON curl, where every param
+// has an empty NodeID and FieldName is the top-level body key) get one extra
+// rule: after the exact node-id pass, a reference also matches a param by its
+// FieldName alone, so @duration resolves the body key "duration" without the
+// admin needing to invent a node id.
 func lookupSubmittedValue(schema []rhparser.SchemaParam, values map[string]any, ref exprNodeRef) (any, bool) {
 	for _, p := range schema {
 		if strings.TrimSpace(p.NodeID) != ref.nodeID {
@@ -318,6 +324,21 @@ func lookupSubmittedValue(schema []rhparser.SchemaParam, values map[string]any, 
 			continue
 		}
 		return raw, true
+	}
+	if ref.fieldName == "" {
+		for _, p := range schema {
+			if strings.TrimSpace(p.NodeID) != "" {
+				continue
+			}
+			if strings.TrimSpace(p.FieldName) != ref.nodeID {
+				continue
+			}
+			raw, ok := values[schemaFieldKey(p.NodeID, p.FieldName)]
+			if !ok {
+				return nil, false
+			}
+			return raw, true
+		}
 	}
 	return nil, false
 }

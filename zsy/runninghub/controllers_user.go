@@ -181,6 +181,19 @@ func submitAppRun(c *gin.Context) {
 			"instanceType": instanceType,
 		},
 	}
+	// Model-API apps speak a flat JSON body (top-level keys, no nodeInfoList).
+	// Assemble it from the same validated form values and ship it through the
+	// rawBody passthrough the adaptor already supports, so the upstream request
+	// matches the official curl byte-for-byte. The queued dispatcher reuses the
+	// built body unchanged, so queue dispatch needs no special case.
+	if app.Kind == AppKindModel {
+		flatBody, bodyErr := buildFlatModelBody(schema, payload.Values)
+		if bodyErr != nil {
+			common.ApiErrorMsg(c, bodyErr.Error())
+			return
+		}
+		metadata["rh"].(map[string]any)["rawBody"] = flatBody
+	}
 	if strings.TrimSpace(payload.WebhookURL) != "" {
 		metadata["rh"].(map[string]any)["webhookUrl"] = strings.TrimSpace(payload.WebhookURL)
 	}
@@ -627,6 +640,52 @@ func validateAndBuildNodeInfoList(schema []rhparser.SchemaParam, values map[stri
 		})
 	}
 	return result, nil
+}
+
+// buildFlatModelBody converts validated form values into the flat JSON body a
+// Model-API app expects (top-level keys, no nodeInfoList). FieldName is the
+// upstream JSON key — for flat schemas the curl importer leaves NodeID empty
+// and names each field after its top-level key. Types survive the conversion:
+// number-typed fields become JSON numbers, switch fields become booleans, and
+// everything else stays a string, so the upstream receives the same shape the
+// official curl samples show. Validation reuses coerceValueByType so type and
+// bound errors are identical to the nodeInfoList path.
+func buildFlatModelBody(schema []rhparser.SchemaParam, values map[string]any) (map[string]any, error) {
+	byKey := make(map[string]*rhparser.SchemaParam, len(schema))
+	for i := range schema {
+		p := &schema[i]
+		byKey[schemaFieldKey(p.NodeID, p.FieldName)] = p
+	}
+	out := make(map[string]any, len(values))
+	for key, raw := range values {
+		p, ok := byKey[key]
+		if !ok || strings.TrimSpace(p.FieldName) == "" {
+			continue
+		}
+		// String-form validation keeps the error messages and bounds identical
+		// to validateAndBuildNodeInfoList; the typed value below is derived
+		// from the raw JSON input afterwards.
+		if _, err := coerceValueByType(p, raw); err != nil {
+			return nil, err
+		}
+		switch strings.ToLower(strings.TrimSpace(p.Type)) {
+		case "number", "int", "integer", "float", "duration", "seconds":
+			n, ok := asNumber(raw)
+			if !ok {
+				return nil, fmt.Errorf("%s 必须为数字", p.FieldName)
+			}
+			out[p.FieldName] = n
+		case "boolean", "bool", "checkbox", "toggle", "switch":
+			b, ok := asBool(raw)
+			if !ok {
+				return nil, fmt.Errorf("%s 必须为布尔值", p.FieldName)
+			}
+			out[p.FieldName] = b
+		default:
+			out[p.FieldName] = raw
+		}
+	}
+	return out, nil
 }
 
 func missingFieldLabel(p *rhparser.SchemaParam, fallbackKey string) string {
