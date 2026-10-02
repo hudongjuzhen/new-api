@@ -21,21 +21,22 @@ import { ArrowLeftRightIcon } from 'lucide-react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { PublicLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import { parseTags } from '@/features/pricing/lib/filters'
 import type { PricingModel } from '@/features/pricing/types'
-import { PublicLayout } from '@/components/layout'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
 import { LabApi } from './lab-api'
+import { LabAudioPlayground } from './lab-audio-playground'
 import { LabExamples } from './lab-examples'
 import { LabHistory } from './lab-history'
 import { LabImagePlayground } from './lab-image-playground'
 import { LabPlayground } from './lab-playground'
-import { isImageGenModel } from './lib/model'
+import { isAudioGenModel, isImageGenModel } from './lib/model'
 
 export interface LabProps {
   model?: string
@@ -65,6 +66,15 @@ export function Lab(props: LabProps) {
   const tags = parseTags(modelInfo?.tags)
   const iconKey = modelInfo?.icon || modelInfo?.vendor_icon
   const modelIcon = iconKey ? getLobeIcon(iconKey, 24) : null
+
+  // Each model family has its own playground because their request contracts
+  // differ (streamed chat vs. sync image vs. async audio task).
+  let playground = <LabPlayground model={modelName || undefined} />
+  if (isImageGenModel(modelInfo)) {
+    playground = <LabImagePlayground model={modelName || undefined} />
+  } else if (isAudioGenModel(modelInfo)) {
+    playground = <LabAudioPlayground model={modelName || undefined} />
+  }
 
   return (
     <PublicLayout>
@@ -125,13 +135,7 @@ export function Lab(props: LabProps) {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value='playground'>
-            {isImageGenModel(modelInfo) ? (
-              <LabImagePlayground model={modelName || undefined} />
-            ) : (
-              <LabPlayground model={modelName || undefined} />
-            )}
-          </TabsContent>
+          <TabsContent value='playground'>{playground}</TabsContent>
           <TabsContent value='examples'>
             <LabExamples model={modelName || undefined} />
           </TabsContent>

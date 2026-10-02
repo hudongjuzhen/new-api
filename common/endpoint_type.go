@@ -30,6 +30,10 @@ func GetEndpointTypesByChannelType(channelType int, modelName string) []constant
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAI, constant.EndpointTypeOpenAIResponse}
 	case constant.ChannelTypeSora:
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAIVideo}
+	// 豆包语音的音频创作是一套独立的同步音频接口，只有它自己的端点类型；
+	// 挂到 openai 端点会让定价页把 /v1/chat/completions 当成它的调用方式。
+	case constant.ChannelTypeDoubaoAudio:
+		endpointTypes = []constant.EndpointType{constant.EndpointTypeAudioGeneration}
 	case constant.ChannelTypeSub2API, constant.ChannelTypeNewAPI:
 		endpointTypes = []constant.EndpointType{
 			constant.EndpointTypeOpenAI,

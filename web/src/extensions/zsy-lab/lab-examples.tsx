@@ -26,7 +26,17 @@ import {
 } from '@/components/ai-elements/code-block'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { usePricingData } from '@/features/pricing/hooks/use-pricing-data'
 import { useStatus } from '@/hooks/use-status'
+
+import {
+  AUDIO_SAMPLE_LANGS,
+  AUDIO_SAMPLE_LANG_HIGHLIGHT,
+  AUDIO_SAMPLE_LANG_LABELS,
+  buildAudioGenerationSample,
+  type AudioSampleLang,
+} from './lib/audio-samples'
+import { isAudioGenModel } from './lib/model'
 
 type Lang = 'curl' | 'python' | 'javascript'
 
@@ -162,6 +172,7 @@ function SampleCard(props: {
   title: string
   titleBadge?: string
   endpoint: string
+  endpointNote?: string
   buildSample: (lang: Lang, ctx: SampleContext) => string
   context: SampleContext
 }) {
@@ -202,7 +213,7 @@ function SampleCard(props: {
         <code className='bg-muted rounded px-1.5 py-0.5 font-mono'>
           {props.endpoint}
         </code>
-        <span>{t('compatible endpoint')}</span>
+        <span>{props.endpointNote ?? t('compatible endpoint')}</span>
       </div>
       <div className='mt-3'>
         <CodeBlock code={code} language={LANG_HIGHLIGHT[lang]}>
@@ -213,9 +224,82 @@ function SampleCard(props: {
   )
 }
 
+/**
+ * The audio-generation model is a synchronous endpoint (Seed Audio on 豆包语音),
+ * so its samples are a single call returning the audio inline. A chat-completions
+ * sample — or the Ark task submit/poll pair — would simply fail.
+ */
+function AudioExamples(props: { model: string; baseUrl: string }) {
+  const { t } = useTranslation()
+  const [lang, setLang] = useState<AudioSampleLang>('curl')
+  const context = { baseUrl: props.baseUrl, model: props.model }
+
+  return (
+    <div className='space-y-4'>
+      <div>
+        <h2 className='text-lg font-semibold'>{t('Code samples')}</h2>
+        <p className='text-muted-foreground mt-1 text-sm'>
+          {t(
+            'Audio generation is a synchronous call: the audio and its duration come back in the response.'
+          )}
+        </p>
+        <Badge variant='outline' className='mt-2 font-mono'>
+          {props.model || t('No model selected')}
+        </Badge>
+      </div>
+
+      <section className='border-border/60 bg-card/60 rounded-xl border p-4 shadow-sm'>
+        <div className='flex flex-wrap items-center gap-2'>
+          <Badge variant='secondary' className='font-medium'>
+            {t('Generate audio')}
+          </Badge>
+          <Tabs
+            className='ml-auto'
+            value={lang}
+            onValueChange={(value) => setLang(value as AudioSampleLang)}
+          >
+            <TabsList className='h-7 p-0.5'>
+              {AUDIO_SAMPLE_LANGS.map((item) => (
+                <TabsTrigger
+                  className='h-6 px-2.5 text-xs'
+                  key={item}
+                  value={item}
+                >
+                  {AUDIO_SAMPLE_LANG_LABELS[item]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
+        <div className='text-muted-foreground mt-2 flex items-center gap-1.5 text-xs'>
+          <code className='bg-muted rounded px-1.5 py-0.5 font-mono'>
+            /v1/audio/generations
+          </code>
+          <span>{t('synchronous endpoint')}</span>
+        </div>
+        <div className='mt-3'>
+          <CodeBlock
+            code={buildAudioGenerationSample(lang, context)}
+            language={AUDIO_SAMPLE_LANG_HIGHLIGHT[lang]}
+          >
+            <CodeBlockCopyButton />
+          </CodeBlock>
+        </div>
+      </section>
+
+      <div className='border-border/60 bg-muted/30 text-muted-foreground rounded-lg border px-3 py-2 text-xs leading-relaxed'>
+        {t(
+          'The text to synthesize travels in text_prompt; output format, sample rate, speech rate and pitch travel in audio_config; reference audio or images travel in references. Billing follows the produced duration, and one clip is at most 120 seconds.'
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function LabExamples(props: { model?: string }) {
   const { t } = useTranslation()
   const { status } = useStatus()
+  const { models } = usePricingData()
 
   const baseUrl = useMemo(() => {
     const candidate =
@@ -230,12 +314,22 @@ export function LabExamples(props: { model?: string }) {
 
   const context: SampleContext = { baseUrl, model: props.model ?? '' }
 
+  const modelInfo = useMemo(
+    () => models.find((item) => item.model_name === props.model) ?? null,
+    [models, props.model]
+  )
+  if (isAudioGenModel(modelInfo)) {
+    return <AudioExamples baseUrl={baseUrl} model={props.model ?? ''} />
+  }
+
   return (
     <div className='space-y-4'>
       <div>
         <h2 className='text-lg font-semibold'>{t('Code samples')}</h2>
         <p className='text-muted-foreground mt-1 text-sm'>
-          {t('Both gateway-compatible call styles are shown below. Current model:')}
+          {t(
+            'Both gateway-compatible call styles are shown below. Current model:'
+          )}
         </p>
         <Badge variant='outline' className='mt-2 font-mono'>
           {props.model || t('No model selected')}

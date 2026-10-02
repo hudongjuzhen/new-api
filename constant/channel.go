@@ -61,7 +61,12 @@ const (
 	ChannelTypeRunningHub     = 61
 	ChannelTypeRunningHubIntl = 62 // RunningHub 国际站 (https://www.runninghub.ai)
 	ChannelTypeLiblib         = 63 // LiblibAI (https://openapi.liblibai.cloud)
-	ChannelTypeDummy          = 64 // this one is only for count, do not add any channel after this
+	// ChannelTypeDoubaoAudio 是豆包语音的音频创作（Seed Audio）服务。
+	// 它和方舟（ChannelTypeVolcEngine / ChannelTypeDoubaoVideo）是两个独立服务：
+	// 主机是 openspeech.bytedance.com，鉴权用 X-Api-Key，模型 seed-audio-1.0
+	// 只在这个服务上存在——发到方舟的 contents/generations/tasks 只会得到 404。
+	ChannelTypeDoubaoAudio = 64
+	ChannelTypeDummy       = 65 // this one is only for count, do not add any channel after this
 
 )
 
@@ -130,6 +135,7 @@ var ChannelBaseURLs = []string{
 	"https://www.runninghub.cn",                 //61  RunningHub
 	"https://www.runninghub.ai",                 //62  RunningHub 国际站
 	"https://openapi.liblibai.cloud",            //63  LiblibAI
+	"https://openspeech.bytedance.com",          //64  豆包语音（音频创作 / Seed Audio）
 }
 
 var ChannelTypeNames = map[int]string{
@@ -193,6 +199,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeRunningHub:     "RunningHub",
 	ChannelTypeRunningHubIntl: "RunningHub Intl",
 	ChannelTypeLiblib:         "LiblibAI",
+	ChannelTypeDoubaoAudio:    "DoubaoAudio",
 }
 
 func GetChannelTypeName(channelType int) string {

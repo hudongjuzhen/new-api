@@ -14,6 +14,7 @@ const (
 	EndpointTypeGemini                EndpointType = "gemini"
 	EndpointTypeJinaRerank            EndpointType = "jina-rerank"
 	EndpointTypeImageGeneration       EndpointType = "image-generation"
+	EndpointTypeAudioGeneration       EndpointType = "audio-generation"
 	EndpointTypeEmbeddings            EndpointType = "embeddings"
 	EndpointTypeOpenAIVideo           EndpointType = "openai-video"
 )

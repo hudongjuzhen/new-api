@@ -73,6 +73,7 @@ export const ENDPOINT_TYPES = {
   GEMINI: 'gemini',
   JINA_RERANK: 'jina-rerank',
   IMAGE_GENERATION: 'image-generation',
+  AUDIO_GENERATION: 'audio-generation',
   EMBEDDINGS: 'embeddings',
   OPENAI_VIDEO: 'openai-video',
 } as const
@@ -92,6 +93,7 @@ export function getEndpointTypeLabels(
     [ENDPOINT_TYPES.GEMINI]: 'Gemini',
     [ENDPOINT_TYPES.JINA_RERANK]: 'Rerank',
     [ENDPOINT_TYPES.IMAGE_GENERATION]: t('Image'),
+    [ENDPOINT_TYPES.AUDIO_GENERATION]: t('Audio'),
     [ENDPOINT_TYPES.EMBEDDINGS]: t('Embeddings'),
     [ENDPOINT_TYPES.OPENAI_VIDEO]: t('Video'),
   }

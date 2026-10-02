@@ -82,6 +82,8 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		constant.ChannelTypeJimeng,
 		constant.ChannelTypeDoubaoVideo,
 		constant.ChannelTypeVidu,
+		// 音频创作接口需要 text_prompt 与 audio_config，通用测试请求体不适用。
+		constant.ChannelTypeDoubaoAudio,
 	}
 	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
 		channelTypeName := constant.GetChannelTypeName(channel.Type)

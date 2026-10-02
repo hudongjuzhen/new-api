@@ -11,6 +11,7 @@ const (
 	RelayFormatOpenAIAlphaSearch                     = "openai_alpha_search"
 	RelayFormatOpenAIAudio                           = "openai_audio"
 	RelayFormatOpenAIImage                           = "openai_image"
+	RelayFormatAudioGeneration                       = "audio_generation"
 	RelayFormatOpenAIRealtime                        = "openai_realtime"
 	RelayFormatRerank                                = "rerank"
 	RelayFormatEmbedding                             = "embedding"

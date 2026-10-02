@@ -60,13 +60,13 @@ func TestEstimateAudioSecondsIsConservativeAndBounded(t *testing.T) {
 		speechRate int
 		want       float64
 	}{
-		{name: "no signal falls back to output ceiling", want: maxAudioSeconds},
+		{name: "no signal falls back to output ceiling", want: billing_setting.AudioMaxSeconds},
 		{name: "explicit request duration wins", reqSeconds: 30, textChars: 4000, want: 30},
-		{name: "explicit duration is capped", reqSeconds: 99999, want: maxAudioSeconds},
+		{name: "explicit duration is capped", reqSeconds: 99999, want: billing_setting.AudioMaxSeconds},
 		{name: "text at normal speed", textChars: 40, want: 12},
 		{name: "text at double speed is shorter", textChars: 40, speechRate: 100, want: 6},
 		{name: "text at half speed is longer", textChars: 40, speechRate: -50, want: 24},
-		{name: "long text is capped", textChars: 100000, want: maxAudioSeconds},
+		{name: "long text is capped", textChars: 100000, want: billing_setting.AudioMaxSeconds},
 		{name: "tiny text still reserves a second", textChars: 1, want: 1},
 	}
 	for _, tc := range cases {
@@ -74,7 +74,7 @@ func TestEstimateAudioSecondsIsConservativeAndBounded(t *testing.T) {
 			got := EstimateAudioSeconds(tc.reqSeconds, tc.textChars, tc.speechRate)
 			assert.InDelta(t, tc.want, got, 0.001)
 			assert.GreaterOrEqual(t, got, 1.0)
-			assert.LessOrEqual(t, got, float64(maxAudioSeconds))
+			assert.LessOrEqual(t, got, float64(billing_setting.AudioMaxSeconds))
 		})
 	}
 }
@@ -277,6 +277,28 @@ func TestAudioRatiosNeverExceedThePerMinuteBasePrice(t *testing.T) {
 	// charge, otherwise the settlement adjusts at a different rate.
 	basis := adaptor.MeteredBillingBasis(info)[audioBillingKey]
 	assert.InDelta(t, float64(preCharged), basis.Quantity*basis.UnitPrice, 1e-6)
+}
+
+// TestValidateRequestRejectsAudioModelsOnTheArkTaskEndpoint pins the routing
+// guard for the failure this feature hit in production: seed-audio-1.0 is not an
+// Ark model, so posting it to /api/v3/contents/generations/tasks answers
+// InvalidEndpointOrModel.NotFound — after the user has already been pre-charged.
+// The request must be refused locally, with a pointer at the endpoint that does
+// serve it.
+func TestValidateRequestRejectsAudioModelsOnTheArkTaskEndpoint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations",
+		strings.NewReader(`{"model":"seed-audio-1.0","prompt":"hello"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{OriginModelName: "seed-audio-1.0"}
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "unsupported_audio_model", taskErr.Code)
+	assert.Contains(t, taskErr.Message, "/v1/audio/generations")
 }
 
 // estimateAudioRatiosFor drives the real EstimateBilling entry point for an

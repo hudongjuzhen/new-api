@@ -435,6 +435,17 @@ func GenRelayInfoImage(c *gin.Context, request dto.Request) *RelayInfo {
 	return info
 }
 
+// GenRelayInfoAudioGeneration 生成同步音频创作请求的 RelayInfo。
+//
+// RelayMode 必须显式设成 RelayModeAudioGenerations：适配器的 GetRequestURL 用它
+// 判断该发到豆包语音的 /api/v3/tts/create，默认值会让它落到别的路径。
+func GenRelayInfoAudioGeneration(c *gin.Context, request dto.Request) *RelayInfo {
+	info := genBaseRelayInfo(c, request)
+	info.RelayMode = relayconstant.RelayModeAudioGenerations
+	info.RelayFormat = types.RelayFormatAudioGeneration
+	return info
+}
+
 func GenRelayInfoOpenAI(c *gin.Context, request dto.Request) *RelayInfo {
 	info := genBaseRelayInfo(c, request)
 	info.RelayFormat = types.RelayFormatOpenAI
@@ -587,6 +598,8 @@ func GenRelayInfo(c *gin.Context, relayFormat types.RelayFormat, request dto.Req
 		info = GenRelayInfoOpenAIAudio(c, request)
 	case types.RelayFormatOpenAIImage:
 		info = GenRelayInfoImage(c, request)
+	case types.RelayFormatAudioGeneration:
+		info = GenRelayInfoAudioGeneration(c, request)
 	case types.RelayFormatOpenAIRealtime:
 		info = GenRelayInfoWs(c, ws)
 	case types.RelayFormatClaude:

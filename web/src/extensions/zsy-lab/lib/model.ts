@@ -35,3 +35,21 @@ export function isImageGenModel(
   }
   return /gpt-image/i.test(model.model_name)
 }
+
+/**
+ * Models whose primary interaction is audio generation get the dedicated audio
+ * playground in the lab.
+ *
+ * Detection reads the metered billing marker the pricing API reports, which the
+ * backend derives from the same registry that routes the request
+ * (setting/billing_setting → relay/channel/task/doubao): a metered model is
+ * always an audio-generation task, so the playground and the relay can never
+ * disagree about how to call it. A name-prefix guess is deliberately avoided —
+ * only models explicitly registered as metered are called on the task surface.
+ */
+export function isAudioGenModel(
+  model: Pick<PricingModel, 'billing_mode' | 'metered_unit'> | null | undefined
+): boolean {
+  if (!model) return false
+  return model.billing_mode === 'metered' && Boolean(model.metered_unit)
+}

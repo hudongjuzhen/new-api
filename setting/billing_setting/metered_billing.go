@@ -3,6 +3,7 @@ package billing_setting
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
 )
 
@@ -34,6 +35,29 @@ const (
 	MeteredUnitSecond = "second"
 	MeteredUnitMinute = "minute"
 )
+
+// AudioMinutesRatioKey 是按生成音频时长计费时使用的计费维度键名。
+//
+// 定义在 relaykit/types：同步音频生成接口（豆包语音）与音频任务适配器都要用它，
+// 而 relaykit 不能反向依赖主模块。这里保留别名，让主模块代码从同一个包读到
+// "计量口径"相关的全部定义。
+const AudioMinutesRatioKey = types.AudioMinutesRatioKey
+
+// AudioMaxSeconds 是单次音频生成的产出上限（上游 2 分钟）。
+const AudioMaxSeconds = types.AudioMaxSeconds
+
+// EstimateAudioSeconds 估算一次音频生成会产生多少秒音频。
+//
+// 具体启发式定义在 relaykit/types，同步音频生成接口与音频任务适配器共用同一份
+// 实现，避免两条音频链路对同一段文本给出不同的预扣量级。
+func EstimateAudioSeconds(reqSeconds int, textChars int, speechRate int) float64 {
+	return types.EstimateAudioSeconds(reqSeconds, textChars, speechRate)
+}
+
+// ClampAudioSeconds 把时长收口到 [1, AudioMaxSeconds]。
+func ClampAudioSeconds(seconds float64) float64 {
+	return types.ClampAudioSeconds(seconds)
+}
 
 // IsMeteredBillingModel 判断模型是否按实际产出量（时长）计费。
 func IsMeteredBillingModel(model string) bool {

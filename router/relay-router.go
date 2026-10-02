@@ -136,6 +136,11 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.POST("/audio/speech", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIAudio)
 		})
+		// 音频创作（豆包语音 Seed Audio）：同步返回合成音频，与 OpenAI TTS 的
+		// /v1/audio/speech 语义不同，因此单独一个端点。
+		httpRouter.POST("/audio/generations", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatAudioGeneration)
+		})
 
 		// rerank related routes
 		httpRouter.POST("/rerank", func(c *gin.Context) {

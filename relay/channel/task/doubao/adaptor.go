@@ -159,6 +159,15 @@ func (a *TaskAdaptor) audioModel(task *model.Task) bool {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *taskdto.TaskError) {
+	if IsAudioModel(info.OriginModelName) {
+		// 音频生成模型不在方舟上：它由豆包语音的同步接口提供
+		// （channel type 64 / POST /v1/audio/generations）。放行会构建一个上游
+		// 必然 404 的请求——而用户为此已经被预扣了额度。
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("model %s is not served by the ark task endpoint; use POST /v1/audio/generations",
+				info.OriginModelName),
+			"unsupported_audio_model", http.StatusBadRequest)
+	}
 	// Accept only POST /v1/video/generations as "generate" action.
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
 }

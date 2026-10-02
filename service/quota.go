@@ -14,6 +14,7 @@ import (
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	typespkg "github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -385,6 +386,95 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	})
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(usage.CompletionTokens))
+	})
+}
+
+// MeteredDurationQuota 按"产出时长"重算一次同步媒体生成的额度。
+//
+//	额度 = 每分钟单价 × QuotaPerUnit × 分组倍率 × 实际分钟数
+//
+// 单位为分钟，与配置侧单价一致：模型（如 seed-audio-1.0）配的是每分钟价格，
+// 把秒数当乘数会把 2 分钟算成 120 倍。时长缺失或不可用时返回预扣额度，绝不因为
+// "拿不到时长"就免单。
+//
+// 结果经过饱和转换，越界事件随返回值交给调用方写入审计日志。
+func MeteredDurationQuota(relayInfo *relaycommon.RelayInfo, producedSeconds float64) (int, *common.QuotaClamp) {
+	if relayInfo == nil {
+		return 0, nil
+	}
+	preConsumed := relayInfo.PriceData.QuotaToPreConsume
+	// 缺失或不可用的测量值（0、负数、NaN）保留预扣额度。必须先判断再收口：
+	// ClampMeteredSeconds 会把 0 抬到下限，那样"没拿到时长"就会被当成 1 秒计费。
+	if !(producedSeconds > 0) {
+		return preConsumed, nil
+	}
+	seconds := relaycommon.ClampMeteredSeconds(producedSeconds, 1)
+	if seconds <= 0 {
+		return preConsumed, nil
+	}
+
+	base := relayInfo.PriceData.ModelPrice
+	if !relayInfo.PriceData.UsePrice {
+		base = relayInfo.PriceData.ModelRatio
+	}
+	if !(base > 0) {
+		return preConsumed, nil
+	}
+	unitPrice := base * common.QuotaPerUnit * relayInfo.PriceData.GroupRatioInfo.GroupRatio
+	return common.QuotaRoundChecked(unitPrice * (seconds / 60.0))
+}
+
+// SettleMeteredDurationQuota 结算并记录一次"按产出时长计费"的同步媒体生成。
+//
+// 与文本结算的区别在于计量维度：这里没有 token，额度由 MeteredDurationQuota 按
+// 上游上报的秒数算出，日志里记下时长与每分钟单价，便于事后核对账单。
+func SettleMeteredDurationQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, quota int, producedSeconds float64) {
+	if relayInfo == nil {
+		return
+	}
+	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
+	seconds := int(producedSeconds)
+
+	model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
+	model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
+
+	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
+		logger.LogError(ctx, "error settling metered duration billing: "+err.Error())
+	}
+
+	groupRatio := relayInfo.PriceData.GroupRatioInfo.GroupRatio
+	other := GenerateTextOtherInfo(ctx, relayInfo, relayInfo.PriceData.ModelRatio, groupRatio,
+		relayInfo.PriceData.CompletionRatio, 0, 0, relayInfo.PriceData.ModelPrice,
+		relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+	other["audio_output_seconds"] = producedSeconds
+	other["metered_ratio_key"] = typespkg.AudioMinutesRatioKey
+	attachQuotaSaturation(ctx, relayInfo, other)
+
+	var logContent string
+	if relayInfo.PriceData.UsePrice {
+		logContent = fmt.Sprintf("产出时长 %d 秒，模型价格 %.4f/分钟，分组倍率 %.2f",
+			seconds, relayInfo.PriceData.ModelPrice, groupRatio)
+	} else {
+		logContent = fmt.Sprintf("产出时长 %d 秒，模型倍率 %.2f，分组倍率 %.2f",
+			seconds, relayInfo.PriceData.ModelRatio, groupRatio)
+	}
+
+	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+		ChannelId:        relayInfo.ChannelId,
+		PromptTokens:     0,
+		CompletionTokens: seconds,
+		ModelName:        relayInfo.OriginModelName,
+		TokenName:        ctx.GetString("token_name"),
+		Quota:            quota,
+		Content:          logContent,
+		TokenId:          relayInfo.TokenId,
+		UseTimeSeconds:   int(useTimeSeconds),
+		IsStream:         false,
+		Group:            relayInfo.UsingGroup,
+		Other:            other,
+	})
+	gopool.Go(func() {
+		perfmetrics.RecordRelaySample(relayInfo, true, int64(seconds))
 	})
 }
 

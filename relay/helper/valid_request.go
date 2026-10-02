@@ -49,6 +49,8 @@ func GetAndValidateRequest(c *gin.Context, format types.RelayFormat) (request dt
 		request, err = GetAndValidateRerankRequest(c)
 	case types.RelayFormatOpenAIAudio:
 		request, err = GetAndValidAudioRequest(c, relayMode)
+	case types.RelayFormatAudioGeneration:
+		request, err = GetAndValidAudioGenerationRequest(c)
 	case types.RelayFormatOpenAIRealtime:
 		request = &dto.BaseRequest{}
 	default:
@@ -75,6 +77,28 @@ func GetAndValidAudioRequest(c *gin.Context, relayMode int) (*dto.AudioRequest, 
 		if audioRequest.ResponseFormat == "" {
 			audioRequest.ResponseFormat = "json"
 		}
+	}
+	return audioRequest, nil
+}
+
+// GetAndValidAudioGenerationRequest 解析同步音频创作请求。
+//
+// text_prompt 是唯一的必填项：模型名由渠道映射补全，references 与 audio_config
+// 都允许缺省（上游对各字段都有默认值）。长度上限在这里拦一次，避免把一个必然被
+// 上游拒绝的请求送去计费链路。
+func GetAndValidAudioGenerationRequest(c *gin.Context) (*dto.AudioGenerationRequest, error) {
+	audioRequest := &dto.AudioGenerationRequest{}
+	if err := common.UnmarshalBodyReusable(c, audioRequest); err != nil {
+		return nil, err
+	}
+	audioRequest.TextPrompt = strings.TrimSpace(audioRequest.TextPrompt)
+	if audioRequest.TextPrompt == "" {
+		return nil, types.NewError(errors.New("text_prompt is required"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	}
+	if len([]rune(audioRequest.TextPrompt)) > dto.MaxAudioGenerationPromptChars {
+		return nil, types.NewError(
+			fmt.Errorf("text_prompt must not exceed %d characters", dto.MaxAudioGenerationPromptChars),
+			types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 	return audioRequest, nil
 }

@@ -103,6 +103,7 @@ export function getChannelTypeIcon(type: number): string {
     36: 'Suno', // SunoAPI
     55: 'OpenAI', // Sora
     54: 'Doubao', // DoubaoVideo
+    64: 'Doubao', // DoubaoAudio (豆包语音音频创作)
     56: 'Replicate', // Replicate
     61: 'RunningHub', // RunningHub
     62: 'RunningHub', // RunningHub Intl

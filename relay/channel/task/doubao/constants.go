@@ -27,9 +27,13 @@ var ChannelName = "doubao-video"
 
 // audioBillingKey 是"按生成音频时长计费"这一计量维度的键名。
 //
+// 键名本身定义在 setting/billing_setting：同步音频生成接口（豆包语音）用同一个
+// 键把预扣乘数交给 ModelPriceHelper，两处必须是同一个字符串，否则预扣与结算会
+// 按不同维度记账。这里保留别名，让本包的算式读起来贴近音频语义。
+//
 // 值必须与 ModelPrice 的单位一致：配置侧单价的含义是"每个生成分钟的价格"，
-// 而 OtherRatios 里的值是对基准价的乘数，所以这里的值等于**预估产出分钟数**
-// （预估秒数 / 60），预扣额度随之自然等于 单价 × 分组倍率 × 预估分钟数。
+// 而乘数就是**预估产出分钟数**（预估秒数 / 60），预扣额度随之自然等于
+// 单价 × 分组倍率 × 预估分钟数。
 //
 // 这个键随任务冻结在 MeteredBasis 中，轮询结算阶段用 min(实际上报分钟数,
 // 预估分钟数) × 每分钟额度 重算最终额度。单位一旦写错就会成倍放大预扣费：把
@@ -37,67 +41,35 @@ var ChannelName = "doubao-video"
 //
 // 注意：该键只能是"计费乘数"，任何记账数据（例如原始预估秒数）都不得写进
 // OtherRatios——它会被 ApplyOtherRatiosToFloat 当成倍率再乘一遍。
-const audioBillingKey = "audio_minutes"
+const audioBillingKey = billing_setting.AudioMinutesRatioKey
 
 // secondsPerMinute 把产出秒数与按分钟计价的基础单价对齐。
 const secondsPerMinute = 60.0
 
 // maxAudioSeconds 是单次音频生成请求的产出上限（上游 2 分钟）。
-// 提交时的预扣估值以此为上限：预扣即使用户预估不足也不会低估上游真实产出。
-const maxAudioSeconds = 120
-
-// audioCharsPerSecond 是提交时估算音频时长的默认语速（字符/秒），用于在没有任何
-// 时长线索时得到一个可预扣的量级。
-const audioCharsPerSecond = 4.0
-
-// audioEstimateSafetyFactor 是提交估算的安全系数：预估比理论朗读时长留出余量，
-// 覆盖停顿、语气与音效段落，避免真实产出超出预估。
-const audioEstimateSafetyFactor = 1.2
+const maxAudioSeconds = billing_setting.AudioMaxSeconds
 
 // IsAudioModel 判断模型是否按生成音频时长计费。
 //
 // 判定来源是 setting/billing_setting 的按量计费注册表：同一份判定既驱动这里的
 // 请求/结算分流，也驱动定价页的"按量计费"标注，避免两处各维护一份模型名列表。
-// 方舟把音频生成任务放在与视频生成相同的任务接口上，请求/轮询结构一致，只有请求
-// 参数与计费口径不同，因此复用同一个 adaptor，用模型名分流。
+//
+// 注意：这个判定只回答"怎么计费"，不回答"打哪个接口"。方舟的
+// /api/v3/contents/generations/tasks 上没有音频模型——请求会被上游拒绝，所以在
+// 这里发起新请求之前必须先拦下音频模型（见 ValidateRequestAndSetAction），
+// 让它走豆包语音的同步接口（relay/channel/doubaoaudio）。
+//
+// 保留该判定是因为历史任务记录里存在音频任务：它们的结算仍要按音频时长处理。
 func IsAudioModel(modelName string) bool {
 	return billing_setting.IsMeteredBillingModel(modelName)
 }
 
 // EstimateAudioSeconds 在提交时估算一次生成会产生多少秒音频。
 //
-// 这是一个刻意的保守估值：预估时长既是预扣额度，也是结算阶段退款的上限，
-// 因此宁可略高也不能低。估算依据按优先级取：
-//  1. 请求显式声明的目标时长（顶层 duration / seconds，协议已做上界校验）；
-//  2. 文本长度与用户设置的语速；
-//  3. 都拿不到时取单次产出上限。
+// 具体启发式定义在 setting/billing_setting，与同步音频生成接口共用同一份实现，
+// 避免两条音频链路对同一段文本给出不同的预扣量级。
 func EstimateAudioSeconds(reqSeconds int, textChars int, speechRate int) float64 {
-	if reqSeconds > 0 {
-		return clampAudioSeconds(float64(reqSeconds))
-	}
-	if textChars <= 0 {
-		return maxAudioSeconds
-	}
-	// speech_rate 100 表示 2 倍速，-50 表示 0.5 倍速（上游量纲）；0 表示未设置。
-	speed := 1.0
-	if speechRate != 0 {
-		speed = 1.0 + float64(speechRate)/100.0
-		if speed < 0.5 {
-			speed = 0.5
-		}
-	}
-	return clampAudioSeconds(float64(textChars) / audioCharsPerSecond / speed * audioEstimateSafetyFactor)
-}
-
-// clampAudioSeconds 把估算值收口到 [1, maxAudioSeconds]。
-func clampAudioSeconds(seconds float64) float64 {
-	if !(seconds > 1) {
-		return 1
-	}
-	if seconds > maxAudioSeconds {
-		return maxAudioSeconds
-	}
-	return seconds
+	return billing_setting.EstimateAudioSeconds(reqSeconds, textChars, speechRate)
 }
 
 // ParseSpeechRate 读取 metadata.speech_rate（可能是数字或字符串）。

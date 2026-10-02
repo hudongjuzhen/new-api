@@ -35,6 +35,10 @@ const (
 	RelayModeAudioSpeech        // tts
 	RelayModeAudioTranscription // whisper
 	RelayModeAudioTranslation   // whisper
+	// RelayModeAudioGenerations 是"音频创作"接口（豆包语音 Seed Audio）：
+	// 同步返回合成好的音频，语义上既不是 TTS 配音（voice/input 是语音合成参数），
+	// 也不是异步任务，因此单独一个 relay mode。
+	RelayModeAudioGenerations
 
 	RelayModeSunoFetch
 	RelayModeSunoFetchByID
@@ -80,6 +84,8 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeResponses
 	} else if strings.HasPrefix(path, "/v1/alpha/search") {
 		relayMode = RelayModeAlphaSearch
+	} else if strings.HasPrefix(path, "/v1/audio/generations") {
+		relayMode = RelayModeAudioGenerations
 	} else if strings.HasPrefix(path, "/v1/audio/speech") {
 		relayMode = RelayModeAudioSpeech
 	} else if strings.HasPrefix(path, "/v1/audio/transcriptions") {

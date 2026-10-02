@@ -9,6 +9,64 @@ const (
 	FileTypeFile  FileType = "file"  // Generic file type
 )
 
+// AudioMinutesRatioKey 是按生成音频时长计费时使用的计费维度键名。
+//
+// 模型（如 seed-audio-1.0）在价格表里配的是**每分钟**单价，而这个键的值是对
+// ModelPrice 的乘数，所以它必须是**分钟数**：预扣额度随之等于
+// 单价 × 分组倍率 × 预估分钟数。把秒数当乘数会让 2 分钟的预估变成 120 倍单价。
+//
+// 放在 relaykit 是因为两条音频链路都要用它——同步音频生成（请求的
+// GetTokenCountMeta 把它放进 BillingRatios）与音频任务（adaptor 把它放进
+// OtherRatios）——而 relaykit 不能反向依赖主模块。
+const AudioMinutesRatioKey = "audio_minutes"
+
+// 估算音频产出时长时使用的常量。
+//
+// 时长既是预扣额度也是结算基准，因此宁可略高也不能低：低估会让真实产出超出预扣，
+// 高估只是把额度多冻结一会儿。
+const (
+	// AudioCharsPerSecond 是没有语速线索时使用的默认语速（字符/秒）。
+	AudioCharsPerSecond = 4.0
+	// AudioEstimateSafetyFactor 是安全系数，覆盖停顿、语气与音效段落。
+	AudioEstimateSafetyFactor = 1.2
+	// AudioMaxSeconds 是单次音频生成的产出上限（上游 2 分钟）。
+	AudioMaxSeconds = 120
+)
+
+// EstimateAudioSeconds 估算一次音频生成会产生多少秒音频。
+//
+// 依据按优先级取：请求显式声明的目标时长、文本长度与语速、单次产出上限。
+// 结果收口在 [1, AudioMaxSeconds]：0 会让预扣变成 0（结算随之失真），超过上限
+// 则会多冻结用户额度。speech_rate 采用上游量纲：100 为 2 倍速，-50 为 0.5 倍速，
+// 0 表示未设置。
+func EstimateAudioSeconds(reqSeconds int, textChars int, speechRate int) float64 {
+	if reqSeconds > 0 {
+		return ClampAudioSeconds(float64(reqSeconds))
+	}
+	if textChars <= 0 {
+		return AudioMaxSeconds
+	}
+	speed := 1.0
+	if speechRate != 0 {
+		speed = 1.0 + float64(speechRate)/100.0
+		if speed < 0.5 {
+			speed = 0.5
+		}
+	}
+	return ClampAudioSeconds(float64(textChars) / AudioCharsPerSecond / speed * AudioEstimateSafetyFactor)
+}
+
+// ClampAudioSeconds 把时长收口到 [1, AudioMaxSeconds]。
+func ClampAudioSeconds(seconds float64) float64 {
+	if !(seconds > 1) {
+		return 1
+	}
+	if seconds > AudioMaxSeconds {
+		return AudioMaxSeconds
+	}
+	return seconds
+}
+
 type TokenType string
 
 const (

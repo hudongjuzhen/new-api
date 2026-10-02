@@ -45,6 +45,8 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 		fallthrough
 	case relayconstant.RelayModeAudioTranscription:
 		err = relay.AudioHelper(c, info)
+	case relayconstant.RelayModeAudioGenerations:
+		err = relay.AudioGenerationHelper(c, info)
 	case relayconstant.RelayModeRerank:
 		err = relay.RerankHelper(c, info)
 	case relayconstant.RelayModeEmbeddings:
