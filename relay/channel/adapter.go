@@ -61,6 +61,35 @@ type TaskAdaptor interface {
 	// Return 0 to keep the pre-charged amount unchanged.
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 
+	// ── Optional: metered (per-unit) billing ─────────────────────────
+
+	// MeteredPreChargeQuota records, per metered dimension, the quota the
+	// submit-time estimate actually reserved.
+	//
+	// It exists for tasks whose charge follows a quantity the upstream only
+	// reveals after the task finishes: a model billed per minute of generated
+	// audio prices its pre-charge through PriceData.AddOtherRatio under a
+	// dimension key such as "audio_seconds", and records here how much quota
+	// that dimension reserved. The polling layer then re-prices the finished
+	// task from that frozen record plus the quantity MeteredUsage reports, so a
+	// price or group-ratio change between submit and completion never re-prices
+	// a task that is already running.
+	//
+	// Return nil when nothing was pre-charged for any metered dimension.
+	MeteredPreChargeQuota(info *relaycommon.RelayInfo) map[string]int
+
+	// MeteredUsage reads the actually-produced quantities a successful task
+	// reported, keyed by the dimensions declared above. A dimension that is
+	// missing, unparseable or out of range is omitted, and the polling layer
+	// then keeps the pre-charged amount for it.
+	//
+	// Implementations must clamp every value through
+	// relaycommon.ClampMeteredSeconds: these numbers come from the upstream
+	// and must never reach quota arithmetic unbounded.
+	//
+	// Return nil when the result carries no usable measurement.
+	MeteredUsage(task *model.Task, taskResult *relaycommon.TaskInfo) map[string]float64
+
 	// ── Request / Response ───────────────────────────────────────────
 
 	BuildRequestURL(info *relaycommon.RelayInfo) (string, error)
@@ -81,4 +110,17 @@ type TaskAdaptor interface {
 
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
+}
+
+// TaskMeteredBilling is the submit-time half of metered (per-unit) task
+// billing. A task adaptor implements it when the charge follows a quantity the
+// upstream only reveals after the task finishes — for example a model billed
+// per minute of generated audio.
+//
+// The submit path stores MeteredPreChargeQuota on the task's billing context;
+// the polling path later re-prices the task from that frozen record plus the
+// quantity TaskMeteredUsageReporter reports, so a price or group-ratio change
+// between submit and completion never re-prices a running task.
+type TaskMeteredBilling interface {
+	MeteredPreChargeQuota(info *relaycommon.RelayInfo) map[string]int
 }

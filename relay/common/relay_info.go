@@ -957,6 +957,31 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+
+	// MeteredUsage carries the actually-produced quantities a successful task
+	// reported, keyed by the dimensions the adaptor declared through
+	// channel.TaskAdaptor.MeteredUnitPrices. The polling layer charges
+	// Σ usage × unitPrice from these, so an adaptor that fills this field is
+	// reporting a billing basis, not a hint.
+	MeteredUsage map[string]float64 `json:"-"`
+}
+
+// AddMeteredUsage records one actually-produced quantity, bounded into
+// [minSeconds, MaxTaskMeteredSeconds]. Values that are not usable (NaN,
+// non-positive) are dropped rather than recorded as zero, so the settlement
+// treats "unknown" as "keep the pre-charged amount" instead of "charge nothing".
+func (t *TaskInfo) AddMeteredUsage(key string, seconds float64, minSeconds float64) {
+	if t == nil || key == "" {
+		return
+	}
+	clamped := ClampMeteredSeconds(seconds, minSeconds)
+	if clamped <= 0 {
+		return
+	}
+	if t.MeteredUsage == nil {
+		t.MeteredUsage = make(map[string]float64, 1)
+	}
+	t.MeteredUsage[key] = clamped
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

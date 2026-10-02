@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
+	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -597,6 +598,12 @@ func RelayTask(c *gin.Context) {
 			OtherRatios:     relayInfo.PriceData.OtherRatios(),
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+		}
+		// 按实际产出量计费的任务：记录每个计量维度在提交时预扣的额度，轮询结算
+		// 阶段据此按上游实际产出量做差额结算（金额在提交时已固化，不随后续改价
+		// 或改分组倍率变化）。
+		if meter, ok := relay.GetTaskAdaptor(result.Platform).(channel.TaskMeteredBilling); ok {
+			task.PrivateData.BillingContext.MeteredPreChargeQuota = meter.MeteredPreChargeQuota(relayInfo)
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

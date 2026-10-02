@@ -42,6 +42,18 @@ type TaskBillingClampAdjustor interface {
 	AdjustBillingOnCompleteChecked(task *model.Task, taskResult *relaycommon.TaskInfo) (int, *common.QuotaClamp)
 }
 
+// TaskMeteredUsageReporter 是 TaskPollingAdaptor 的可选扩展接口，用于"按实际
+// 产出量计费"的任务：计费基础在上游产出结果里，提交时无法确定（例如按生成音频
+// 时长计费的语音模型）。
+//
+// 轮询发现任务成功后调用一次，返回值写入 taskResult.MeteredUsage，随后由
+// SettleMeteredTaskQuota 结合随任务固化的预扣额度重算差额。实现必须把每个数量
+// 经 relaycommon.ClampMeteredSeconds 收口后再返回；返回 nil 表示没有可用度量，
+// 任务保持预扣额度。
+type TaskMeteredUsageReporter interface {
+	MeteredUsage(task *model.Task, taskResult *relaycommon.TaskInfo) map[string]float64
+}
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -593,6 +605,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		}
 		shouldSettle = true
+		// 按实际产出量计费的适配器在这里上报真实产出量（如生成音频的时长）。
+		// 只在上报维度已随任务固化时才会被结算，未上报则保持预扣额度。
+		if reporter, ok := adaptor.(TaskMeteredUsageReporter); ok {
+			taskResult.MeteredUsage = reporter.MeteredUsage(task, taskResult)
+		}
 	case model.TaskStatusFailure:
 		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", taskId), task)
 		task.Status = model.TaskStatusFailure
@@ -679,17 +696,24 @@ func truncateBase64(s string) string {
 }
 
 // settleTaskBillingOnComplete 任务完成时的统一计费调整。
-// 优先级：1. adaptor.AdjustBillingOnComplete（或 Checked 变体）返回正数 → 使用 adaptor 计算的额度
-//
-//  2. taskResult.TotalTokens > 0 → 按 token 重算
-//  3. 都不满足 → 保持预扣额度不变
+// 优先级：
+//  1. taskResult.MeteredUsage 与任务固化的单价表 → 按实际产出量结算
+//     （例如按生成音频分钟数计费的模型；实际时长只有成功后才拿得到）
+//  2. adaptor.AdjustBillingOnComplete（或 Checked 变体）返回正数 → 使用 adaptor 计算的额度
+//  3. taskResult.TotalTokens > 0 → 按 token 重算
+//  4. 都不满足 → 保持预扣额度不变
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	// 0. 按次计费的任务不做差额结算
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return
 	}
-	// 1. 优先让 adaptor 决定最终额度；实现 Checked 变体的 adaptor 会同时透出
+	// 1. 按实际产出量结算：产出量由适配器上报（例如生成音频的实际时长，
+	//    只有任务成功后才拿得到），单价与预估量已随任务固化。
+	if SettleMeteredTaskQuota(ctx, task, taskResult.MeteredUsage) {
+		return
+	}
+	// 2. 优先让 adaptor 决定最终额度；实现 Checked 变体的 adaptor 会同时透出
 	//    额度饱和事件（QuotaClamp → 差额结算日志 admin_info）。
 	if ca, ok := adaptor.(TaskBillingClampAdjustor); ok {
 		if actualQuota, clamp := ca.AdjustBillingOnCompleteChecked(task, taskResult); actualQuota > 0 {
@@ -700,10 +724,10 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
 		return
 	}
-	// 2. 回退到 token 重算
+	// 3. 回退到 token 重算
 	if taskResult.TotalTokens > 0 {
 		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
 		return
 	}
-	// 3. 无调整，保持预扣额度
+	// 4. 无调整，保持预扣额度
 }

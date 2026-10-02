@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -144,6 +145,32 @@ func validatePrompt(prompt string) *dto.TaskError {
 // as a billing multiplier (OtherRatio "seconds"); an unbounded value could
 // overflow quota calculation into a negative charge.
 const MaxTaskDurationSeconds = 3600
+
+// MaxTaskMeteredSeconds caps an actually-produced quantity (in seconds) that an
+// adaptor reports as the task's billing basis. A metered duration is derived
+// from upstream output, so — unlike a request parameter — no request validator
+// ever saw it; it is bounded here before it reaches quota arithmetic.
+const MaxTaskMeteredSeconds = 3600
+
+// ClampMeteredSeconds bounds one upstream-reported duration to
+// [minSeconds, MaxTaskMeteredSeconds]. Every quantity that an adaptor turns
+// into a metered usage dimension passes through here, so the core can rely on
+// the bound regardless of which adaptor produced the value.
+//
+// NaN and negative durations report 0 ("no usable measurement"). Callers must
+// treat 0 as unknown and keep the pre-charged amount, never as a zero charge.
+func ClampMeteredSeconds(seconds float64, minSeconds float64) float64 {
+	if math.IsNaN(seconds) || seconds < 0 {
+		return 0
+	}
+	if seconds < minSeconds {
+		return minSeconds
+	}
+	if seconds > MaxTaskMeteredSeconds {
+		return MaxTaskMeteredSeconds
+	}
+	return seconds
+}
 
 func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
 	seconds := req.Duration

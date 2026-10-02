@@ -95,3 +95,13 @@ func (BaseBilling) AdjustBillingOnSubmit(_ *relaycommon.RelayInfo, _ []byte) map
 func (BaseBilling) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
 	return 0
 }
+
+// MeteredPreChargeQuota returns nil (no metered dimension).
+func (BaseBilling) MeteredPreChargeQuota(_ *relaycommon.RelayInfo) map[string]int {
+	return nil
+}
+
+// MeteredUsage returns nil (nothing measured).
+func (BaseBilling) MeteredUsage(_ *model.Task, _ *relaycommon.TaskInfo) map[string]float64 {
+	return nil
+}

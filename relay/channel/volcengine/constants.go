@@ -11,6 +11,10 @@ var ModelList = []string{
 	"doubao-seedream-4-5-251128",
 	"doubao-seedream-4-0-250828",
 	"doubao-seedream-4-0-20260415",
+	// 音频生成：/api/v3/contents/generations/tasks（Seed Audio 系列）
+	// 与视频生成共用同一任务接口；计费按"生成音频分钟数"，单价配置为
+	// 每分钟价格，实际按上游产出的秒数结算（见 relay/channel/task/doubao）。
+	"seed-audio-1.0",
 	// 视频生成：/api/v3/contents/generations/tasks（Seedance 系列）
 	"doubao-seedance-2-5-260628",
 	"doubao-seedance-2-0-260128",
