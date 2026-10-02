@@ -120,11 +120,10 @@ type TaskBillingContext struct {
 	OtherRatios     map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
 	OriginModelName string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
 	PerCallBilling  bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
-	// MeteredPreChargeQuota 记录"按实际产出量计费"维度在提交时预扣的额度，键是
-	// 产出量维度（如 audio_seconds）。这些维度在 OtherRatios 里的倍率是提交时
-	// 预估的产出量，两者一起固化后，轮询结算阶段就能在不依赖当前价格表的前提下
-	// 按实际上报的产出量重算差额。
-	MeteredPreChargeQuota map[string]int `json:"metered_pre_charge_quota,omitempty"`
+	// MeteredBasis 记录"按实际产出量计费"维度在提交时冻结的计价基础：预估产出量
+	// （键为维度名，如 audio_minutes）与每个单位的额度。轮询结算阶段据此把预扣额度
+	// 按"实际产出量 / 预估产出量"缩放，既不依赖当前价格表，也不受事后改价影响。
+	MeteredBasis map[string]commonRelay.MeteredBasis `json:"metered_basis,omitempty"`
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -136,14 +135,15 @@ func (t *Task) GetUpstreamTaskID() string {
 	return t.TaskID
 }
 
-// MeteredPreChargeQuota 返回某个"按实际产出量计费"维度在提交时预扣的额度。
-// 未按量计费、或任务早于该能力上线时返回 0。
-func (t *Task) MeteredPreChargeQuota(key string) int {
+// MeteredBasis 返回某个"按实际产出量计费"维度在提交时冻结的计价基础。
+// 未按量计费、或任务早于该能力上线时返回 false。
+func (t *Task) MeteredBasis(key string) (commonRelay.MeteredBasis, bool) {
 	billingContext := t.PrivateData.BillingContext
 	if billingContext == nil {
-		return 0
+		return commonRelay.MeteredBasis{}, false
 	}
-	return billingContext.MeteredPreChargeQuota[key]
+	basis, ok := billingContext.MeteredBasis[key]
+	return basis, ok
 }
 
 // GetResultURL 获取任务结果 URL（视频地址等）

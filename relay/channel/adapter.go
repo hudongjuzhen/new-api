@@ -63,29 +63,34 @@ type TaskAdaptor interface {
 
 	// ── Optional: metered (per-unit) billing ─────────────────────────
 
-	// MeteredPreChargeQuota records, per metered dimension, the quota the
-	// submit-time estimate actually reserved.
+	// MeteredBillingBasis declares, per metered dimension, the unit price the
+	// submit-time estimate was priced at and the estimated quantity it priced.
 	//
 	// It exists for tasks whose charge follows a quantity the upstream only
 	// reveals after the task finishes: a model billed per minute of generated
-	// audio prices its pre-charge through PriceData.AddOtherRatio under a
-	// dimension key such as "audio_seconds", and records here how much quota
-	// that dimension reserved. The polling layer then re-prices the finished
-	// task from that frozen record plus the quantity MeteredUsage reports, so a
-	// price or group-ratio change between submit and completion never re-prices
-	// a task that is already running.
+	// audio announces {"audio_minutes": {quantity: 2, unitPrice: <quota per
+	// minute>}} for a two-minute estimate. The polling layer freezes both numbers
+	// on the task and later re-prices it as
 	//
-	// Return nil when nothing was pre-charged for any metered dimension.
-	MeteredPreChargeQuota(info *relaycommon.RelayInfo) map[string]int
+	//	pre-charge × min(actual, estimated) / estimated
+	//
+	// so a price or group-ratio change between submit and completion never
+	// re-prices a task that is already running.
+	//
+	// unitPrice is in the same quota currency as PriceData.Quota and already
+	// includes the group ratio, so quantity × unitPrice must equal the quota the
+	// pre-charge actually reserved for that dimension — not more, not less.
+	//
+	// Return nil for tasks with no metered dimension.
+	MeteredBillingBasis(info *relaycommon.RelayInfo) map[string]relaycommon.MeteredBasis
 
 	// MeteredUsage reads the actually-produced quantities a successful task
-	// reported, keyed by the dimensions declared above. A dimension that is
-	// missing, unparseable or out of range is omitted, and the polling layer
-	// then keeps the pre-charged amount for it.
+	// reported, keyed by the dimensions declared above, in the same unit as the
+	// estimated quantity. A dimension that is missing, unparseable or out of
+	// range is omitted, and the polling layer then keeps the pre-charged amount.
 	//
-	// Implementations must clamp every value through
-	// relaycommon.ClampMeteredSeconds: these numbers come from the upstream
-	// and must never reach quota arithmetic unbounded.
+	// Implementations must bound every value before returning: these numbers come
+	// from the upstream and must never reach quota arithmetic unbounded.
 	//
 	// Return nil when the result carries no usable measurement.
 	MeteredUsage(task *model.Task, taskResult *relaycommon.TaskInfo) map[string]float64
@@ -117,10 +122,10 @@ type OpenAIVideoConverter interface {
 // upstream only reveals after the task finishes — for example a model billed
 // per minute of generated audio.
 //
-// The submit path stores MeteredPreChargeQuota on the task's billing context;
-// the polling path later re-prices the task from that frozen record plus the
+// The submit path freezes the returned basis on the task's billing context; the
+// polling path later re-prices the task from that frozen record plus the
 // quantity TaskMeteredUsageReporter reports, so a price or group-ratio change
 // between submit and completion never re-prices a running task.
 type TaskMeteredBilling interface {
-	MeteredPreChargeQuota(info *relaycommon.RelayInfo) map[string]int
+	MeteredBillingBasis(info *relaycommon.RelayInfo) map[string]relaycommon.MeteredBasis
 }

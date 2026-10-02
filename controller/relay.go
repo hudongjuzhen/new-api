@@ -599,11 +599,11 @@ func RelayTask(c *gin.Context) {
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 		}
-		// 按实际产出量计费的任务：记录每个计量维度在提交时预扣的额度，轮询结算
-		// 阶段据此按上游实际产出量做差额结算（金额在提交时已固化，不随后续改价
-		// 或改分组倍率变化）。
+		// 按实际产出量计费的任务：把提交时的计价基础（预估产出量 + 单位额度）
+		// 随任务冻结下来，轮询结算阶段据此按上游实际产出量做差额结算。金额在
+		// 提交时已固化，不随后续改价或改分组倍率变化。
 		if meter, ok := relay.GetTaskAdaptor(result.Platform).(channel.TaskMeteredBilling); ok {
-			task.PrivateData.BillingContext.MeteredPreChargeQuota = meter.MeteredPreChargeQuota(relayInfo)
+			task.PrivateData.BillingContext.MeteredBasis = meter.MeteredBillingBasis(relayInfo)
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

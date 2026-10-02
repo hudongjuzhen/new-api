@@ -181,9 +181,13 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 // 视频任务：按请求 metadata 中的输出分辨率与是否包含视频输入计费。
 //
 // 音频任务（Seed Audio）：按"生成音频分钟数"计费，而真实时长只有任务成功后才
-// 知道，因此这里返回的是保守预估秒数（见 EstimateAudioSeconds）。预估秒数既是
-// 预扣额度，也是结算阶段退款的上限：任务成功后 MeteredUsage 用上游实际产出时长
-// 重算，短了退款，长了以上限为准。
+// 知道，所以这里返回的是保守预估**分钟数**——OtherRatios 的值是对基准价的乘数，
+// 而基准价就是"每分钟"单价，因此单位必须是分钟而不是秒。任务成功后 MeteredUsage
+// 用上游实际产出时长重算，短了退款，长了以上限为准。
+//
+// 注意：这里只能放"计费乘数"。估算出的原始秒数属于记账数据而非乘数，放进
+// OtherRatios 会被 ApplyOtherRatiosToFloat 当成倍率再乘一遍，因此它随
+// MeteredBillingBasis 冻结在任务上，不进入 PriceData。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
@@ -191,7 +195,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 	if IsAudioModel(info.OriginModelName) {
 		seconds := EstimateAudioSeconds(req.Duration, audioTextChars(req), ParseSpeechRate(req.Metadata["speech_rate"]))
-		return map[string]float64{audioBillingKey: seconds}
+		return map[string]float64{audioBillingKey: seconds / secondsPerMinute}
 	}
 	hasVideo := hasVideoInMetadata(req.Metadata)
 	resolution, _ := req.Metadata["resolution"].(string)
@@ -202,12 +206,16 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return map[string]float64{"video_input": ratio}
 }
 
-// MeteredPreChargeQuota 记录音频任务在提交时按预估时长实际预扣的额度，随任务
-// 固化。轮询结算阶段用它与预估秒数反推出有效单价，再乘以上游实际产出时长。
+// MeteredBillingBasis 冻结音频任务的计价基础：预估产出分钟数与"每分钟值多少
+// 额度"。
 //
-// 配置侧的模型单价是"每分钟"价格，而计量维度 audio_seconds 的单位是秒，因此这里
-// 必须先折算再回传：预扣额度 = 单价 × QuotaPerUnit × 分组倍率 × 预估秒数 / 60。
-func (a *TaskAdaptor) MeteredPreChargeQuota(info *relaycommon.RelayInfo) map[string]int {
+// 单位额度直接由配置侧单价折算，与 relay_task.go 的预扣算式一致：
+//
+//	单位额度 = ModelPrice × QuotaPerUnit × 分组倍率
+//
+// 两者相乘即该维度预扣的额度。轮询结算阶段用 min(实际上报分钟数, 预估分钟数) ×
+// 单位额度 重算最终额度，因此这里必须与预扣算式保持同一口径。
+func (a *TaskAdaptor) MeteredBillingBasis(info *relaycommon.RelayInfo) map[string]relaycommon.MeteredBasis {
 	if info == nil || !IsAudioModel(info.OriginModelName) {
 		return nil
 	}
@@ -215,26 +223,27 @@ func (a *TaskAdaptor) MeteredPreChargeQuota(info *relaycommon.RelayInfo) map[str
 	if !info.PriceData.UsePrice {
 		base = info.PriceData.ModelRatio
 	}
-	seconds := info.PriceData.OtherRatios()[audioBillingKey]
-	if !(base > 0) || !(seconds > 0) {
+	minutes := info.PriceData.OtherRatios()[audioBillingKey]
+	unitPrice := base * common.QuotaPerUnit * info.PriceData.GroupRatioInfo.GroupRatio
+	basis, ok := relaycommon.MeteredBasisFor(minutes, unitPrice)
+	if !ok {
 		return nil
 	}
-	quota, _ := common.QuotaFromFloatChecked(
-		base * common.QuotaPerUnit * info.PriceData.GroupRatioInfo.GroupRatio * seconds / 60.0)
-	if quota <= 0 {
-		return nil
-	}
-	return map[string]int{audioBillingKey: quota}
+	return map[string]relaycommon.MeteredBasis{audioBillingKey: basis}
 }
 
-// MeteredUsage 报告一次音频生成的结果产物需要重新计费的秒数。
+// MeteredUsage 报告一次音频生成实际产出了多少**分钟**音频（audioBillingKey 的
+// 单位）。
+//
+// 结算按"单位额度 × min(实际量, 预估量)"计算，因此这里返回的单位必须与提交时冻结
+// 在 MeteredBasis 里的预估量一致，否则结算会按错误的倍率退还或补扣。
 //
 // 上游结果里直接上报了产出时长时，ParseTaskResult 已经把它记进
-// taskResult.MeteredUsage，这里返回 nil 交由核心结算；只有上游没上报时，才由
-// 本方法读回产物音频文件实测时长作为兜底。
+// taskResult.MeteredUsage，这里返回 nil 交由核心结算；只有上游没上报时，才由本
+// 方法读回产物音频文件实测时长作为兜底。
 //
-// 无论走哪条路径，返回值都以"提交时固化的预估秒数"为上界：预估即退款上限，
-// 上游产出超长时不会向用户补扣。
+// 无论走哪条路径，返回值都以"提交时冻结的预估时长"为上界：预估即退款上限，上游
+// 产出超长时不会向用户补扣。
 func (a *TaskAdaptor) MeteredUsage(task *model.Task, taskResult *relaycommon.TaskInfo) map[string]float64 {
 	if !a.audioModel(task) {
 		return nil
@@ -247,8 +256,8 @@ func (a *TaskAdaptor) MeteredUsage(task *model.Task, taskResult *relaycommon.Tas
 	if billingContext == nil {
 		return nil
 	}
-	maxSeconds := billingContext.OtherRatios[audioBillingKey]
-	if !(maxSeconds > 0) || taskResult == nil || taskResult.Url == "" {
+	basis, ok := task.MeteredBasis(audioBillingKey)
+	if !ok || !(basis.Quantity > 0) || taskResult == nil || taskResult.Url == "" {
 		return nil
 	}
 	measured, err := channel.MeasureAudioDuration(taskResult.Url)
@@ -257,13 +266,15 @@ func (a *TaskAdaptor) MeteredUsage(task *model.Task, taskResult *relaycommon.Tas
 		return nil
 	}
 	seconds := relaycommon.ClampMeteredSeconds(measured, 1)
-	if seconds > maxSeconds {
-		seconds = maxSeconds
-	}
 	if seconds <= 0 {
 		return nil
 	}
-	return map[string]float64{audioBillingKey: seconds}
+	minutes := seconds / secondsPerMinute
+	// 预估即退款上限：实测比预估长时以预估为准，不向用户补扣。
+	if minutes > basis.Quantity {
+		minutes = basis.Quantity
+	}
+	return map[string]float64{audioBillingKey: minutes}
 }
 
 // taskModelName 读取任务记录里的模型名（优先计费上下文，其次任务属性）。
@@ -486,9 +497,14 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		// 音频生成任务：上游直接上报了产出时长时，它就是本次计费的计量基础，
 		// 差额结算据此返还未生成的时长；拿不到则由 MeteredUsage 读回音频实测。
 		// 只对按音频时长计费的模型记录：视频任务的时长来自请求参数，不是这里。
+		// 上报值先按秒收口（MaxTaskMeteredSeconds 的量纲是秒），再折算成
+		// audioBillingKey 的单位（分钟），与固化的预估量保持同单位。
 		if a.isAudioModel {
-			taskResult.AddMeteredUsage(audioBillingKey, reportedAudioSeconds(&resTask), 1)
+			if seconds := relaycommon.ClampMeteredSeconds(reportedAudioSeconds(&resTask), 1); seconds > 0 {
+				taskResult.AddMeteredUsage(audioBillingKey, seconds/secondsPerMinute, 1.0/secondsPerMinute)
+			}
 		}
+
 	case "failed":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"

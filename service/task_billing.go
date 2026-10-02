@@ -286,28 +286,24 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 // SettleMeteredTaskQuota 按"实际产出量"对任务额度做差额结算。
 //
 // 适用场景：计费基础只有等上游产出后才知道的任务——例如按生成音频分钟数计费
-// 的语音模型：提交时只能按请求内容预估一个保守时长并预扣，任务成功后拿到真实
-// 时长，再按实际值结算差额。
+// 的语音模型：提交时只能按请求内容预估一个时长并预扣，任务成功后拿到真实时长，
+// 再按实际值结算差额。
 //
-// 单价不在这里表达：提交时适配器已经把"这个任务每个单位产出值多少额度"折成
-// 了预扣额度（BillingContext.MeteredPreChargeQuota），而当时的预估产出量固化在
-// BillingContext.OtherRatios 的同名维度里。因此
+// 计价基础完全来自随任务冻结的 MeteredBasis（预估产出量 + 单位额度），因此之后
+// 改价、改分组倍率都不会重算在途任务，结算侧也不需要重算价格公式：
 //
-//	有效单价 = 该维度预扣额度 / 预估产出量
-//	最终额度 = 有效单价 × 适配器上报的实际产出量
+//	最终额度 = 单位额度 × min(实际产出量, 预估产出量)
 //
-// 结算只依赖随任务固化的数据，因此之后改价、改分组倍率都不会重算在途任务，也
-// 不需要在结算侧复制一份汇率常量。
-//
-// 只有"固化了预扣额度 + 适配器上报了实际产出量"的维度才参与计算：没有上报的
-// 数量不会被扣费，没有固化的维度也不会被凭空定价。返回 false 表示无法结算，
-// 调用方回退到预扣额度——绝不产生负数或信用额度。
+// 上限取预估产出量，是为了让"预估即退款上限"成立：上游产出比预估长时不向用户
+// 补扣。只有既冻结了计价基础、适配器又上报了实际产出量的维度才参与计算：没上报
+// 的数量不会被扣费，没冻结的维度也不会被凭空定价。返回 false 表示无法结算，调用
+// 方回退到预扣额度——绝不产生负数或信用额度。
 func SettleMeteredTaskQuota(ctx context.Context, task *model.Task, usage map[string]float64) bool {
 	if task == nil || len(usage) == 0 {
 		return false
 	}
 	billingContext := task.PrivateData.BillingContext
-	if billingContext == nil || len(billingContext.MeteredPreChargeQuota) == 0 {
+	if billingContext == nil || len(billingContext.MeteredBasis) == 0 {
 		return false
 	}
 
@@ -321,20 +317,17 @@ func SettleMeteredTaskQuota(ctx context.Context, task *model.Task, usage map[str
 	settled := make([]string, 0, len(keys))
 	for _, key := range keys {
 		quantity := usage[key]
-		declared := billingContext.OtherRatios[key]
-		preChargedQuota := task.MeteredPreChargeQuota(key)
-		if !(quantity > 0) || !(declared > 0) || preChargedQuota <= 0 ||
-			math.IsNaN(quantity) || math.IsNaN(declared) {
+		basis, ok := task.MeteredBasis(key)
+		if !ok || !(quantity > 0) || !(basis.Quantity > 0) || !(basis.UnitPrice > 0) ||
+			math.IsNaN(quantity) || math.IsNaN(basis.Quantity) {
 			continue
 		}
-		// 结算不会超过该维度提交时预扣的额度：实际产出量低于预估时按实际退还，
-		// 高于预估时以上限为准（例如上游产出的音频超过预估长度）。
-		if quantity > declared {
-			quantity = declared
+		// 结算不会超过预估值：实际产出量低于预估时按实际退还，高于预估时以上限为准。
+		if quantity > basis.Quantity {
+			quantity = basis.Quantity
 		}
-		unitPrice := decimal.NewFromInt(int64(preChargedQuota)).Div(decimal.NewFromFloat(declared))
-		total = total.Add(unitPrice.Mul(decimal.NewFromFloat(quantity)))
-		settled = append(settled, fmt.Sprintf("%s 实际 %.3f/预估 %.3f", key, quantity, declared))
+		total = total.Add(decimal.NewFromFloat(basis.UnitPrice).Mul(decimal.NewFromFloat(quantity)))
+		settled = append(settled, fmt.Sprintf("%s 实际 %.3f/预估 %.3f", key, quantity, basis.Quantity))
 	}
 	if len(settled) == 0 {
 		return false

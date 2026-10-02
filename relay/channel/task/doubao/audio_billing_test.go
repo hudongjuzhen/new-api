@@ -1,12 +1,16 @@
 package doubao
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -83,14 +87,15 @@ func TestParseSpeechRateClampsToUpstreamRange(t *testing.T) {
 
 // TestParseTaskResultReportsAudioDurationAndURL pins the polling contract: a
 // successful audio task must surface its produced URL and, when the upstream
-// states it, the produced duration the metered settlement re-prices from.
+// states it, the produced duration the metered settlement re-prices from —
+// expressed in the billing dimension's own unit (minutes), not seconds.
 func TestParseTaskResultReportsAudioDurationAndURL(t *testing.T) {
 	body := `{
 		"id": "cgt-audio-1",
 		"model": "seed-audio-1.0",
 		"status": "succeeded",
 		"content": {"audio_url": "https://example.com/a.mp3"},
-		"usage": {"audio_seconds": 41.5}
+		"usage": {"audio_seconds": 90}
 	}`
 
 	adaptor := &TaskAdaptor{}
@@ -101,13 +106,14 @@ func TestParseTaskResultReportsAudioDurationAndURL(t *testing.T) {
 
 	assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
 	assert.Equal(t, "https://example.com/a.mp3", result.Url)
-	assert.InDelta(t, 41.5, result.MeteredUsage[audioBillingKey], 0.0001)
+	// 90 s reported upstream ⇒ 1.5 minutes billed.
+	assert.InDelta(t, 1.5, result.MeteredUsage[audioBillingKey], 0.0001)
 }
 
 // TestParseTaskResultAudioDurationIsBounded proves an upstream-reported
 // duration cannot reach quota arithmetic unbounded: an absurd value is clamped
-// into range rather than dropped, because dropping it would silently keep the
-// pre-charge in place.
+// to MaxTaskMeteredSeconds (3600 s = 60 min) rather than dropped, because
+// dropping it would silently keep the pre-charge in place.
 func TestParseTaskResultAudioDurationIsBounded(t *testing.T) {
 	body := `{"id":"cgt-audio-2","status":"succeeded","content":{"audio_url":"https://example.com/a.mp3"},"duration":999999999}`
 
@@ -117,7 +123,7 @@ func TestParseTaskResultAudioDurationIsBounded(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
-	assert.InDelta(t, float64(relaycommon.MaxTaskMeteredSeconds), result.MeteredUsage[audioBillingKey], 0.0001)
+	assert.InDelta(t, float64(relaycommon.MaxTaskMeteredSeconds)/secondsPerMinute, result.MeteredUsage[audioBillingKey], 0.0001)
 }
 
 // TestParseTaskResultVideoTaskHasNoMeteredUsage keeps the audio path from
@@ -136,17 +142,17 @@ func TestParseTaskResultVideoTaskHasNoMeteredUsage(t *testing.T) {
 	assert.Empty(t, result.MeteredUsage)
 }
 
-// TestMeteredPreChargeQuotaMatchesTheConfiguredPerMinutePrice pins the
-// submit-time half of the audio money chain against real configured numbers:
+// TestMeteredBillingBasisMatchesTheConfiguredPerMinutePrice pins the submit-time
+// half of the audio money chain against real configured numbers:
 //
 //	seed-audio-1.0 = $0.375 per generated minute (2× the $0.1875 official rate)
-//	→ 0.375 × QuotaPerUnit(500000) = 187500 quota per minute = 3125 per second
+//	→ 0.375 × QuotaPerUnit(500000) = 187500 quota per minute
 //
-// so an estimate of 40 seconds must reserve 125000 quota. The adaptor must also
-// refuse to claim a metered dimension for video models and for inputs with no
-// usable price or estimate, because a claimed dimension with no reserved quota
-// would let the settlement re-price a task that never charged for it.
-func TestMeteredPreChargeQuotaMatchesTheConfiguredPerMinutePrice(t *testing.T) {
+// A frozen basis of 0.5 minute must therefore carry a unit price of 187500, and
+// the quota relay_task.go pre-charged (base × OtherRatios[audioBillingKey]) must
+// equal quantity × unitPrice. Equal, not merely close: the settlement re-prices
+// straight from those two numbers.
+func TestMeteredBillingBasisMatchesTheConfiguredPerMinutePrice(t *testing.T) {
 	oldQuotaPerUnit := common.QuotaPerUnit
 	common.QuotaPerUnit = 500000
 	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
@@ -156,25 +162,126 @@ func TestMeteredPreChargeQuotaMatchesTheConfiguredPerMinutePrice(t *testing.T) {
 	info.PriceData.ModelPrice = 0.375
 	info.PriceData.UsePrice = true
 	info.PriceData.GroupRatioInfo.GroupRatio = 1
-	info.PriceData.AddOtherRatio(audioBillingKey, 40)
+	// A 30 s estimate enters PriceData as a billing multiplier in minutes.
+	info.PriceData.AddOtherRatio(audioBillingKey, 30/secondsPerMinute)
 
-	assert.Equal(t, map[string]int{audioBillingKey: 125000}, adaptor.MeteredPreChargeQuota(info))
+	basis, ok := adaptor.MeteredBillingBasis(info)[audioBillingKey]
+	require.True(t, ok)
+	assert.InDelta(t, 0.5, basis.Quantity, 1e-9)
+	assert.InDelta(t, 187500, basis.UnitPrice, 1e-6)
+
+	// The basis must reproduce exactly the quota relay_task.go pre-charged.
+	preCharged, clamp := common.QuotaFromFloatChecked(info.PriceData.ApplyOtherRatiosToFloat(
+		info.PriceData.ModelPrice * common.QuotaPerUnit * info.PriceData.GroupRatioInfo.GroupRatio))
+	require.Nil(t, clamp)
+	assert.Equal(t, 93750, preCharged)
+	assert.InDelta(t, float64(preCharged), basis.Quantity*basis.UnitPrice, 1e-6)
 
 	// A video model has no metered dimension.
 	videoInfo := &relaycommon.RelayInfo{OriginModelName: "doubao-seedance-2-0-260128"}
 	videoInfo.PriceData.ModelPrice = 1
 	videoInfo.PriceData.UsePrice = true
-	assert.Nil(t, adaptor.MeteredPreChargeQuota(videoInfo))
+	assert.Nil(t, adaptor.MeteredBillingBasis(videoInfo))
 
 	// No usable price, or no estimated quantity ⇒ nothing to settle against.
 	unpriced := &relaycommon.RelayInfo{OriginModelName: "seed-audio-1.0"}
-	unpriced.PriceData.AddOtherRatio(audioBillingKey, 40)
-	assert.Nil(t, adaptor.MeteredPreChargeQuota(unpriced))
+	unpriced.PriceData.AddOtherRatio(audioBillingKey, 30/secondsPerMinute)
+	assert.Nil(t, adaptor.MeteredBillingBasis(unpriced))
 
 	unestimated := &relaycommon.RelayInfo{OriginModelName: "seed-audio-1.0"}
 	unestimated.PriceData.ModelPrice = 0.375
 	unestimated.PriceData.UsePrice = true
-	assert.Nil(t, adaptor.MeteredPreChargeQuota(unestimated))
+	assert.Nil(t, adaptor.MeteredBillingBasis(unestimated))
+}
+
+// TestEstimateBillingUsesMinutesSoTheMultiplierMatchesTheBasePrice fixes the
+// unit contract between EstimateBilling and the pre-charge:
+//
+//	charge = ModelPrice(per minute) × QuotaPerUnit × groupRatio × OtherRatios[key]
+//
+// The returned multiplier therefore has to be a fraction of a minute. Returning
+// seconds here multiplied a per-minute price by up to 120, over-reserving the
+// user's wallet by that same factor — the bug this test exists to prevent.
+func TestEstimateBillingUsesMinutesSoTheMultiplierMatchesTheBasePrice(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{OriginModelName: "seed-audio-1.0"}
+
+	// "hello" is 5 chars ⇒ 5 / 4 chars-per-second × 1.2 safety = 1.5 s, so the
+	// billing multiplier is 1.5 s worth of the per-minute price.
+	ratios := estimateAudioRatiosFor(t, adaptor, info, `{"prompt":"hello","model":"seed-audio-1.0"}`)
+	require.Contains(t, ratios, audioBillingKey)
+	assert.InDelta(t, 1.5/secondsPerMinute, ratios[audioBillingKey], 1e-9)
+
+	// Every key EstimateBilling contributes is a charge multiplier, so nothing
+	// bookkeeping-only may appear here: ApplyOtherRatiosToFloat multiplies every
+	// entry into the pre-charge. An estimate stashed here would be charged as if
+	// it were a price factor.
+	assert.Len(t, ratios, 1, "only the billing multiplier may enter OtherRatios: %v", ratios)
+
+	// An explicit target duration is honoured and still expressed in minutes.
+	explicit := estimateAudioRatiosFor(t, adaptor, info, `{"prompt":"hello","model":"seed-audio-1.0","duration":90}`)
+	assert.InDelta(t, 90.0/secondsPerMinute, explicit[audioBillingKey], 1e-9)
+	assert.Len(t, explicit, 1)
+}
+
+// TestAudioRatiosNeverExceedThePerMinuteBasePrice is the regression guard for the
+// over-charge that reached production: relay_task.go pre-charges
+//
+//	baseQuota × ∏OtherRatios
+//
+// where baseQuota is already the configured per-minute price. A multiplier
+// expressed in seconds turned a 2-minute estimate into 120× the configured
+// price ($45 instead of $0.375). This drives the real estimate through the real
+// pre-charge formula, so the length can never again be multiplied in twice.
+func TestAudioRatiosNeverExceedThePerMinuteBasePrice(t *testing.T) {
+	oldQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 500000
+	t.Cleanup(func() { common.QuotaPerUnit = oldQuotaPerUnit })
+
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{OriginModelName: "seed-audio-1.0"}
+	info.PriceData.ModelPrice = 0.375
+	info.PriceData.UsePrice = true
+	info.PriceData.GroupRatioInfo.GroupRatio = 1
+
+	ratios := estimateAudioRatiosFor(t, adaptor, info,
+		`{"prompt":"hello","model":"seed-audio-1.0","duration":3}`)
+	for key, value := range ratios {
+		info.PriceData.AddOtherRatio(key, value)
+	}
+
+	// relay_task.go's pre-charge: base quota × ∏OtherRatios.
+	baseQuota := info.PriceData.ModelPrice * common.QuotaPerUnit
+	preCharged, clamp := common.QuotaFromFloatChecked(info.PriceData.ApplyOtherRatiosToFloat(baseQuota))
+	require.Nil(t, clamp)
+
+	// 3 s is 1/20 of a minute ⇒ 0.375 / 20 = $0.01875, not 3 × $0.375.
+	assert.Equal(t, 9375, preCharged)
+	assert.InDelta(t, 0.01875, float64(preCharged)/common.QuotaPerUnit, 1e-9)
+
+	// The frozen basis the settlement re-prices from must describe that same
+	// charge, otherwise the settlement adjusts at a different rate.
+	basis := adaptor.MeteredBillingBasis(info)[audioBillingKey]
+	assert.InDelta(t, float64(preCharged), basis.Quantity*basis.UnitPrice, 1e-6)
+}
+
+// estimateAudioRatiosFor drives the real EstimateBilling entry point for an
+// audio request. It stages the parsed TaskSubmitReq on the gin context under the
+// key relaycommon.GetTaskRequest reads, which is exactly what
+// relaycommon.ValidateBasicTaskRequest does on the live path.
+func estimateAudioRatiosFor(t *testing.T, adaptor *TaskAdaptor, info *relaycommon.RelayInfo, body string) map[string]float64 {
+	t.Helper()
+
+	var req relaycommon.TaskSubmitReq
+	require.NoError(t, common.Unmarshal([]byte(body), &req))
+
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("task_request", req)
+
+	return adaptor.EstimateBilling(c, info)
 }
 
 // TestMeteredUsageRequiresFrozenDeclaration proves the settlement basis is the

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -959,22 +960,47 @@ type TaskInfo struct {
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
 
 	// MeteredUsage carries the actually-produced quantities a successful task
-	// reported, keyed by the dimensions the adaptor declared through
-	// channel.TaskAdaptor.MeteredUnitPrices. The polling layer charges
-	// Σ usage × unitPrice from these, so an adaptor that fills this field is
-	// reporting a billing basis, not a hint.
+	// reported, keyed by the billing dimensions the adaptor declared through
+	// channel.TaskAdaptor.MeteredBillingBasis. Each value uses the same unit as
+	// that dimension's estimated quantity, so the settlement can scale the
+	// frozen pre-charge by actual/estimated.
+	//
+	// An adaptor that fills this field is reporting a billing basis, not a
+	// hint — a dimension present here is re-priced — so implementations must
+	// bound every value before it reaches quota arithmetic.
 	MeteredUsage map[string]float64 `json:"-"`
 }
 
+// MeteredBasis is the frozen pricing record for one metered task dimension: the
+// quantity the submit-time estimate priced, and the quota one unit of that
+// quantity cost. Task adaptors that bill on output the upstream only reveals at
+// completion declare one per dimension; the polling layer freezes them on the
+// task and re-prices against the quantity the upstream actually produced.
+type MeteredBasis struct {
+	Quantity  float64 `json:"quantity"`
+	UnitPrice float64 `json:"unit_price"`
+}
+
+// MeteredBasisFor builds a basis record, returning false when either number is
+// unusable. A basis is only meaningful when both halves are positive: a zero
+// quantity would make the settlement divide by zero, and a zero unit price would
+// re-price the task against nothing.
+func MeteredBasisFor(quantity float64, unitPrice float64) (MeteredBasis, bool) {
+	if !(quantity > 0) || !(unitPrice > 0) || math.IsNaN(quantity) || math.IsNaN(unitPrice) {
+		return MeteredBasis{}, false
+	}
+	return MeteredBasis{Quantity: quantity, UnitPrice: unitPrice}, true
+}
+
 // AddMeteredUsage records one actually-produced quantity, bounded into
-// [minSeconds, MaxTaskMeteredSeconds]. Values that are not usable (NaN,
+// [minQuantity, MaxTaskMeteredSeconds]. Values that are not usable (NaN,
 // non-positive) are dropped rather than recorded as zero, so the settlement
 // treats "unknown" as "keep the pre-charged amount" instead of "charge nothing".
-func (t *TaskInfo) AddMeteredUsage(key string, seconds float64, minSeconds float64) {
+func (t *TaskInfo) AddMeteredUsage(key string, quantity float64, minQuantity float64) {
 	if t == nil || key == "" {
 		return
 	}
-	clamped := ClampMeteredSeconds(seconds, minSeconds)
+	clamped := ClampMeteredSeconds(quantity, minQuantity)
 	if clamped <= 0 {
 		return
 	}

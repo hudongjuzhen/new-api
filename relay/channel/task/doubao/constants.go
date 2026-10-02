@@ -33,10 +33,20 @@ var audioModelPrefixes = []string{
 
 // audioBillingKey 是"按生成音频时长计费"这一计量维度的键名。
 //
-// 同一个键贯穿全链路：提交时它是一个 OtherRatio，值等于预估产出秒数（因此
-// 预扣额度 = 模型单价 × 分组倍率 × 预估秒数）；随任务固化后，轮询结算阶段用
-// "该维度预扣额度 ÷ 预估秒数"反推出有效单价，再乘以上游实际产出的秒数。
-const audioBillingKey = "audio_seconds"
+// 值必须与 ModelPrice 的单位一致：配置侧单价的含义是"每个生成分钟的价格"，
+// 而 OtherRatios 里的值是对基准价的乘数，所以这里的值等于**预估产出分钟数**
+// （预估秒数 / 60），预扣额度随之自然等于 单价 × 分组倍率 × 预估分钟数。
+//
+// 这个键随任务冻结在 MeteredBasis 中，轮询结算阶段用 min(实际上报分钟数,
+// 预估分钟数) × 每分钟额度 重算最终额度。单位一旦写错就会成倍放大预扣费：把
+// 秒数直接当作乘数，2 分钟的预估会变成 120 倍单价。
+//
+// 注意：该键只能是"计费乘数"，任何记账数据（例如原始预估秒数）都不得写进
+// OtherRatios——它会被 ApplyOtherRatiosToFloat 当成倍率再乘一遍。
+const audioBillingKey = "audio_minutes"
+
+// secondsPerMinute 把产出秒数与按分钟计价的基础单价对齐。
+const secondsPerMinute = 60.0
 
 // maxAudioSeconds 是单次音频生成请求的产出上限（上游 2 分钟）。
 // 提交时的预扣估值以此为上限：预扣即使用户预估不足也不会低估上游真实产出。
