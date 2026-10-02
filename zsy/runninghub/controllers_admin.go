@@ -29,10 +29,16 @@ func parseListQuery(c *gin.Context) AppListQuery {
 	q := AppListQuery{
 		Keyword:   keyword,
 		Kind:      kind,
+		Site:      strings.TrimSpace(c.Query("site")),
 		Page:      p,
 		PageSize:  pageSize,
 		SortBy:    sortBy,
 		SortOrder: sortOrder,
+	}
+	if s := strings.TrimSpace(c.Query("category_id")); s != "" {
+		if id, err := strconv.ParseUint(s, 10, 32); err == nil {
+			q.CategoryID = uint(id)
+		}
 	}
 	if s := c.Query("published"); s != "" {
 		v := s == "1" || strings.EqualFold(s, "true")

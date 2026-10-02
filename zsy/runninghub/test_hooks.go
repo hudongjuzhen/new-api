@@ -47,6 +47,15 @@ func TestHookValidateAppCreate(dto *AppCreateDTO) error {
 // TestHookListPublicApps exposes the user-side list handler for tests.
 func TestHookListPublicApps(c *gin.Context) { listPublicApps(c) }
 
+// TestHookListAppCatalog exposes the public whole-catalog handler for tests.
+func TestHookListAppCatalog(c *gin.Context) { listAppCatalog(c) }
+
+// TestHookBuildAppCatalog runs the pure grouping step of the catalog (category
+// order, uncategorized bucket, per-category counts) without a database.
+func TestHookBuildAppCatalog(views []*AppView, categories []*AppCategoryView, generatedAt int64) *AppCatalogResponse {
+	return buildAppCatalog(views, categories, generatedAt)
+}
+
 // TestHookSiteToChannelType exercises the site→channel-type mapping table used
 // by submitAppRun / selectChannelBySiteType. Exported so the routing decision
 // (site=cn ↔ type 61, site=intl ↔ type 62) is pinned in a unit test.

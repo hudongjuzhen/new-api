@@ -51,6 +51,10 @@ func mountRoutes(router *gin.Engine) {
 			apps.POST("/fetch-template", fetchAppTemplate)
 			apps.POST("/sync-from-channel", syncAppsFromChannel)
 		}
+		// The same catalog the public endpoint serves, behind admin auth: the
+		// admin page needs unpublished apps too, so it lists via /apps, but this
+		// lets an operator preview exactly what third parties will see.
+		admin.GET("/app-catalog", listAppCatalog)
 		admin.GET("/app-categories", listCategories)
 		admin.POST("/app-categories", createCategory)
 		admin.PUT("/app-categories/:id", updateCategory)
@@ -68,7 +72,6 @@ func userRoutes(group *gin.RouterGroup) {
 		// see, and the dynamic form is rendered from the same payload.
 		apps.GET("", listPublicApps)
 		apps.GET("/:id", getPublicAppDetail)
-
 		apps.POST("/:id/run", requireCallerAuth, submitAppRun)
 		apps.GET("/task/:task_id", requireCallerAuth, getAppTaskResult)
 		// Inline text preview of one result file. Task-scoped: the URL must be
@@ -83,6 +86,11 @@ func userRoutes(group *gin.RouterGroup) {
 		// listMyRhTasks).
 		apps.GET("/tasks", requireCallerAuth, listMyRhTasks)
 	}
+	// Whole published catalog (apps + categories) in one public request, for
+	// integrators that need the full list instead of a page of the grid. Sits
+	// next to the /apps group rather than inside it so it can never be captured
+	// by a "/apps/:id"-style route.
+	group.GET("/app-catalog", listAppCatalog)
 	// Media upload proxy: forwards user files to the RunningHub site the app's
 	// `site` field declares (SSRF-safe: the target
 	// /openapi/v2/media/upload/binary is derived from the resolved channel's

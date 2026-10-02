@@ -19,14 +19,18 @@ import (
 
 // AppListQuery is the validated query shape for the list endpoint.
 type AppListQuery struct {
-	Keyword   string `json:"keyword"`
-	Kind      string `json:"kind"`
-	Published *bool  `json:"published"`
-	AdminOnly *bool  `json:"adminOnly"`
-	Page      int    `json:"page"`
-	PageSize  int    `json:"pageSize"`
-	SortBy    string `json:"sortBy"`    // id | name | createdAt
-	SortOrder string `json:"sortOrder"` // asc | desc
+	Keyword string `json:"keyword"`
+	Kind    string `json:"kind"`
+	Site    string `json:"site"`
+	// CategoryID limits the list to one category when > 0. 0 means "no filter",
+	// matching the App model's "no category" value.
+	CategoryID uint   `json:"categoryId"`
+	Published  *bool  `json:"published"`
+	AdminOnly  *bool  `json:"adminOnly"`
+	Page       int    `json:"page"`
+	PageSize   int    `json:"pageSize"`
+	SortBy     string `json:"sortBy"`    // id | name | createdAt
+	SortOrder  string `json:"sortOrder"` // asc | desc
 }
 
 // AppListResult carries pagination data + rows back to the admin UI. It is
@@ -124,6 +128,10 @@ func (q *AppListQuery) normalize() {
 	if q.PageSize > 200 {
 		q.PageSize = 200
 	}
+	// Site is a routing selector, not free text: only the two canonical values
+	// (or the labels the /channels page shows) survive. Anything else becomes ""
+	// so the filter is dropped rather than matching nothing by accident.
+	q.Site = normalizeSite(q.Site)
 	switch strings.ToLower(q.SortOrder) {
 	case "asc", "desc":
 		q.SortOrder = strings.ToLower(q.SortOrder)
@@ -177,6 +185,12 @@ func AppSearch(q AppListQuery) (AppListResult, error) {
 	base := db().Model(&App{})
 	if q.Kind != "" {
 		base = base.Where("kind = ?", q.Kind)
+	}
+	if q.Site != "" {
+		base = base.Where("site = ?", q.Site)
+	}
+	if q.CategoryID > 0 {
+		base = base.Where("category_id = ?", q.CategoryID)
 	}
 	if q.Published != nil {
 		base = base.Where("published = ?", *q.Published)

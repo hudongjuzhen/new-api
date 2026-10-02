@@ -105,6 +105,17 @@ const (
 	// ErrorCodeTokenModelForbidden: the key's model allow-list does not cover the
 	// app being run.
 	ErrorCodeTokenModelForbidden = "token_model_forbidden"
+
+	// Catalog query rejections (GET /api/zsy/rh/app-catalog). The catalog is a
+	// browsing endpoint, so a bad filter is reported instead of being silently
+	// widened or emptied.
+	//
+	// ErrorCodeCatalogInvalidKind: `kind` is not one of ai_app / workflow / model.
+	ErrorCodeCatalogInvalidKind = "invalid_kind"
+	// ErrorCodeCatalogInvalidSite: `site` is not cn / intl (or an accepted alias).
+	ErrorCodeCatalogInvalidSite = "invalid_site"
+	// ErrorCodeCatalogInvalidCategory: `categoryId` is not a non-negative integer.
+	ErrorCodeCatalogInvalidCategory = "invalid_category_id"
 )
 
 // contextKeyControllerResponds marks a submit request whose handler writes the

@@ -398,6 +398,7 @@ RunningHub 对超并发的请求是**直接拒绝**而不是排队，所以闸�
 
 | 方法 | 路径 | 鉴权 | 说明 |
 |---|---|---|---|
+| GET | `/api/zsy/rh/app-catalog` | 公开 | **全量应用目录**：已发布、非 admin-only 的全部应用（含 `paramSchema`），按分类展示顺序分组，**不分页**；可选 `kind` / `site` / `categoryId` 过滤。第三方接入首选（完整文档：`docs/zsy-runninghub-app-list-api.md`） |
 | GET | `/api/zsy/rh/apps` | 公开 | 已发布、非 admin-only 的应用列表（含 ParamSchema，供动态表单渲染） |
 | GET | `/api/zsy/rh/apps/:id` | 公开 | 应用详情（同上范围） |
 | POST | `/api/zsy/rh/apps/:id/run` | 必需 | 提交任务；body `{values, instanceType?, webhookUrl?, tokenId?}` |
@@ -430,12 +431,14 @@ run 请求/响应示例（`taskId` 是网关公开 ID，查询与取消都用它
 - **Key 不能指定别的 Key**：body 里 `tokenId` 与本 Key 不一致时返回 400 `token_selection_not_allowed`（面板调用仍可用 `tokenId` 选择付费 Key）。
 - **通用中继入口同样可用**：`POST /v1/video/generations`、`POST /v1/videos`、`POST /suno/submit/:action` 会经渠道类型（61/62/63）路由到同一 adaptor；提交响应、`GET /v1/video/generations/{task_id}` 与 `GET /v1/videos/{task_id}` 查询均已补齐（见 §3.7）。但这些入口绕过插件的参数 schema 校验、站点选路与排队准入，计费退回宿主价格表的基础价，因此**第三方集成应优先使用 4.1 的插件接口**。
 - **前端可见**：应用中心「About this app」下方直接给出 run / query / cancel 的可复制示例（cURL / Python / JavaScript），示例 body 由该应用的参数 schema 生成（`web/src/extensions/zsy-runninghub/lib/api-samples.ts`）。
+- **第三方接入文档**：应用列表 / 目录接口、`AppView` 与 `paramSchema` 全字段、提交与轮询链路、错误码与推荐接入流程，见 `docs/zsy-runninghub-app-list-api.md`。
 
 ### 4.2 管理端（AdminAuth，挂载在 `/dashboard/zsy/rh`）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/dashboard/zsy/rh/apps` | 应用分页列表（含关键词 / kind / 分类过滤） |
+| GET | `/dashboard/zsy/rh/app-catalog` | 与公开目录接口同一实现，供管理员预览第三方可见内容（已发布 + 非 admin-only） |
 | GET | `/dashboard/zsy/rh/apps/:id` | 应用详情 |
 | POST | `/dashboard/zsy/rh/apps` | 新建应用（保存时同步模型价格表，见 `syncAppBillingPrice`） |
 | PUT | `/dashboard/zsy/rh/apps/:id` | 更新应用 |
