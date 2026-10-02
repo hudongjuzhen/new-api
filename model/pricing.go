@@ -37,7 +37,10 @@ type Pricing struct {
 	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
 	BillingMode            string                  `json:"billing_mode,omitempty"`
 	BillingExpr            string                  `json:"billing_expr,omitempty"`
-	PricingVersion         string                  `json:"pricing_version,omitempty"`
+	// MeteredUnit 是按实际产出量计费模型的计价单位（如 "minute"）：ModelPrice
+	// 的含义是"每个该单位的价格"，定价页据此显示"$0.375 / 分钟"而不是"$/次"。
+	MeteredUnit    string `json:"metered_unit,omitempty"`
+	PricingVersion string `json:"pricing_version,omitempty"`
 }
 
 type PricingVendor struct {
@@ -418,6 +421,12 @@ func updatePricing() {
 				pricing.BillingMode = billingMode
 				pricing.BillingExpr = expr
 			}
+		}
+		// 按实际产出量计费的模型：标记计费口径与计价单位，让定价页能显示
+		// "$0.375 / 分钟"而不是"按次"。
+		if billing_setting.IsMeteredBillingModel(model) {
+			pricing.BillingMode = billing_setting.BillingModeMetered
+			pricing.MeteredUnit = billing_setting.GetMeteredUnit(model)
 		}
 		pricingMap = append(pricingMap, pricing)
 	}

@@ -10,11 +10,17 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// TestIsAudioModelRoutesSeedAudioToDurationBilling pins the routing decision to
+// the shared metered-billing registry: exactly the models the pricing page marks
+// as metered get billed by produced duration, so display and charging can never
+// disagree. It deliberately rejects near-miss names — a prefix guess would route
+// a per-request model through a settlement it has no frozen basis for.
 func TestIsAudioModelRoutesSeedAudioToDurationBilling(t *testing.T) {
 	cases := []struct {
 		model string
@@ -22,14 +28,22 @@ func TestIsAudioModelRoutesSeedAudioToDurationBilling(t *testing.T) {
 	}{
 		{model: "seed-audio-1.0", want: true},
 		{model: "Seed-Audio-1.0", want: true},
-		{model: "doubao-seed-audio-1-0", want: true},
-		{model: "seed-audio", want: true},
+		{model: "  seed-audio-1.0  ", want: true},
+		{model: "seed-audio", want: false},
+		{model: "seed-audio-2.0", want: false},
+		{model: "doubao-seed-audio-1-0", want: false},
 		{model: "doubao-seedance-2-0-260128", want: false},
 		{model: "doubao-seed-2-1-pro-260915", want: false},
 		{model: "", want: false},
 	}
 	for _, tc := range cases {
 		assert.Equal(t, tc.want, IsAudioModel(tc.model), "model %q", tc.model)
+	}
+
+	// Every registered metered model must route here, or a model the pricing page
+	// advertises as metered would never reach the metered settlement.
+	for model := range billing_setting.GetMeteredModels() {
+		assert.True(t, IsAudioModel(model), "registered metered model %q does not route to duration billing", model)
 	}
 }
 

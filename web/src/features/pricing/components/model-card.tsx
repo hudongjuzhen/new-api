@@ -1,4 +1,4 @@
-/*
+﻿/*
 Copyright (C) 2023-2026 QuantumNous
 
 This program is free software: you can redistribute it and/or modify
@@ -33,6 +33,7 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import { getMeteredUnitNameKey } from '../lib/metered-price'
 import { getConfiguredGroupRatio, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
@@ -206,6 +207,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       </>
     )
   } else {
+    const meteredUnitKey = getMeteredUnitNameKey(props.model)
     priceSummary = (
       <span className='text-muted-foreground whitespace-nowrap'>
         <span className='text-foreground font-mono font-semibold'>
@@ -217,7 +219,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             props.selectedGroup
           )}
         </span>{' '}
-        / {t('request')}
+        / {meteredUnitKey ? t(meteredUnitKey) : t('request')}
       </span>
     )
   }

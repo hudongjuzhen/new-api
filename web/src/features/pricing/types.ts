@@ -56,6 +56,12 @@ export type PricingModel = {
   billing_mode?: string
   /** Raw expression describing dynamic / tiered billing */
   billing_expr?: string
+  /**
+   * Unit `model_price` is quoted in for usage-metered models ("second" |
+   * "minute"). Present only when billing_mode is "metered"; the charge itself
+   * follows the duration the model actually produced, not a fixed per-call fee.
+   */
+  metered_unit?: string
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
   /**

@@ -3,6 +3,8 @@ package doubao
 import (
 	"strconv"
 	"strings"
+
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 )
 
 var ModelList = []string{
@@ -22,14 +24,6 @@ var ModelList = []string{
 }
 
 var ChannelName = "doubao-video"
-
-// audioModelPrefixes 是按"生成音频时长"计费的模型前缀。方舟把音频生成任务放在
-// 与视频生成相同的任务接口上，请求/轮询结构一致，只有请求参数与计费口径不同，
-// 因此复用同一个 adaptor，用模型名分流。
-var audioModelPrefixes = []string{
-	"seed-audio",
-	"doubao-seed-audio",
-}
 
 // audioBillingKey 是"按生成音频时长计费"这一计量维度的键名。
 //
@@ -61,14 +55,13 @@ const audioCharsPerSecond = 4.0
 const audioEstimateSafetyFactor = 1.2
 
 // IsAudioModel 判断模型是否按生成音频时长计费。
+//
+// 判定来源是 setting/billing_setting 的按量计费注册表：同一份判定既驱动这里的
+// 请求/结算分流，也驱动定价页的"按量计费"标注，避免两处各维护一份模型名列表。
+// 方舟把音频生成任务放在与视频生成相同的任务接口上，请求/轮询结构一致，只有请求
+// 参数与计费口径不同，因此复用同一个 adaptor，用模型名分流。
 func IsAudioModel(modelName string) bool {
-	name := strings.ToLower(strings.TrimSpace(modelName))
-	for _, prefix := range audioModelPrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
+	return billing_setting.IsMeteredBillingModel(modelName)
 }
 
 // EstimateAudioSeconds 在提交时估算一次生成会产生多少秒音频。

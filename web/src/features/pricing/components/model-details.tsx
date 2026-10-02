@@ -68,6 +68,7 @@ import {
   isDynamicPricingModel,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import { getMeteredRateLabelKey } from '../lib/metered-price'
 import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
 import { formatFixedPrice, formatGroupPrice } from '../lib/price'
 import type {
@@ -718,12 +719,13 @@ function PriceSection(props: {
   }
 
   if (!isTokenBased) {
+    const meteredRateKey = getMeteredRateLabelKey(props.model)
     return (
       <section>
         <SectionTitle>{t('Base Price')}</SectionTitle>
         <div className='flex items-baseline justify-between'>
           <span className='text-muted-foreground text-sm'>
-            {t('Per request')}
+            {meteredRateKey ? t(meteredRateKey) : t('Per request')}
           </span>
           <span className='text-foreground font-mono text-sm font-semibold tabular-nums'>
             {formatFixedPrice(

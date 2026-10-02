@@ -1,4 +1,4 @@
-/*
+﻿/*
 Copyright (C) 2023-2026 QuantumNous
 
 This program is free software: you can redistribute it and/or modify
@@ -36,6 +36,7 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
+import { getMeteredUnitNameKey } from '../lib/metered-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import {
   formatPrice,
@@ -227,12 +228,13 @@ export function usePricingColumns(
             selectedGroup
           )
         )
+        const meteredUnitKey = getMeteredUnitNameKey(model)
 
         return (
           <div className='max-w-full min-w-0'>
             <span className='font-mono text-sm tabular-nums'>{price}</span>
             <div className='text-muted-foreground/50 text-[10px]'>
-              / {t('request')}
+              {meteredUnitKey ? `/ ${t(meteredUnitKey)}` : `/ ${t('request')}`}
             </div>
           </div>
         )

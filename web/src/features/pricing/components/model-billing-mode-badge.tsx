@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 
 import { isDynamicPricingModel } from '../lib/dynamic-price'
+import { isMeteredPricingModel } from '../lib/metered-price'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import type { PricingModel } from '../types'
 
@@ -37,6 +38,11 @@ export function ModelBillingModeBadge(props: ModelBillingModeBadgeProps) {
   if (isDynamicPricingModel(props.model)) {
     label = t('Dynamic Pricing')
     variant = 'warning'
+  } else if (isMeteredPricingModel(props.model)) {
+    // The charge follows the output the model produced, not a flat per-call fee,
+    // so "Per Request" would misstate how this model is billed.
+    label = t('Metered Billing')
+    variant = 'success'
   } else if (isTokenBasedModel(props.model)) {
     label = t('Token-based')
     variant = 'info'
