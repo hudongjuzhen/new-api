@@ -5,4 +5,5 @@ package extbootstrap
 import (
 	_ "github.com/QuantumNous/new-api/zsy/appauth"
 	_ "github.com/QuantumNous/new-api/zsy/runninghub"
+	_ "github.com/QuantumNous/new-api/zsy/voice"
 )

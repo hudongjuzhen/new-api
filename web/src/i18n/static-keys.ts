@@ -575,4 +575,38 @@ export const STATIC_I18N_KEYS = [
   'This user account is disabled.',
   'Telegram binding failed. Please try again.',
   'Verification scope is missing',
+
+  // Voice Plaza extension (zsy-voice): the sidebar title, the shelf filter
+  // labels, the form messages rendered by FormMessage straight from a zod
+  // schema, and the upload messages returned by lib/voice-audio.ts and passed
+  // to t() by the caller. None of them appear as a literal t('...') argument.
+  'Voice Plaza',
+  'On Shelf',
+  'Off Shelf',
+  'Voice name is required',
+  'Voice name is too long (max 191 characters)',
+  'voice_type is required',
+  'voice_type is too long (max 191 characters)',
+  'Introduction is too long (max 2000 characters)',
+  'Sort order must be a whole number',
+  'Sort order is out of range',
+  'Unsupported audio format (MP3 / WAV / M4A / AAC / OGG / OPUS / FLAC / WEBM)',
+  'Audio file must be 20MB or smaller',
+  // Attribute labels (rendered from GENDER_OPTIONS / AGE_RANGE_OPTIONS), the
+  // scene-list messages from the zod schema, and the CSV import mode labels.
+  'Not specified',
+  'Female',
+  'Male',
+  'Neutral',
+  'Child',
+  'Teen',
+  'Young',
+  'Middle-aged',
+  'Senior',
+  'At most 8 scenes',
+  'Each scene must be 24 characters or fewer',
+  'Invalid language code',
+  'Avatar must be an /uploads path or an http(s) URL',
+  'Create and update by name',
+  'Create only',
 ] as const

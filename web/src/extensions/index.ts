@@ -15,9 +15,10 @@ the registration explicit (as opposed to per-plugin barrel imports) means
 installing or uninstalling a plugin only touches this and the plugin folder.
 */
 
+// Plugin registrations (side-effect imports that push menu groups, locales, etc.)
+import './zsy-runninghub'
+import './zsy-voice'
+
 export * from './menus'
 export * from './channel-types'
 export * from './locales'
-
-// Plugin registrations (side-effect imports that push menu groups, locales, etc.)
-import './zsy-runninghub'
