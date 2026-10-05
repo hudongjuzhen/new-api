@@ -242,15 +242,35 @@ curl -X POST 'https://<你的网关域名>/dashboard/zsy/voice/import?mode=upser
 
 | 步骤 | 命令 | 说明 |
 | --- | --- | --- |
-| 1. Excel → CSV | `C:\Python313\python.exe seedmodel\build_voice_csv.py` | 读取 `seedmodel/火山引擎音色库列表.xlsx`（列：场景 / 音色名称 / 简介 / 音色ID / 头像URL / 音频示例URL），输出 `seedmodel/火山引擎音色库列表.csv`：场景 → `scenes`（丢弃 `#N/A`）、音色ID → `voice_type`、头像URL → `avatar_url`、音频示例URL → `audio_url`，并从音色 ID 推导 `gender`（`_female`/`_male`）与 `language`（`zh`/`en`/`pt`/`mx`…）。整库 `enabled=true`、`sort_order` 按表格行序 |
+| 1. Excel → CSV | `C:\Python313\python.exe seedmodel\build_voice_csv.py` | 读取 `seedmodel/火山引擎音色库列表.xlsx`（列：场景 / 音色名称 / 简介 / 音色ID / 头像URL / 音频示例URL），输出 `seedmodel/火山引擎音色库列表.csv`：场景 → `scenes`（丢弃 `#N/A`）、音色ID → `voice_type`、头像URL → `avatar_url`、音频示例URL → `audio_url`，并从音色 ID 推导 `gender`（`_female`/`_male`）与 `language`（`zh`/`en`/`pt`/`mx`…），按 `age_range_rules.py` 推导 `age_range`。整库 `enabled=true`、`sort_order` 按表格行序 |
 | 2. 写库 | `go run ./_scripts/voiceplaza-seed-volc -dry` 先试跑；去掉 `-dry` 正式写入 | 复用插件自身的 CSV 导入链路（表头别名、逐行校验、按名称 upsert）。`SQL_DSN` 取自环境变量或 `.env`，即"跑在哪个环境就写哪个库"；`-mode=create` 可改为只新增 |
-| 3. 核对 | `C:\Python313\python.exe seedmodel\verify_live_db.py` | 只读统计：行数、性别/语言/场景分布、头像与音频空缺数、`sort_order` 区间 |
+| 3. 清空重建（可选） | `go run ./_scripts/voiceplaza-seed-volc -replace` | 先**物理删除库里全部音色**（含 CSV 之外的记录）再整表重建，删除 + 导入在**同一个事务**里完成，因此对外始终看到「旧的 377 条」或「新的 377 条」，不会出现空窗或半截列表 |
+| 4. 核对 | `go run ./_scripts/voiceplaza-seed-volc -stats` | 直接调用插件的 `VoiceSearch`（与公开列表同一条代码路径），打印按年龄段/性别/语言的命中数并联样输出，等于预演 `?age_range=…` 的返回 |
 
-试跑（`-dry`）会在事务里真实执行插入再回滚，因此报告的数字就是正式写入的结果，且不会改动数据
+试跑（`-dry`）会在事务里真实执行删除/插入/更新再回滚，因此报告的数字就是正式写入的结果，且不会改动数据
 （`zsy_voices stored=...` 一行可确认回滚生效）。
+
+### 年龄段是怎么补出来的
+
+Excel 里没有年龄段这一列，`seedmodel/age_range_rules.py` 用音色**名称 + 简介**里的措辞分桶，
+桶的优先级固定为 `senior > child > teen > middle > young`（"童声"比"甜美"更具体，"中年男老师"
+比它同时提到的"青年"更明确），第二轮再看音色/人设语气（`叔音`/`霸总`/`磁性`/`解说` 偏中年，
+`女神`/`公主`/`治愈`/`温柔` 偏青年），两轮都没命中的落入 `young` 兜底。分类结果与依据
+（`name:少年`、`desc:大叔`、`fallback`）可离线复现审阅。
+
+当前 377 条的分布：`child 14 / teen 44 / young 211 / middle 101 / senior 7`，其中 25 条为兜底值。
+
+转换脚本同时修复了源表的两处导出缺陷（会打印在运行日志里）：
+
+- 44 个单元格里带有替换字符 `U+FFFD`，已剔除；
+- 205 行的简介末尾被导出时拼上了场景名（`…亲和力十足。有声阅读`），已从简介中裁掉；
+  其中 36 行原本场景列为 `#N/A`，裁掉的场景名被还原进 `scenes` 列表。
 
 当前线上库（`aiapi_hudongdian`）已按此流程导入 **377 条**火山引擎音色：
 性别 female 160 / male 217，语言 17 种（zh 276），表内 `name` 与 `voice_type` 均唯一。
+
+> 注：线上库是远程 MySQL，逐行 upsert 共约 700+ 次往返，一次运行可能超过 10 分钟；
+> upsert 按名称幂等，超时后用同一条命令续跑即可，不会产生重复行。
 
 ## 5. 代码位置
 
@@ -265,7 +285,8 @@ curl -X POST 'https://<你的网关域名>/dashboard/zsy/voice/import?mode=upser
 | 示例音频上传 | `zsy/voice/controllers_upload.go` |
 | 路由与中间件 | `zsy/voice/routes.go` |
 | 回归测试 | `zsy/voice/store_test.go`、`zsy/voice/http_test.go`、`zsy/voice/csv_test.go`、`zsy/voice/routes_test.go` |
-| 批量导入脚本（一键写库） | `_scripts/voiceplaza-seed-volc/main.go` |
+| 批量导入脚本（一键写库 / 统计核对） | `_scripts/voiceplaza-seed-volc/main.go` |
+| 年龄段推导规则 | `seedmodel/age_range_rules.py` |
 | Excel → CSV 转换 / 线上库核对 | `seedmodel/build_voice_csv.py`、`seedmodel/verify_live_db.py` |
 | 后台管理页 | `web/src/extensions/zsy-voice/pages/voice-plaza-page.tsx` |
 | 属性编辑与导入弹窗 | `web/src/extensions/zsy-voice/components/voice-form-dialog.tsx`、`components/voice-import-dialog.tsx` |

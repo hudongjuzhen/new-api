@@ -26,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/zsy/voice"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -34,6 +35,8 @@ func main() {
 	mode := flag.String("mode", voice.ImportModeUpsert,
 		"import mode: "+voice.ImportModeUpsert+" | "+voice.ImportModeCreate)
 	dry := flag.Bool("dry", false, "parse and validate only; every write is rolled back")
+	replace := flag.Bool("replace", false, "delete every stored voice before importing (clean rebuild)")
+	stats := flag.Bool("stats", false, "print the catalogue counts per filter and exit")
 	sample := flag.Int("sample", 3, "how many parsed rows to print")
 	flag.Parse()
 
@@ -51,6 +54,11 @@ func main() {
 	if err := model.DB.AutoMigrate(&voice.Voice{}); err != nil {
 		fmt.Fprintln(os.Stderr, "migrate zsy_voices failed:", err)
 		os.Exit(1)
+	}
+
+	if *stats {
+		printStats()
+		return
 	}
 
 	file, err := os.Open(*csvPath)
@@ -74,25 +82,56 @@ func main() {
 	}
 
 	originalDB := model.DB
-	if *dry {
-		// A dry run still exercises insert/update against the real schema, then
-		// throws the whole transaction away.
+	// A clean rebuild runs inside one transaction so readers see either the old
+	// catalogue or the new one: emptying the plaza and refilling it row by row
+	// would otherwise leave the public list short for minutes.
+	inTransaction := *dry || *replace
+	if inTransaction {
+		// Delete/insert/update all run against the real schema, then either commit
+		// (-replace) or get thrown away (-dry).
 		model.DB = model.DB.Begin()
-		fmt.Println("DRY RUN: all writes will be rolled back")
+		if *dry {
+			fmt.Println("DRY RUN: all writes will be rolled back")
+		} else {
+			fmt.Println("REPLACE: clearing and rebuilding inside one transaction")
+		}
+	}
+
+	if *replace {
+		// Hard delete: the plugin has no soft-delete column, so this really empties
+		// the plaza. Every stored voice goes, including rows this CSV does not know
+		// about, which is the point of a clean rebuild.
+		deleted := model.DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&voice.Voice{})
+		if deleted.Error != nil {
+			fmt.Fprintln(os.Stderr, "clear failed:", deleted.Error)
+			if inTransaction {
+				_ = model.DB.Rollback()
+			}
+			os.Exit(1)
+		}
+		fmt.Printf("cleared %d stored voices\n", deleted.RowsAffected)
+		// Every row is new again, so an upsert run and a create run behave the same.
+		*mode = voice.ImportModeCreate
 	}
 
 	result, err := voice.ImportVoices(rows, *mode, warnings)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "import failed:", err)
-		if *dry {
+		if inTransaction {
 			_ = model.DB.Rollback()
 		}
 		os.Exit(1)
 	}
 
-	if *dry {
-		if err := model.DB.Rollback().Error; err != nil {
-			fmt.Fprintln(os.Stderr, "rollback failed:", err)
+	if inTransaction {
+		if *dry {
+			if err := model.DB.Rollback().Error; err != nil {
+				fmt.Fprintln(os.Stderr, "rollback failed:", err)
+				os.Exit(1)
+			}
+			fmt.Println("dry run finished; every write rolled back")
+		} else if err := model.DB.Commit().Error; err != nil {
+			fmt.Fprintln(os.Stderr, "commit failed:", err)
 			os.Exit(1)
 		}
 		model.DB = originalDB
@@ -119,4 +158,57 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("zsy_voices stored=%d (on shelf %d)\n", stored, onShelf)
+}
+
+// printStats reports the catalogue through the plugin's own store layer — the
+// same code path the public list uses — so the totals below are exactly what
+// GET /api/zsy/voice/list?age_range=… answers.
+func printStats() {
+	onShelf := true
+	page := func(q voice.VoiceListQuery) voice.VoiceListResult {
+		q.Enabled = &onShelf
+		if q.Page < 1 {
+			q.Page = 1
+		}
+		if q.PageSize < 1 {
+			q.PageSize = 1
+		}
+		result, err := voice.VoiceSearch(q)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "stats query failed:", err)
+			os.Exit(1)
+		}
+		return result
+	}
+
+	fmt.Printf("on-shelf voices: %d\n", page(voice.VoiceListQuery{}).Total)
+
+	fmt.Println("by age_range:")
+	for _, ageRange := range []string{
+		voice.AgeChild, voice.AgeTeen, voice.AgeYoung, voice.AgeMiddle, voice.AgeSenior,
+	} {
+		fmt.Printf("  %-7s %3d\n", ageRange, page(voice.VoiceListQuery{AgeRange: ageRange}).Total)
+	}
+
+	fmt.Println("by gender:")
+	for _, gender := range []string{voice.GenderFemale, voice.GenderMale, voice.GenderNeutral} {
+		fmt.Printf("  %-7s %3d\n", gender, page(voice.VoiceListQuery{Gender: gender}).Total)
+	}
+
+	fmt.Println("by language:")
+	for _, language := range []string{"zh", "en", "ja", "pt", "id", "mx"} {
+		fmt.Printf("  %-4s %3d\n", language, page(voice.VoiceListQuery{Language: language}).Total)
+	}
+
+	fmt.Println("combined filter age_range=child&gender=female:")
+	fmt.Printf("  %d\n", page(voice.VoiceListQuery{
+		AgeRange: voice.AgeChild, Gender: voice.GenderFemale,
+	}).Total)
+
+	sample := page(voice.VoiceListQuery{AgeRange: voice.AgeSenior, PageSize: 5})
+	fmt.Printf("first page of age_range=%s (%d rows):\n", voice.AgeSenior, sample.Total)
+	for _, item := range sample.Items {
+		fmt.Printf("  %s | %s | %s | %v | avatar=%t\n",
+			item.Name, item.VoiceType, item.Language, item.Scenes, item.AvatarURL != "")
+	}
 }

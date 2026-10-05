@@ -1,8 +1,13 @@
 {
+  "AccessKey ID": "AccessKey ID",
+  "AccessKey Secret": "AccessKey Secret",
+  "Bucket": "Bucket",
   "Custom color": "Custom color",
   "Group colors": "Group colors",
   "LiblibAI": "LiblibAI",
+  "my-bucket": "my-bucket",
   "Pick a color": "Pick a color",
   "Reset to auto": "Reset to auto",
-  "RunningHub": "RunningHub"
+  "RunningHub": "RunningHub",
+  "uploads": "uploads"
 }

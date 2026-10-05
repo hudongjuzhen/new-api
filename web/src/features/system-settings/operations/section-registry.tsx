@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { SystemBehaviorSection } from '../general/system-behavior-section'
 import { EmailSettingsSection } from '../integrations/email-settings-section'
 import { MonitoringSettingsSection } from '../integrations/monitoring-settings-section'
+import { OSSSettingsSection } from '../integrations/oss-settings-section'
 import { WorkerSettingsSection } from '../integrations/worker-settings-section'
 import { LogSettingsSection } from '../maintenance/log-settings-section'
 import { PerformanceSection } from '../maintenance/performance-section'
@@ -88,6 +89,26 @@ const OPERATIONS_SECTIONS = [
           WorkerValidKey: settings.WorkerValidKey,
           WorkerAllowHttpImageRequestEnabled:
             settings.WorkerAllowHttpImageRequestEnabled,
+        }}
+      />
+    ),
+  },
+  {
+    id: 'oss',
+    titleKey: 'Aliyun OSS',
+    build: (settings: OperationsSettings) => (
+      <OSSSettingsSection
+        defaultValues={{
+          oss_setting: {
+            enabled: settings['oss_setting.enabled'],
+            endpoint: settings['oss_setting.endpoint'],
+            bucket: settings['oss_setting.bucket'],
+            access_key_id: settings['oss_setting.access_key_id'],
+            access_key_secret: settings['oss_setting.access_key_secret'],
+            path_prefix: settings['oss_setting.path_prefix'],
+            custom_domain: settings['oss_setting.custom_domain'],
+            use_ssl: settings['oss_setting.use_ssl'],
+          },
         }}
       />
     ),

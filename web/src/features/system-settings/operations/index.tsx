@@ -56,6 +56,14 @@ const defaultOperationsSettings: OperationsSettings = {
   'perf_metrics_setting.flush_interval': 5,
   'perf_metrics_setting.bucket_time': 'hour',
   'perf_metrics_setting.retention_days': 0,
+  'oss_setting.enabled': false,
+  'oss_setting.endpoint': '',
+  'oss_setting.bucket': '',
+  'oss_setting.access_key_id': '',
+  'oss_setting.access_key_secret': '',
+  'oss_setting.path_prefix': 'uploads',
+  'oss_setting.custom_domain': '',
+  'oss_setting.use_ssl': true,
 }
 
 export function OperationsSettings() {

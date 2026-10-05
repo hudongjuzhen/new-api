@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Image as ImageIcon, Pencil, Trash2 } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -42,6 +43,10 @@ interface VoiceTableRowProps {
 export function VoiceTableRow(props: VoiceTableRowProps) {
   const { t, i18n } = useTranslation()
   const voice = props.voice
+  // A portrait hosted elsewhere can be unreachable (the provider's CDN may be
+  // blocked for the visitor): fall back to the placeholder instead of leaving a
+  // broken image in the row.
+  const [avatarBroken, setAvatarBroken] = useState(false)
 
   const genderLabelKey = voiceOptionLabelKey(GENDER_OPTIONS, voice.gender)
   const ageLabelKey = voiceOptionLabelKey(AGE_RANGE_OPTIONS, voice.ageRange)
@@ -50,12 +55,13 @@ export function VoiceTableRow(props: VoiceTableRowProps) {
     <TableRow>
       <TableCell>
         <div className='flex items-center gap-3'>
-          {voice.avatarUrl ? (
+          {voice.avatarUrl && !avatarBroken ? (
             <img
               src={voice.avatarUrl}
               alt=''
               loading='lazy'
               className='size-9 shrink-0 rounded-full border object-cover'
+              onError={() => setAvatarBroken(true)}
             />
           ) : (
             <div

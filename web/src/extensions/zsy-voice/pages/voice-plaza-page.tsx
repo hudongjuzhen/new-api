@@ -119,6 +119,12 @@ export function VoicePlazaPage() {
   const { data, isLoading } = useQuery({
     queryKey: [voiceListQueryKey, { ...filters, page, pageSize }],
     queryFn: () => listVoices({ ...filters, page, pageSize }),
+    // The plaza itself can change without this page acting (a CSV import run from
+    // the server, another admin, a seeding script), so opening the page always
+    // asks the server again instead of trusting a cached answer.
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
 
   const voices = data?.items ?? []

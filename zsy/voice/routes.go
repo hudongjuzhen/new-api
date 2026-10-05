@@ -29,6 +29,9 @@ func mountRoutes(router *gin.Engine) {
 
 	admin := router.Group("/dashboard/zsy/voice")
 	admin.Use(middleware.AdminAuth())
+	// The admin API is mutable data: a cached list would keep showing rows an
+	// import or another admin already replaced, so every response is no-store.
+	admin.Use(middleware.DisableCache())
 	{
 		admin.GET("/list", listVoicesAdmin)
 		admin.POST("", createVoice)

@@ -80,6 +80,7 @@ require (
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/otel v1.34.0 // indirect
 	go.opentelemetry.io/otel/trace v1.34.0 // indirect
+	golang.org/x/time v0.3.0 // indirect
 )
 
 require (
@@ -165,6 +166,7 @@ require (
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.32.0
 	github.com/QuantumNous/new-api/relaykit v0.0.0
+	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible
 )
 
 replace github.com/QuantumNous/new-api/relaykit => ./relaykit

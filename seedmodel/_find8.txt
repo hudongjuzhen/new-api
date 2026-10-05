@@ -1,0 +1,32 @@
+deployed zsy_voices rows: 377
+  contains '尖细嗓': 0
+  contains '冷峻男音': 0
+  contains '尖细': 0
+  contains '冷峻': 2
+    {'id': 1012, 'name': '冷峻高智 2.0', 'voice_type': 'ICL_uranus_zh_male_lengjungaozhi_tob', 'created_at': 1791187138, 'updated_at': 1791187138}
+    {'id': 1081, 'name': '冷峻上司 2.0', 'voice_type': 'ICL_uranus_zh_male_lengjunshangsi_tob', 'created_at': 1791187173, 'updated_at': 1791187173}
+  newest 10 rows by id (what a fresh page load would show first):
+    id=1121 name='清晰小雪 2.0' created=1791187191
+    id=1122 name='清甜桃桃 2.0' created=1791187191
+    id=1123 name='清甜莓莓 2.0' created=1791187192
+    id=1124 name='暖心茜茜 2.0' created=1791187192
+    id=1125 name='理性圆子 2.0' created=1791187192
+    id=1126 name='灵动欣欣 2.0' created=1791187193
+    id=1127 name='开心小鸿 2.0' created=1791187193
+    id=1128 name='开朗婷婷 2.0' created=1791187193
+    id=1129 name='乖巧可儿 2.0' created=1791187194
+    id=1130 name='纯澈女生 2.0' created=1791187195
+  rows sorted the way the API returns them (sort_order, id):
+    sort=1 id=754 name='Vivi 2.0'
+    sort=2 id=755 name='小何 2.0'
+    sort=3 id=756 name='温暖阿虎 2.0'
+    sort=4 id=757 name='解说小明 2.0'
+    sort=5 id=758 name='温柔妈妈 2.0'
+    sort=6 id=759 name='魅力苏菲 2.0'
+    sort=7 id=760 name='魅力女友 2.0'
+    sort=8 id=761 name='刘飞 2.0'
+    sort=9 id=762 name='少年梓辛 2.0'
+    sort=10 id=763 name='小天 2.0'
+
+local one-api.db: 38 tables, voice tables:
+  []

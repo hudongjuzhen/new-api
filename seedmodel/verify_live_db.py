@@ -49,15 +49,22 @@ with connection:
         lines.append(f"rows: {len(rows)}")
         lines.append(f"distinct voice_type: {len({r['voice_type'] for r in rows})}")
         lines.append(f"distinct name: {len({r['name'] for r in rows})}")
+        lines.append(f"age_range: {dict(Counter(r['age_range'] for r in rows))}")
         lines.append(f"gender: {dict(Counter(r['gender'] for r in rows))}")
         lines.append(f"language: {dict(Counter(r['language'] for r in rows).most_common())}")
         lines.append(f"scenes: {dict(Counter(r['scenes'] for r in rows).most_common(6))}")
         lines.append(f"enabled: {dict(Counter(r['enabled'] for r in rows))}")
         lines.append(f"avatar empty: {sum(1 for r in rows if not r['avatar_url'])}")
         lines.append(f"audio empty: {sum(1 for r in rows if not r['audio_url'])}")
+        lines.append(f"age_range empty: {sum(1 for r in rows if not r['age_range'])}")
         lines.append(
             f"sort_order range: {min(r['sort_order'] for r in rows)}..{max(r['sort_order'] for r in rows)}"
         )
+        lines.append("")
+        lines.append("age_range x gender:")
+        cross = Counter((r["age_range"], r["gender"]) for r in rows)
+        for (age_range, gender), count in sorted(cross.items()):
+            lines.append(f"  {age_range:7s} {gender:7s} {count}")
         lines.append("")
         lines.append("first 3 rows:")
         for row in rows[:3]:
@@ -69,6 +76,7 @@ with connection:
                         "name",
                         "voice_type",
                         "gender",
+                        "age_range",
                         "language",
                         "scenes",
                         "enabled",

@@ -16,7 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { render, screen, waitFor, within } from '@testing-library/react'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -80,7 +86,23 @@ for (const key of [
   'Female',
   'Male',
   'Middle-aged',
-  'Separate scenes with a comma; at most 8 scenes.',
+  'On Shelf',
+  'Off Shelf',
+  'All',
+  'Shelf Status',
+  'Page size',
+  'Search',
+  'Search by name or voice_type',
+  'No voices yet',
+  'No audio sample',
+  'Edit',
+  'Delete',
+  'Cancel',
+  'Save',
+  'Saving...',
+  'Previous',
+  'Next',
+  'Voice List API',
   'Import',
   'Export',
   'Export started',
@@ -99,23 +121,6 @@ for (const key of [
   'Failed: {{count}}',
   'Row {{row}}',
   'Imported: {{created}} created, {{updated}} updated, {{failed}} failed',
-  'On Shelf',
-  'Off Shelf',
-  'All',
-  'Shelf Status',
-  'Page size',
-  'Search',
-  'Search by name or voice_type',
-  'No voices yet',
-  'No audio sample',
-  'Edit',
-  'Delete',
-  'Cancel',
-  'Save',
-  'Saving...',
-  'Previous',
-  'Next',
-  'Voice List API',
   'Total {{count}} voices',
   'Page {{page}} / {{total}}',
   '{{count}} per page',
@@ -499,6 +504,27 @@ describe('Voice Plaza admin page', () => {
     expect(avatar).not.toBeNull()
     // Intl renders the language tag, so no per-language translation key exists.
     expect(screen.getByText('Chinese')).toBeInTheDocument()
+  })
+
+  test('falls back to a placeholder when the avatar cannot be loaded', async () => {
+    renderPage()
+    await screen.findByText('Sweet Female')
+
+    const avatar = document.querySelector(
+      'img[src="https://cdn.example.com/avatar/a.png"]'
+    )
+    expect(avatar).not.toBeNull()
+
+    // A blocked or dead portrait URL must not leave a broken image in the row.
+    fireEvent.error(avatar as Element)
+
+    await waitFor(() =>
+      expect(
+        document.querySelector(
+          'img[src="https://cdn.example.com/avatar/a.png"]'
+        )
+      ).toBeNull()
+    )
   })
 
   test('filters the plaza by language', async () => {

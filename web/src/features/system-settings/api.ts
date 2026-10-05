@@ -22,6 +22,7 @@ import type {
   ConfirmPaymentComplianceResponse,
   FetchUpstreamRatiosRequest,
   LogCleanupTask,
+  OSSConnectionTestResponse,
   SystemOptionsResponse,
   SystemTaskListResponse,
   SystemTaskResponse,
@@ -88,6 +89,11 @@ export async function resetModelRatios() {
   const res = await api.post<UpdateOptionResponse>(
     '/api/option/rest_model_ratio'
   )
+  return res.data
+}
+
+export async function testOSSConnection() {
+  const res = await api.post<OSSConnectionTestResponse>('/api/option/oss/test')
   return res.data
 }
 

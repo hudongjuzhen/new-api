@@ -50,6 +50,15 @@ export type ConfirmPaymentComplianceResponse = {
   }
 }
 
+export type OSSConnectionTestResponse = {
+  success: boolean
+  message: string
+  data?: {
+    endpoint: string
+    bucket: string
+  }
+}
+
 export type SystemTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed'
 
 export type SystemTask<
@@ -369,6 +378,14 @@ export type OperationsSettings = {
   'perf_metrics_setting.flush_interval': number
   'perf_metrics_setting.bucket_time': 'hour' | 'minute' | '5min'
   'perf_metrics_setting.retention_days': number
+  'oss_setting.enabled': boolean
+  'oss_setting.endpoint': string
+  'oss_setting.bucket': string
+  'oss_setting.access_key_id': string
+  'oss_setting.access_key_secret': string
+  'oss_setting.path_prefix': string
+  'oss_setting.custom_domain': string
+  'oss_setting.use_ssl': boolean
 }
 
 export type SecuritySettings = {
