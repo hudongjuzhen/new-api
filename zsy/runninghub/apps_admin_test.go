@@ -164,6 +164,36 @@ func TestValidateApp_Invariants(t *testing.T) {
 			wantErr: "名称过长",
 		},
 		{
+			name:    "local uploaded cover passes",
+			mutator: func(d *runninghub.AppCreateDTO) { d.CoverURL = "/uploads/images/202610/ab12cd.png" },
+			wantErr: "",
+		},
+		{
+			name:    "https cover passes",
+			mutator: func(d *runninghub.AppCreateDTO) { d.CoverURL = "https://cdn.example.com/covers/a.png" },
+			wantErr: "",
+		},
+		{
+			name:    "relative non-/uploads cover rejected",
+			mutator: func(d *runninghub.AppCreateDTO) { d.CoverURL = "covers/a.png" },
+			wantErr: "封面图地址",
+		},
+		{
+			name:    "javascript cover rejected",
+			mutator: func(d *runninghub.AppCreateDTO) { d.CoverURL = "javascript:alert(1)" },
+			wantErr: "封面图地址",
+		},
+		{
+			name:    "inline data cover rejected",
+			mutator: func(d *runninghub.AppCreateDTO) { d.CoverURL = "data:image/png;base64,iVBORw0KGgo=" },
+			wantErr: "封面图地址",
+		},
+		{
+			name:    "cover longer than the column rejected",
+			mutator: func(d *runninghub.AppCreateDTO) { d.CoverURL = "/uploads/images/202610/" + strings.Repeat("x", 800) },
+			wantErr: "封面图地址过长",
+		},
+		{
 			name:    "valid ai_app passes",
 			mutator: func(d *runninghub.AppCreateDTO) { /* noop */ },
 			wantErr: "",

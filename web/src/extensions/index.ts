@@ -17,6 +17,8 @@ installing or uninstalling a plugin only touches this and the plugin folder.
 
 // Plugin registrations (side-effect imports that push menu groups, locales, etc.)
 import './zsy-runninghub'
+// zsy-avatar carries no menu group of its own: its page is the second entry of
+// the group zsy-voice registers, so both catalogs stay under "Public Data".
 import './zsy-voice'
 
 export * from './menus'

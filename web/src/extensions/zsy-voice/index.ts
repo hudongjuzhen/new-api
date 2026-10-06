@@ -17,30 +17,45 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 /**
- * Voice Plaza frontend registration (zsy/voice on the Go side).
+ * zsy-voice + zsy-avatar frontend registration (zsy/voice and zsy/avatar on the
+ * Go side).
  *
- * Contributes one admin-only sidebar entry into the host's extension anchor
- * (EXT_MENU_GROUPS). Translations live in the core locale files
- * (src/i18n/locales/*.json) so the host i18n tooling covers them like any other
- * UI string.
+ * Contributes one admin-only sidebar group, "Public Data", holding the shared
+ * catalog pages: 音色广场 (voices) and 形象广场 (personas). Both are editorial data
+ * an operator maintains for other applications, which is why they live together
+ * under one group instead of each claiming a top-level entry.
+ *
+ * Translations live in the core locale files (src/i18n/locales/*.json) so the
+ * host i18n tooling covers them like any other UI string.
  */
 
-import { AudioLines } from 'lucide-react'
+import { AudioLines, UserRound } from 'lucide-react'
 
 import { EXT_MENU_GROUPS } from '@/extensions/menus'
 import { ROLE } from '@/lib/roles'
 
-// The page manages every voice, published or not, so it is admin-only. The
-// title is a plain-English i18n key: the host renders extension menu titles
+// The pages manage every row, published or not, so they are admin-only. The
+// titles are plain-English i18n keys: the host renders extension menu titles
 // through t(), so this module must never call useTranslation().
+//
+// Both entries are direct children of the group. The host translates a group's
+// title and each of its items, so keeping the catalogs flat is what makes the
+// sidebar fully localized; an extra nesting level would render its titles in
+// their raw English key form.
 EXT_MENU_GROUPS.push({
   id: 'zsy-voice',
-  title: 'Voice Plaza',
+  title: 'Public Data',
   items: [
     {
       title: 'Voice Plaza',
       url: '/voice-plaza',
       icon: AudioLines,
+      requiredRole: ROLE.ADMIN,
+    },
+    {
+      title: 'Avatar Plaza',
+      url: '/avatar-plaza',
+      icon: UserRound,
       requiredRole: ROLE.ADMIN,
     },
   ],

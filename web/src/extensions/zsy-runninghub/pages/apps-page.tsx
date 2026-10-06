@@ -63,6 +63,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { uploadPlaygroundImage } from '@/features/playground/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import {
   getEditableQuotaStep,
@@ -86,6 +87,7 @@ import {
   type AppCreateDTO,
   type SchemaParam,
 } from '../api'
+import { CoverImageField } from '../components/cover-image-field'
 import { appCopyDraft, appToCreateDTO } from '../lib/app-copy'
 
 const TYPE_CHOICES = [
@@ -570,6 +572,11 @@ function AppForm({
               onChange={(e) => set('description', e.target.value)}
             />
           </div>
+          <CoverImageField
+            value={dto.coverUrl}
+            onChange={(coverUrl) => set('coverUrl', coverUrl)}
+            uploadImage={uploadPlaygroundImage}
+          />
           <div className='flex items-center gap-6'>
             <label className='flex items-center gap-2'>
               <Switch

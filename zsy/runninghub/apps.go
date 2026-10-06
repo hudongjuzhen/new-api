@@ -691,6 +691,9 @@ func validateApp(a *App) error {
 	if a.Slug != "" && len(a.Slug) > 191 {
 		return fmt.Errorf("slug 过长 (上限 191 字符)")
 	}
+	if err := validateCoverURL(a.CoverURL); err != nil {
+		return err
+	}
 	// Billing invariants. The per-call / per-second / per-character / dynamic
 	// modes are mutually exclusive; enforce it here so the store layer can never
 	// persist a contradictory config.
@@ -734,6 +737,33 @@ func validateApp(a *App) error {
 		if err := validateCharCountExpr(a.CharCountExpr); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// coverURLMaxLength mirrors the App.CoverURL column width. A value that does
+// not fit is refused before the write instead of being truncated by the
+// database (MySQL would only warn and cut the URL, leaving a broken image).
+const coverURLMaxLength = 768
+
+// validateCoverURL keeps the cover a reference to an image rather than an
+// arbitrary string: either a path this gateway serves under /uploads or an
+// absolute http(s) URL, both within the column width. An empty value clears
+// the cover and is always accepted.
+func validateCoverURL(raw string) error {
+	cover := strings.TrimSpace(raw)
+	if cover == "" {
+		return nil
+	}
+	if len(cover) > coverURLMaxLength {
+		return fmt.Errorf("封面图地址过长 (上限 %d 字符)", coverURLMaxLength)
+	}
+	lowered := strings.ToLower(cover)
+	switch {
+	case strings.HasPrefix(cover, "/uploads/"):
+	case strings.HasPrefix(lowered, "http://"), strings.HasPrefix(lowered, "https://"):
+	default:
+		return fmt.Errorf("封面图地址必须以 /uploads/ 开头或为 http(s) 地址")
 	}
 	return nil
 }

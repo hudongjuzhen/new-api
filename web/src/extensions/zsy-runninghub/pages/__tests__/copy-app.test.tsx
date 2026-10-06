@@ -34,6 +34,12 @@ const api = vi.hoisted(() => ({
 
 vi.mock('../../api', () => api)
 
+// The cover picker uploads through the playground's image endpoint; only the
+// URL it resolves with matters here, so the network call is stubbed out.
+vi.mock('@/features/playground/api', () => ({
+  uploadPlaygroundImage: vi.fn(),
+}))
+
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { QueryClient, QueryClientProvider } =
@@ -184,5 +190,30 @@ describe('RunningHub app record copy', () => {
 
     expect(await screen.findByRole('dialog')).toBeInTheDocument()
     expect(screen.getByLabelText('App Name')).toHaveValue('')
+  })
+
+  test('a copy draft carries the source cover as an editable URL', async () => {
+    const user = userEvent.setup()
+    await openCopyDialog(user)
+
+    expect(screen.getByLabelText('Cover Image')).toHaveValue(
+      'https://files.rh.local/cover.png'
+    )
+  })
+
+  test('editing an app shows its cover and saving clears it when removed', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Edit' }))
+
+    const coverInput = screen.getByLabelText('Cover Image')
+    expect(coverInput).toHaveValue('https://files.rh.local/cover.png')
+
+    await user.click(screen.getByRole('button', { name: 'Remove image' }))
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.updateApp).toHaveBeenCalledTimes(1))
+    const [, payload] = api.updateApp.mock.calls[0] as [number, AppCreateDTO]
+    expect(payload.coverUrl).toBe('')
   })
 })

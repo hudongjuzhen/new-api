@@ -3,6 +3,7 @@
 > 适用版本：当前 `zsy/runninghub` 分支源码树
 > 插件目录：后端 `zsy/voice/`，前端 `web/src/extensions/zsy-voice/`
 > 数据表：`zsy_voices`（由 `extcore` 注册进宿主的 AutoMigrate，无需手工建表）
+> 关联插件：形象广场 `zsy/avatar`（`docs/zsy-avatarplaza-api.md`）按本表的 `voice_type` 引用音色并展示示例音频
 
 ## 1. 一句话说明
 
@@ -97,7 +98,8 @@ curl -s 'https://<你的网关域名>/api/zsy/voice/list?gender=female&age_range
 ## 3. 后台管理接口
 
 挂在 `/dashboard/zsy/voice/**`，由宿主的 `middleware.AdminAuth()` 保护（管理员会话 / 访问令牌）。
-后台管理页面：**侧边栏「Voice Plaza」（仅管理员可见）→ `/voice-plaza`**。
+后台管理页面：**侧边栏「公共数据」→「音色广场」（仅管理员可见）→ `/voice-plaza`**
+（同一级菜单下还有「形象广场」→ `/avatar-plaza`，见 `docs/zsy-avatarplaza-api.md`）。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
