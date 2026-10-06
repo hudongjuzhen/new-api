@@ -20,6 +20,9 @@ import './zsy-runninghub'
 // zsy-avatar carries no menu group of its own: its page is the second entry of
 // the group zsy-voice registers, so both catalogs stay under "Public Data".
 import './zsy-voice'
+// zsy-tone joins that same group rather than opening its own; it must therefore
+// stay after zsy-voice, which is what creates the group.
+import './zsy-tone'
 
 export * from './menus'
 export * from './channel-types'

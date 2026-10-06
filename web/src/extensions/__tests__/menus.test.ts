@@ -79,6 +79,11 @@ describe('extension sidebar menus', () => {
     ).toEqual([
       { title: 'Voice Plaza', url: '/voice-plaza' },
       { title: 'Avatar Plaza', url: '/avatar-plaza' },
+      // zsy-tone registers itself into this same group rather than opening a
+      // second "Public Data" entry (see zsy-tone/index.ts), so a third catalog
+      // lands here. The list stays literal on purpose: it is what makes a
+      // silently dropped or reordered entry fail instead of just looking fine.
+      { title: 'Tone Plaza', url: '/tone-plaza' },
     ])
   })
 

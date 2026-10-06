@@ -6,5 +6,6 @@ import (
 	_ "github.com/QuantumNous/new-api/zsy/appauth"
 	_ "github.com/QuantumNous/new-api/zsy/avatar"
 	_ "github.com/QuantumNous/new-api/zsy/runninghub"
+	_ "github.com/QuantumNous/new-api/zsy/tone"
 	_ "github.com/QuantumNous/new-api/zsy/voice"
 )
