@@ -8,4 +8,5 @@ import (
 	_ "github.com/QuantumNous/new-api/zsy/runninghub"
 	_ "github.com/QuantumNous/new-api/zsy/tone"
 	_ "github.com/QuantumNous/new-api/zsy/voice"
+	_ "github.com/QuantumNous/new-api/zsy/world"
 )
