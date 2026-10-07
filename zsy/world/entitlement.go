@@ -28,6 +28,9 @@ import (
 // =========================================================================
 
 // PluginEntitlementField 是文件里那一格的键名（契约的一部分）。
+//
+// ⚠ 与 `plugin_issue.go` 的 `PluginEntitlementBlock` 的字段名一起构成**跨语言契约**
+// （客户端 `src/core/plugin-entitlement.js` 读的就是它们）。改任一处都要同时改客户端。
 const PluginEntitlementField = "entitlement"
 
 // PluginChecksumAlgo 是校验和算法的标识。

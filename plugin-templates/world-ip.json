@@ -1,0 +1,23 @@
+{
+  "format": "aimv-plugin",
+  "formatVersion": 1,
+  "id": "world-ip",
+  "name": "世界 IP 资源管理器",
+  "version": "0.1.0",
+  "author": "矩阵科技",
+  "description": "把你小说解析出来的世界画成一屏：元素（角色 / 场景 / 物品 / 台词…）一目一卡。引擎在服务端，这一屏只是视图 —— 所以它要登录，也要账号有「世界 IP」能力。",
+  "x-capabilities": ["world-ip", "world-ip-ai"],
+  "screens": [
+    {
+      "id": "world-ip",
+      "title": "世界 IP",
+      "subtitle": "你的世界里有哪些元素。引擎在服务端解析，这一屏只读浏览。",
+      "kind": "world",
+      "source": "worldOps",
+      "card": {
+        "title": "name",
+        "subtitle": "typeName"
+      }
+    }
+  ]
+}

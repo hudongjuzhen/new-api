@@ -104,6 +104,15 @@ const BRAND_AND_LITERAL_KEYS = new Set([
   'Webhook URL:',
   'Well-Known URL',
   'Worker URL',
+  /*
+   * 「世界 IP」是本产品的**名字**，与上面那些品牌名同一个性质：七种语言里都原样
+   * 写它，而不是翻译它（一个被翻译过的产品名会让运营在两种语言的后台里找不到
+   * 同一件事）。不登记的话，它每跑一次 sync 都会被列进 `*.untranslated.json`
+   * —— 而那份报告的价值正在于"里面每一条都值得看一眼"，被一个永远不会改的名字
+   * 占着就把它淹了。
+   */
+  'World IP',
+  'World IP · Plugins',
   'Xinference',
   'Xunfei',
   'Zhipu V4',

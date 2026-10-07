@@ -453,7 +453,7 @@ func TestMountRoutes_PublishesTheDocumentedURLs(t *testing.T) {
 	router := gin.New()
 	require.NotPanics(t, func() { mountRoutesForTest(router) })
 
-	registered := make([]string, 0, 10)
+	registered := make([]string, 0, 12)
 	for _, route := range router.Routes() {
 		registered = append(registered, route.Method+" "+route.Path)
 	}
@@ -466,6 +466,9 @@ func TestMountRoutes_PublishesTheDocumentedURLs(t *testing.T) {
 		"GET /dashboard/zsy/world/entitlements",
 		"POST /dashboard/zsy/world/entitlements/grant",
 		"POST /dashboard/zsy/world/entitlements/revoke",
+		// 插件文件：列模板 + 按账号签发一份（docs/22 §2.3 / docs/23 §12.15）
+		"GET /dashboard/zsy/world/plugins",
+		"POST /dashboard/zsy/world/plugins/issue",
 	}, registered)
 }
 

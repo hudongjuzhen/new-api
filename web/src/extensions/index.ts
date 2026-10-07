@@ -23,6 +23,10 @@ import './zsy-voice'
 // zsy-tone joins that same group rather than opening its own; it must therefore
 // stay after zsy-voice, which is what creates the group.
 import './zsy-tone'
+// zsy-world is an **operator action** page (sign a plugin file for one account,
+// grant or revoke its capabilities), not a public catalog — so it opens its own
+// top-level group instead of joining "Public Data". Order does not matter for it.
+import './zsy-world'
 
 export * from './menus'
 export * from './channel-types'

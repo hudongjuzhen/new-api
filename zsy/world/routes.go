@@ -53,8 +53,12 @@ func mountRoutes(router *gin.Engine) {
 		admin.GET("/entitlements", listAdminEntitlements)
 		admin.POST("/entitlements/grant", grantEntitlement)
 		admin.POST("/entitlements/revoke", revokeEntitlement)
+		// 插件文件：列模板 + 按账号签发一份（docs/22 §2.3 / docs/23 §12.15）
+		admin.GET("/plugins", listPluginTemplates)
+		admin.POST("/plugins/issue", issuePluginFile)
 	}
 
 	common.SysLog("zsy-world: mounted /api/zsy/world/{op,entitlements} and " +
-		"/dashboard/zsy/world/{projects,projects/:id,projects/:id/versions/:version,entitlements,entitlements/grant,entitlements/revoke}")
+		"/dashboard/zsy/world/{projects,projects/:id,projects/:id/versions/:version," +
+		"entitlements,entitlements/grant,entitlements/revoke,plugins,plugins/issue}")
 }
