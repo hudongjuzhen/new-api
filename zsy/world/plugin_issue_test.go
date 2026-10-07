@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/require"
@@ -61,7 +62,10 @@ func useTemplateDir(t *testing.T, files map[string]string) string {
 }
 
 // aValidTemplate is a minimal, valid template (its content does not matter for
-// most assertions — what matters is the shape and `x-capabilities`).
+// most assertions — what matters is the shape, `version`, and `x-capabilities`).
+//
+// ⚠ `version` 那一格是**这一轮加的**：文件名与界面都要用它，所以夹具里必须有它，
+// 否则"文件名带版本"这条断言只能测到"没带"（一个空版本会走另一支）。
 func aValidTemplate(id string, capabilities ...string) string {
 	caps := ""
 	for i, c := range capabilities {
@@ -75,12 +79,13 @@ func aValidTemplate(id string, capabilities ...string) string {
   "formatVersion": 1,
   "id": %q,
   "name": "测试插件 %s",
+  "version": %q,
   "x-capabilities": [%s],
   "screens": [
     { "id": %q, "title": "一屏", "kind": "world", "source": "worldOps",
       "card": { "title": "name" } }
   ]
-}`, id, id, caps, id)
+}`, id, id, pluginTemplateVersion, caps, id)
 }
 
 // ---------------------------------------------------------------------------
@@ -198,12 +203,32 @@ func TestIssuePluginFile_WritesABindingTheClientCanVerify(t *testing.T) {
 	require.NotContains(t, out, templateCapabilitiesKey,
 		"x-capabilities 是后台用的，不该跟着文件走到用户的机器上")
 
-	/* 文件名要能区分账号 —— 运营硬盘上会躺着好几份 */
+	/*
+	 * ★ 文件名要能区分**三件事**：哪一份插件、**哪一版**、给谁的。
+	 *
+	 * ⚠ 版本这一格是**这一轮加的**，而它的理由很具体：运营的硬盘上会同时躺着
+	 * "刚发给 A 的那份"与"上个月发给 A 的那份" —— 两个都叫 `world-ip-zsy-user7`。
+	 * 用户报问题时说"我装的是 v0.1.0"，而运营手上那份看不出是哪一版，
+	 * 那就只能让他把文件发回来。
+	 */
 	name, _ := data["fileName"].(string)
-	require.Contains(t, name, "world-ip")
-	require.Contains(t, name, "writer")
+	require.Contains(t, name, "world-ip", "文件名要说清是哪一份插件")
+	require.Contains(t, name, "v"+pluginTemplateVersion, "文件名要带版本 —— 否则新旧两份分不开")
+	require.Contains(t, name, "writer", "文件名要说清给谁")
 	require.Contains(t, name, fmt.Sprint(writerID))
+
+	/* 日期那一格：同一天签的两份文件名一样，隔天签的不一样 */
+	require.Contains(t, name, time.Now().UTC().Format("20060102"))
+
+	/* 版本也要单独回报 —— 界面拿它显示"这一份是哪一版" */
+	require.Equal(t, pluginTemplateVersion, data["pluginVersion"])
 }
+
+// pluginTemplateVersion 是 aValidTemplate 写进模板的那个版本。
+//
+// ⚠ 与夹具里那一个字面量**必须一致**：测试要断言"文件名里的版本来自模板"，
+// 就得知道模板里写的是什么。改夹具里的版本时这里也要改（下面有一条守卫比对）。
+const pluginTemplateVersion = "9.8.7"
 
 // TestIssuePluginFile_KeepsEveryTemplateField pins "读一遍再写回去不丢字段".
 //

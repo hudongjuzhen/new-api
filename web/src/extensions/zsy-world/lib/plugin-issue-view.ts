@@ -111,8 +111,14 @@ export function issueSuccessLine(
   const want = template?.capabilities || []
   const missing = capabilitiesNotGranted(want, canUse)
 
+  /*
+   * ★ 带上**版本**：运营手上会有好几份看着一样的插件文件（上个月发给 A 的、刚发给 A 的），
+   * 而"这一份是哪一版"是那一刻唯一能分辨它们的东西 —— 文件名里也有（见服务端的
+   * `pluginFileName`），但这句话会被复制粘贴到聊天记录里，文件名不会。
+   */
+  const version = result.pluginVersion ? ` v${result.pluginVersion}` : ''
   const head =
-    `已经签好「${result.pluginId}」给账号 ${result.username}（ID ${result.userId}）：` +
+    `已经签好「${result.pluginId}」${version} 给账号 ${result.username}（ID ${result.userId}）：` +
     `文件名 ${result.fileName}。`
 
   if (!missing.length) {

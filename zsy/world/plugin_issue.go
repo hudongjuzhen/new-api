@@ -165,13 +165,14 @@ func issuePluginFile(c *gin.Context) {
 	}
 
 	check := PluginCheck(pluginID, user.Id, user.Username, site)
+	issuedAt := time.Now().UTC()
 	block := PluginEntitlementBlock{
 		PluginID:     pluginID,
 		UserID:       user.Id,
 		Username:     user.Username,
 		Site:         site,
 		Capabilities: caps,
-		IssuedAt:     time.Now().UTC().Format(time.RFC3339),
+		IssuedAt:     issuedAt.Format(time.RFC3339),
 		Check:        check,
 	}
 
@@ -181,7 +182,20 @@ func issuePluginFile(c *gin.Context) {
 		return
 	}
 
-	name := pluginFileName(pluginID, user.Username, user.Id)
+	/*
+	 * ★ 版本取自**模板**（`manifest.version`），不是这里编一个。
+	 *
+	 * | 做法 | 后果 |
+	 * |---|---|
+	 * | 模板里的 version | 运营改模板时**顺手改它**，于是"v0.2.0 那份"与"v0.1.0 那份"在文件名与界面上分得开 |
+	 * | 这里按签发次数自增一个号 | 那个号**不代表任何东西**：它既不是插件的版本，也与模板对不对得上无关 |
+	 *
+	 * ⚠ 文件里带版本这件事有它自己的用处：客户端那一屏会把 `version` 显示出来，
+	 * 于是用户报问题时能说出"我装的是 v0.1.0" —— 而在那之前，
+	 * "他手上是哪一版"是**查不出来**的（只能让他把文件发回来）。
+	 */
+	pluginVersion := stringField(tpl.Manifest, "version", "")
+	name := pluginFileName(pluginID, pluginVersion, user.Username, user.Id, issuedAt)
 	common.SysLog(fmt.Sprintf(
 		"[zsy-world] issued plugin file plugin=%q to user=%d (%s) capabilities=%v",
 		pluginID, user.Id, user.Username, caps))
@@ -194,10 +208,12 @@ func issuePluginFile(c *gin.Context) {
 		// 但**人**会拿它去比对，所以这里给的就是那份文本本身。
 		"file":     file,
 		"pluginId": pluginID,
-		"userId":   user.Id,
-		"username": user.Username,
-		"site":     site,
-		"check":    check,
+		/* 模板里那个版本（可能为空 —— 旧模板没写）。界面用它显示"这份是哪一版"。 */
+		"pluginVersion": pluginVersion,
+		"userId":        user.Id,
+		"username":      user.Username,
+		"site":          site,
+		"check":         check,
 		// 文件上写着的能力。★ 它必须回报：界面要拿它与 `granted` 相比，
 		// 才能说出那句"文件装得上、可是用不了，还差 X" —— 而那是这一屏最要紧的一句话。
 		"capabilities": caps,
@@ -294,14 +310,28 @@ func renderPluginFile(manifest map[string]any, block PluginEntitlementBlock) (st
 
 // pluginFileName suggests a download name.
 //
-// ★ 名字里带**用户名与 id**：运营的硬盘上会同时躺着好几份"世界IP.json"，
-// 而发错文件正是这一整块要防的那件事 —— 让文件名自己就能区分。
-func pluginFileName(pluginID, username string, userID int) string {
-	safe := sanitizeFilePart(username)
-	if safe == "" {
-		return fmt.Sprintf("%s-user%d.aimv-plugin.json", pluginID, userID)
+// ★★ 名字里带三样东西，因为运营的硬盘上会同时躺着好几份看着一样的插件文件：
+//
+//	插件 id    —— 是哪一份插件
+//	版本       —— **哪一版**（改过模板之后，旧文件与新文件必须能分辨）
+//	账号与日期 —— 给谁的、什么时候签的
+//
+// 例：`world-ip-v0.1.0-zsy-user7-20261007.aimv-plugin.json`
+//
+// ⚠ 这个文件名**只是给人看的**：真正的判据全在文件**内容**里（`id` / `version` /
+// `entitlement`）。所以这里怎么拼都不影响正确性 —— 但它影响"发错文件"的概率，
+// 而发错文件正是这一整块要防的事。
+func pluginFileName(pluginID, version, username string, userID int, issuedAt time.Time) string {
+	parts := []string{pluginID}
+	if safe := sanitizeFilePart(version); safe != "" {
+		parts = append(parts, "v"+safe)
 	}
-	return fmt.Sprintf("%s-%s-user%d.aimv-plugin.json", pluginID, safe, userID)
+	if safe := sanitizeFilePart(username); safe != "" {
+		parts = append(parts, safe)
+	}
+	parts = append(parts, fmt.Sprintf("user%d", userID))
+	parts = append(parts, issuedAt.Format("20060102"))
+	return strings.Join(parts, "-") + ".aimv-plugin.json"
 }
 
 // sanitizeFilePart keeps a user name usable inside a file name.

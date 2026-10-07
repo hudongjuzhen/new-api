@@ -85,6 +85,8 @@ export interface IssueResult {
   /** 那份文件**本身**（文本）。 */
   file: string
   pluginId: string
+  /** ★ 模板里那个版本（可能为空 —— 旧模板没写）。界面用它显示"这一份是哪一版"。 */
+  pluginVersion: string
   userId: number
   username: string
   site: string

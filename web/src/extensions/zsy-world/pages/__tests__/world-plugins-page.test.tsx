@@ -135,9 +135,11 @@ const TEMPLATES = {
 
 function issued(overrides: Record<string, unknown> = {}) {
   return {
-    fileName: 'world-ip-zsy-user7.aimv-plugin.json',
+    /* ★ 文件名里带版本 —— 与新增的那一格一起测（见下面"文件名带版本"那条） */
+    fileName: 'world-ip-v0.1.0-zsy-user7-20261007.aimv-plugin.json',
     file: '{"format":"aimv-plugin"}',
     pluginId: 'world-ip',
+    pluginVersion: '0.1.0',
     userId: 7,
     username: 'zsy',
     site: 'https://www.aipole.top',
@@ -235,9 +237,11 @@ describe('世界 IP · 插件管理', () => {
     /* 文件名在两处出现（成功那句提示 + 底下那行详情），所以用 getAllByText */
     await waitFor(() =>
       expect(
-        screen.getAllByText(/world-ip-zsy-user7\.aimv-plugin\.json/).length
+        screen.getAllByText(/world-ip-v0\.1\.0-zsy-user7-20261007\.aimv-plugin\.json/).length
       ).toBeGreaterThan(0)
     )
+    /* ★ 版本也要在那句话里出现 —— 运营会把它复制到聊天记录里 */
+    expect(screen.getByText(/已经签好「world-ip」 v0\.1\.0 给账号 zsy/)).toBeInTheDocument()
     expect(screen.getByText(/fnv1a64:0cbcf8114de19bfa/)).toBeInTheDocument()
     expect(worldApi.issuePluginFile).toHaveBeenCalledWith(7, 'world-ip', undefined)
   })
