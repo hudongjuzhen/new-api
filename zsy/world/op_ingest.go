@@ -52,18 +52,30 @@ type ingestRunData struct {
 	Billing ingestBilling `json:"billing"`
 }
 
-// ingestBilling is what the caller is told about the charge.
+// ingestBilling is what the caller is told about the spend.
 //
-// ★ It reports *tokens* as well as quota on purpose: tokens are what the engine
-// actually measured, and quota is what the host's conversion turned them into.
-// A client that shows only one of the two cannot explain a surprising bill.
+// ★ It reports **tokens** (what the engine actually measured) and the **gateway**
+// they were dialled through — but deliberately **no money amount**.
+//
+// ⚠ Why `quota` is gone (2026-10-08): this struct used to carry a number the plugin
+// computed from the engine's tokens with the **local** `ModelRatio` table, and the
+// failure message printed it as "本次已消耗 N 积分". Two things were wrong with it:
+//
+//  1. **它不是积分。** 那是宿主的内部 `quota` 单位，写成"积分"差一个 `QuotaPerUnit`
+//     （默认 500,000）：用户当时在「积分记录」里看到 2.23154 积分，而消息说 757166。
+//  2. **它是第二笔账。** 模型调用打回本机中继、用的是发起者的令牌，中继已经把那笔钱
+//     扣掉了（见 billing.go 文件头）。那一跑实测中继扣 111,577 quota，插件自己算出
+//     757,166 —— 两张价目表，差 6.8 倍。
+//
+// So "这一次花了多少" is now answered by the gateway's own ledger, where the user can
+// see every call（「积分记录」）。 A plugin-side number can only ever be a second opinion,
+// and this one was measurably the wrong one.
 type ingestBilling struct {
 	Model            string `json:"model"`
 	Group            string `json:"group"`
 	Calls            int    `json:"calls"`
 	PromptTokens     int    `json:"prompt_tokens"`
 	CompletionTokens int    `json:"completion_tokens"`
-	Quota            int    `json:"quota"`
 	// Gateway is the LLM endpoint the engine actually dialled (docs/23 §10 item 15).
 	//
 	// ★★ It exists so "which ledger did the model fee land on" is **in the data**
@@ -235,36 +247,25 @@ func opIngestRun(c *gin.Context, raw json.RawMessage) (any, error) {
 	notes := engineStringArray(engineDoc, "notes")
 	progress := engineRawArray(engineDoc, "progress")
 
-	// ── 4. settlement happens even if the gate then refuses ────────────────
+	// ── 4. the gate (docs/23 §10 item 10/11) ───────────────────────────────
 	//
-	// ★ 顺序的理由：模型调用**已经发生**，钱已经花了。闸门拒掉的是"把这份不合法的
-	// 文档落库"，不是"这次调用没发生"。所以先结算、再判闸门——反过来会让用户
-	// 白拿一次解析（而且服务端自己承担那笔费用）。
-	charged, chargeErr := chargeIngest(userID, ingestingModel(params.Model), group, usageStages)
-	if chargeErr != nil {
-		sidecarSysLog("ingest.run", chargeErr)
-		// ★ An unpriced model is an OPERATOR configuration problem, and its own
-		// message says which model and where to configure it. Swallowing that behind
-		// a generic "记账失败" would send the user to support and support to the
-		// source code — so it is forwarded, while every other charge failure
-		// (a database fault, a saturation) stays a server-side summary.
-		if errors.Is(chargeErr, errModelUnpriced) {
-			return nil, failUpstream(
-				"解析已完成，但%v（本次调用已发生，请运营核对该笔费用）", chargeErr)
-		}
-		return nil, failUpstream("解析已完成，但记账失败：请稍后联系运营核对（服务端日志已记录）")
-	}
-
-	// ── 5. the gate (docs/23 §10 item 10/11) ───────────────────────────────
+	// ★ 这里**没有结算**，而且是刻意的：模型调用打回本机中继、用的是发起者的令牌，
+	// 中继已经按它自己的价目表逐次扣过那个用户的额度了（billing.go 文件头记着那一跑
+	// 两笔账的实测差额）。插件再扣一次，就是同一次解析收两次钱。
 	verdict, err := gateOnAuthority(c.Request.Context(), newDoc)
 	if err != nil {
 		sidecarSysLog("ingest.run", err)
 		return nil, failUpstream("%s", clientFacingSidecarMessage(err))
 	}
 	if !verdict.OK {
+		// ⚠ 措辞有讲究：**不给金额**。这一跑的钱是中继扣的，插件手里没有那个数，
+		// 猜一个出来就是又一次"对不上账的提示"——那条"已消耗 757166 积分"就是这么来的。
+		// 能给、也该给的是"钱已经花了，而且看得见花在哪"这件事本身。
 		return nil, failInput(
-			"解析结果未通过权威校验，已放弃落库（项目仍是第 %d 版；本次已消耗 %d 积分，因为模型调用已经发生）：%s",
-			project.CurrentVersion, charged, verdict.Summary())
+			"解析结果未通过权威校验，已放弃落库（项目仍是第 %d 版）。"+
+				"⚠ 这一次的模型调用已经发生、也已经由网关计费（逐笔明细见「积分记录」），"+
+				"但结果没有落库：%s",
+			project.CurrentVersion, verdict.Summary())
 	}
 
 	// ── 6. commit ──────────────────────────────────────────────────────────
@@ -302,7 +303,6 @@ func opIngestRun(c *gin.Context, raw json.RawMessage) (any, error) {
 			Calls:            calls,
 			PromptTokens:     promptTokens,
 			CompletionTokens: completionTokens,
-			Quota:            charged,
 			Gateway:          gateway,
 			UsageByStage:     byStage,
 		},
@@ -353,13 +353,13 @@ func validateIngestRun(params *ingestRunParams) error {
 	return nil
 }
 
-// ingestDefaultModel is the model new-api bills against when the caller does not
-// name one.
+// ingestDefaultModel is the model this deployment asks the engine for when the
+// caller does not name one.
 //
-// ⚠ It must be a name the operator has actually configured in the host's model
-// ratio table — otherwise `tokenQuota` refuses to bill and the op reports that the
-// model is unpriced. That is deliberately a loud failure rather than a default
-// ratio: see billing.go.
+// ⚠ It must be a name the **gateway** actually serves: the model calls go back
+// through this deployment's own relay with the caller's token (docs/23 §12.13),
+// and the relay prices what it serves. The plugin itself no longer needs a
+// 「模型倍率」 entry to bill — it does not bill at all (billing.go 文件头).
 const ingestDefaultModel = "gpt-5-nano"
 
 func ingestingModel(requested string) string {

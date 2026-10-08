@@ -39,6 +39,18 @@ export interface PluginTemplateView {
   name: string
   /** 这份插件要配哪些能力（模板里的 `x-capabilities`）。 */
   capabilities: string[]
+  /**
+   * ★★ 这份插件**怎么发出去**（模板里的 `x-visibility`）：`public` / `private`。
+   *
+   * | 取值 | 客户端怎么拿到它 |
+   * |---|---|
+   * | `public`  | 插件页里直接列出来，任何账号点一下「一键安装」（`GET /api/zsy/plugins`） |
+   * | `private` | 只有后台**按账号签发**的那一份文件（这一屏下面那一步） |
+   *
+   * ⚠ 没写这一格的模板按 `private` 算（服务端那一条是刻意的：本格是后加的，
+   * 磁盘上那些老模板一份都没写，默认成 public 会让付费插件突然人人可装）。
+   */
+  visibility: string
   /** 它带来的每一屏的标题。 */
   screens: string[]
   /**

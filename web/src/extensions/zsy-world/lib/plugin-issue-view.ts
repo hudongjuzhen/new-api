@@ -160,6 +160,39 @@ export const ENTITLEMENT_STATE_LABEL: Record<EntitlementState, string> = {
 }
 
 /**
+ * ★★ 这份插件**怎么发出去**（`x-visibility`）—— 模板卡片上那一个标签。
+ *
+ * # 为什么它必须显示出来（这一格是这一屏最容易出错的一格）
+ *
+ * 同一份模板，写 `public` 与写 `private` 的后果**完全不同**：
+ *
+ * | 取值 | 后果 |
+ * |---|---|
+ * | `public` | ★ 它出现在**所有**用户的插件页里，任何人点一下就装上了 |
+ * | `private` | 只有运营按账号签发的那一份文件能装 |
+ *
+ * 而这两个值在磁盘上只差一个词（`"x-visibility": "public"`），文件本身长得一模一样
+ * —— 所以"我到底把它设成公有了没有"必须在这一屏上看得见，不能靠去翻那个文件。
+ */
+export const VISIBILITY_LABEL: Record<string, string> = {
+  public: '公共 · 一键可装',
+  private: '私有 · 按账号签发',
+}
+
+/**
+ * 一个模板的可见性 → 那一行字。
+ *
+ * ⚠★ 认不出 / 没写**一律按 `private` 说**：那是服务端的默认值
+ * （`plugin_template.go` 的 `templateVisibility`，理由写在那里：本格是后加的，
+ * 磁盘上那些老模板一份都没写，默认成 public 会让付费插件突然人人可装）。
+ * 这里若回落成"公共"，运营会以为自己设对了 —— 而实际正好相反。
+ */
+export function visibilityLabel(raw: string | undefined): string {
+  const key = String(raw ?? '').trim()
+  return VISIBILITY_LABEL[key] || VISIBILITY_LABEL.private
+}
+
+/**
  * 建议的账号输入值。
  *
  * ⚠ 只接受正整数：`Number('')` 是 0、`Number('abc')` 是 NaN，而两者都会让

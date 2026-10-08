@@ -1,0 +1,21 @@
+{
+  "format": "aimv-plugin",
+  "formatVersion": 1,
+  "category": "mode",
+  "id": "audio-mode",
+  "name": "音频模式",
+  "version": "1.0.0",
+  "author": "矩阵科技",
+  "description": "音频工程那一屏：音频脚本分段、音轨、有声书导出都从这儿进。装上之后首页顶上多一条「音频工程」。",
+  "x-capabilities": [],
+  "x-visibility": "private",
+  "screens": [
+    {
+      "id": "audio-mode",
+      "title": "音频工程",
+      "subtitle": "只列音频工程。音频脚本分段、音轨、有声书导出都从这儿进。",
+      "kind": "engineering",
+      "medium": "audio"
+    }
+  ]
+}

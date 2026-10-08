@@ -1,105 +1,67 @@
 package world
 
 import (
-	"errors"
 	"fmt"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
 // =========================================================================
-// 计费：按 token，与生成视频同一套换算（docs/23 §6.5）
+// 计费：**一本账** —— 中继扣的那一笔就是这一跑的账（2026-10-08 改；docs/23 §12.13）
 //
 // # 这条规矩的全部内容
 //
-// **换算是宿主的，本插件一条比率都不发明。** 用户看到的是 new-api 已有的那本账
-// （`quota` / 积分）：同一个 `QuotaPerUnit`、同一张 `ModelRatio` 表、同一个
-// `GroupRatio`。世界上多一个"世界积分"就等于多一本账，用户对不上，运营也退不了款。
+// 世界解析的模型调用**打回本机中继**、用的是**发起者自己的令牌**（`gateway.go`
+// 从请求的 Host 推导地址，推不出来就拒绝这次 op，绝不悄悄回落到运营的账上）。
+// 也就是说中继已经按它自己的价目表逐次调用把钱从那个用户的额度里扣掉了。
 //
-// 换算公式与宿主的中继结算**逐字相同**（`service/text_quota.go` 的同一条）：
+// **那就是账。本插件不再自己扣第二笔。**
 //
-//	额度 = (prompt_tokens × 1 + completion_tokens × ModelRatio) / 1e6
-//	       × GroupRatio × QuotaPerUnit
+// # 为什么把原来那一笔删了（实测，不是口味问题）
 //
-// ⚠ 为什么 prompt 不带倍率而 completion 带：那是宿主对"输入/输出不同价"的建模
-// （`ModelRatio` 是输出对输入的倍率）。照抄它，才叫"同一套换算"；自己改成
-// "两个都乘"会让这里的数字与用户在别处看到的对不上。
+// 原来这里有一个 `chargeIngest`：跑完按引擎回报的 token、用**本机的 `ModelRatio`
+// 表**算一个数，再 `DecreaseUserQuota` 扣一次。它和中继那一笔同时发生，
+// 于是同一次解析被收两次钱：
 //
-// # 为什么不用 relay 的预扣-结算那套（PreConsumedQuota）
+//	2026-10-08 那次真跑（41 分钟、39 次模型调用、校验没过所以没有落库）
+//	  中继侧（`logs` 表里那 39 行，用户在「积分记录」里看得到的）：111,577 quota = 2.23154 积分
+//	  插件侧（本文件算出来的，同一跑）：                             757,166 quota = 15.14 积分
+//	  → 合计 17.37 积分，而设计文档 §12.13 写的是"模型费与 quota 合成一笔"
 //
-// 那套是为**流式、可按 token 预估**的中继请求设计的：请求前按 prompt token 预扣，
-// 结算时补差。世界的抽取是**一次批处理**——事前唯一能估的是"上界"（章数 × 类型数），
-// 而按上界预扣会把用户卡在"钱不够但实际花不了那么多"上。
+// 差额不是舍入误差，是**两张价目表**：本部署的中继走 `usage_billing_path: upstream`
+// （按上游真实价：实测约 $0.069/M 输入、$0.384/M 输出），而本机 `ModelRatio` 表把
+// 这个型号算成"输入 $1/M"——对"以整本书为上下文"的抽取来说贵约 6.8 倍。
+// 两个价目表永远不会自动对上，所以"插件自己算一笔更准的账"这条路从根上不成立。
 //
-// 故选了"**先查后结**"：跑之前确认余额够这个下界，跑完按**实际 token** 结算。
-// ⚠ 代价要说清：引擎真的花了钱之后才发现余额不足时，这次已经发生。
-// 所以 `estimateQuotaForIngest` 的下界要保守（宁可高估），而不是精确。
+// # 那 `requireQuota` 为什么留着
+//
+// 它是**准入检查**，不是记账：跑之前确认余额还够一个保守下界，免得跑到一半没钱了
+// 才炸在模型调用上。它用一个固定的每章下限、**不查倍率表**——所以就算运营把倍率配错，
+// 也不会把一个还有钱的账号挡在门外（这是老设计里唯一值得留的那半条）。
+//
+// ⚠ 代价说清：模型调用真的发生之后才发现余额不足时，这次已经花掉了——中继那笔是
+// 扣定了的。"先查"就是为了让这种情况尽量别发生。
+//
+// ⚠ `chargeIngest` 曾经在本文件里（跑完再按本机倍率表扣一次）。**不要再把它加回来**：
+// 界面上"这次花了多少"的答案来自中继的账，用户在「积分记录」里逐笔看得到。
 // =========================================================================
 
-// errModelUnpriced marks "the operator never priced this model".
-//
-// ★ It is a distinct sentinel because the *audience* differs: every other charge
-// failure is a server fault the user cannot act on, while this one is fixed in the
-// dashboard by whoever runs the deployment. The caller forwards this one's message
-// verbatim and summarises the rest (see op_ingest.go).
-var errModelUnpriced = errors.New("world: model has no configured ratio")
-
-// tokenQuota is the host's token→quota conversion, in one place.
-//
-// Value returns a float; callers convert with `common.QuotaFromFloat`, which is the
-// convention the sibling plugins use (zsy/runninghub does exactly this for its
-// per-call prices). Keeping the conversion here — rather than inline at the call
-// site — is what makes "同一套换算" checkable by reading one function.
-func tokenQuota(promptTokens, completionTokens int, model string, group string) (float64, error) {
-	ratio, known, _ := ratio_setting.GetModelRatio(model)
-	if !known {
-		// ⚠ GetModelRatio answers a DEFAULT ratio (37.5) for an unknown model, and
-		// reports `known=false`. Billing a user at a default ratio for a model the
-		// operator never priced is exactly the kind of silent overcharge that is
-		// impossible to explain later, so it is refused instead.
-		return 0, fmt.Errorf(
-			"%w：型号 %q 没有配置倍率，无法计费。请在「运营设置 → 模型倍率」里配置它（或让调用方改用别的型号）",
-			errModelUnpriced, model)
-	}
-	if ratio < 0 {
-		ratio = 0
-	}
-	groupRatio := ratio_setting.GetGroupRatio(group)
-	if groupRatio < 0 {
-		groupRatio = 0
-	}
-
-	const perMillion = 1_000_000.0
-	prompt := float64(promptTokens) / perMillion
-	completion := float64(completionTokens) * ratio / perMillion
-	return (prompt + completion) * groupRatio * common.QuotaPerUnit, nil
-}
-
-// usageTotals sums the engine's per-stage usage.
-//
-// ★ The engine reports usage *per stage* (题材识别 / 类型发现 / 逐章抽取 / …) because
-// that is what answers "钱花在哪了" (docs/23 §6.5). For billing the total is what
-// matters, but the per-stage breakdown is kept in the response so an operator can
-// still explain the bill.
-func usageTotals(stages []stageUsage) (calls int, promptTokens int, completionTokens int) {
-	for _, s := range stages {
-		calls += s.Calls
-		promptTokens += s.PromptTokens
-		completionTokens += s.CompletionTokens
-	}
-	return calls, promptTokens, completionTokens
-}
-
-// requiresQuota checks that the account can afford one ingest before it runs, and
+// requireQuota checks that the account can afford one ingest before it runs, and
 // is where `E_QUOTA` comes from.
 //
 // ★ `E_QUOTA` is deliberately NOT `E_ENTITLEMENT` (docs/23 §6.5): the capability
 // answers "may this account use world-ip-ai at all", the quota answers "is there
-// enough left". A client draws "去购买" for the first and "积分不足（还差 N）" for the
+// enough left". A client draws "去购买" for the first and "额度不足（还差 N）" for the
 // second.
+//
+// ★ 金额一律经**宿主自己的格式化器**（`logger.LogQuota`）输出，绝不打印裸 `quota`。
+// 裸 quota 是产品里哪一屏都看不到的数：把它写成"积分"会差一个 `QuotaPerUnit`
+// （默认 500,000）——2026-10-08 那句"本次已消耗 757166 积分"就是这么来的，
+// 而用户当时看到的是 2.23154 积分。一条对不上账的提示比没有提示更糟。
+//
+// ⚠ 措辞里**不出现"积分"，也不出现"额度"**：单位由 `logger.LogQuota` 自己带
+// （`＄1.514332` / `¥…`，随站点的额度显示设置），这里再说一遍只会跟它打架。
 func requireQuota(userID int, needed int) error {
 	if needed <= 0 {
 		return nil
@@ -112,38 +74,24 @@ func requireQuota(userID int, needed int) error {
 		return &opFailure{
 			Code: CodeQuota,
 			Message: fmt.Sprintf(
-				"积分不足：本次解析预计至少需要 %d，当前余额 %d，还差 %d。请充值后再试。",
-				needed, quota, needed-quota),
+				"余额不足：本次解析预计至少需要 %s，当前余额 %s，还差 %s。请充值后再试。",
+				logger.LogQuota(needed), logger.LogQuota(quota), logger.LogQuota(needed-quota)),
 		}
 	}
 	return nil
 }
 
-// chargeIngest debits the account for what the engine actually spent.
+// usageTotals sums the engine's per-stage usage.
 //
-// It runs **after** the engine call, because the true cost is only known then
-// (see the file header). It is called only on the success path — a failed
-// extraction whose usage is non-zero still consumed model calls, and that case is
-// handled by the caller reporting the usage even when it refuses the result.
-func chargeIngest(userID int, modelName string, group string, stages []stageUsage) (int, error) {
-	_, promptTokens, completionTokens := usageTotals(stages)
-	if promptTokens == 0 && completionTokens == 0 {
-		return 0, nil
+// ★ The engine reports usage *per stage* (题材识别 / 类型发现 / 逐章抽取 / …) because
+// that is what answers "钱花在哪了" (docs/23 §6.5). The totals are **reported**, not
+// charged: the charge itself is the gateway's, and its per-call amount is the thing
+// the user can reconcile against 「积分记录」.
+func usageTotals(stages []stageUsage) (calls int, promptTokens int, completionTokens int) {
+	for _, s := range stages {
+		calls += s.Calls
+		promptTokens += s.PromptTokens
+		completionTokens += s.CompletionTokens
 	}
-	value, err := tokenQuota(promptTokens, completionTokens, modelName, group)
-	if err != nil {
-		return 0, err
-	}
-	quota := common.QuotaFromFloat(value)
-	if quota <= 0 {
-		return 0, nil
-	}
-	if err := model.DecreaseUserQuota(userID, quota, false); err != nil {
-		return 0, fmt.Errorf("world: charge user %d %d quota: %w", userID, quota, err)
-	}
-	model.UpdateUserUsedQuotaAndRequestCount(userID, quota)
-	model.RecordLog(userID, model.LogTypeConsume, fmt.Sprintf(
-		"世界解析：%s，prompt %d / completion %d tokens，扣 %s",
-		modelName, promptTokens, completionTokens, logger.LogQuota(quota)))
-	return quota, nil
+	return calls, promptTokens, completionTokens
 }

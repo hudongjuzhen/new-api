@@ -63,6 +63,12 @@ type PluginTemplate struct {
 	Name string `json:"name"`
 	// Capabilities 是"这份插件要配哪些能力"（见上面 `x-capabilities` 那段）。
 	Capabilities []string `json:"x-capabilities"`
+	// Visibility 是"这份插件怎么发出去"：`public`（公共目录，一键可装）或
+	// `private`（只能按账号签发）。见上面 `x-visibility` 那一整段。
+	//
+	// ⚠ 它**不进插件文件**（`hostOnlyKeys` 会在两个出口都把它拿掉）：
+	// 客户端不需要、也不该拿这个值做任何判断 —— 能不能装是**服务端**决定的事。
+	Visibility string `json:"x-visibility"`
 
 	// Manifest 是模板**原样**那一份（含上面那三格，它们是插件格式允许的额外字段）。
 	//
@@ -85,6 +91,101 @@ const pluginTemplateDirDefault = "plugin-templates"
 
 // templateCapabilitiesKey is the extension key carrying the capability list.
 const templateCapabilitiesKey = "x-capabilities"
+
+// =========================================================================
+// ★★ 可见性：这份模板是「公共」还是「私有」（docs/27 §3）
+//
+// 用户 2026-… 的要求原话：
+//
+//	"这里也有两类，这两类的选择，在服务器端，一类是公共类型……能够直接在插件
+//	 这里看到，能够直接点击一键安装，任何账号都能直接一键安装，另一类是私有模式
+//	 ……需要后台下载证书提供。"
+//
+// | 取值 | 客户端怎么拿到它 | 谁决定 |
+//	|---|---|---|
+//	| `public`  | ★ 插件页里列出来，任何人点一下「一键安装」（`/api/zsy/plugins`） | 运营写在模板里 |
+//	| `private` | 只有**后台按账号签发**的那一份文件（`/dashboard/zsy/world/plugins/issue`） | 同上 |
+//
+// ⚠★ **默认是 `private`，不是 `public`** —— 这一条是刻意的，而且方向不能反：
+// 本格子是后加的，磁盘上那些**写于它出现之前**的模板（`world-ip.json` 就是）
+// 一份 `x-visibility` 都没有。默认成 `public` 的话，它们会在升级那一刻
+// 悄悄变成"任何账号一键可装" —— 而 `world-ip` 是**付费能力**的插件，
+// 那正是它绝不该发生的事（见 `plugin_issue.go` 文件头："签发 ≠ 授权"，
+// 但一封公开发出去的文件会让"这个能力存在"这件事不再受运营控制）。
+//
+// ⚠ 它与 `x-capabilities` 是**两件不同的事**，别合并：
+//
+//	`x-capabilities`  这份插件**配哪些能力**（给后台看的，写进签发文件的 entitlement）
+//	`x-visibility`    ★ 这份插件**怎么发出去**（公共目录 / 按账号签发）
+//
+// 一个 `public` 插件同样可以带能力（装上不等于有权用）—— 那正是世界 IP 的设计。
+// =========================================================================
+
+// templateVisibilityKey is the extension key carrying the visibility class.
+const templateVisibilityKey = "x-visibility"
+
+// Visibility classes.
+const (
+	// VisibilityPublic — listed by GET /api/zsy/plugins, one-click installable by
+	// any account.
+	VisibilityPublic = "public"
+	// VisibilityPrivate — only reachable as a file issued for one account.
+	VisibilityPrivate = "private"
+)
+
+// knownVisibilities is the vocabulary, in the order the admin UI offers it.
+func knownVisibilities() []string { return []string{VisibilityPublic, VisibilityPrivate} }
+
+func isKnownVisibility(v string) bool {
+	for _, k := range knownVisibilities() {
+		if k == v {
+			return true
+		}
+	}
+	return false
+}
+
+// hostOnlyKeys are the extension keys that belong to **this backend** and must
+// never travel into a plugin file the user imports.
+//
+// ⚠★ One list, two renderers (the issued file and the published catalog).
+// Two lists would drift, and the symptom of a drift is "the file I downloaded
+// carries a field the file I was sent does not" — which nobody would think to
+// look for. The client stores unknown fields verbatim (docs/22 §2.1), so a
+// leaked key would be persisted and written back forever.
+var hostOnlyKeys = []string{templateCapabilitiesKey, templateVisibilityKey}
+
+// templateVisibility reads `x-visibility` and normalises it.
+//
+// ⚠ Missing / empty means **private** — the reasoning is in the block above,
+// and it is the one place that decision is allowed to live.
+func templateVisibility(manifest map[string]any) (string, error) {
+	raw, ok := manifest[templateVisibilityKey]
+	if !ok || raw == nil {
+		return VisibilityPrivate, nil
+	}
+	name := strings.TrimSpace(fmt.Sprint(raw))
+	if name == "" {
+		return VisibilityPrivate, nil
+	}
+	if !isKnownVisibility(name) {
+		return "", fmt.Errorf("%s 里是不认识的值 %q（能写的是 %s）—— "+
+			"它决定这份插件是「任何账号都能一键安装」还是「只能由后台按账号签发」，"+
+			"写错了会让一份付费插件变成公开可装。",
+			templateVisibilityKey, name, strings.Join(knownVisibilities(), " / "))
+	}
+	return name, nil
+}
+
+// IsPublic answers whether a template is published in the public catalog.
+//
+// ⚠ It is a named predicate rather than an inline `== VisibilityPublic` at the
+// call site: the catalog filter is the **only** thing standing between a paid
+// plugin and "any account can install it", so it gets a name that a test can
+// point at.
+func (t *PluginTemplate) IsPublic() bool {
+	return t != nil && t.Visibility == VisibilityPublic && t.Problem == ""
+}
 
 // templateCache holds the loaded templates, keyed by plugin id.
 //
@@ -211,14 +312,29 @@ func loadOneTemplate(path, wantID string, into map[string]*PluginTemplate) *Plug
 		return row
 	}
 
-	caps, err := templateCapabilities(manifest)
+	caps, capsWritten, err := templateCapabilities(manifest)
 	if err != nil {
 		row.Problem = err.Error()
 		return row
 	}
-	if len(caps) == 0 {
+	/*
+	 * ⚠★ 判据是"这一格**写没写**"，不是"里面有没有东西"（2026-…，`docs/27` §2）。
+	 *
+	 * 写这一格这件事本身有信息量：它是"这份插件配哪些能力"的唯一来源，而能力名
+	 * 是运营的知识、代码推不出来。**没写** = 作者漏了（拦下来）。
+	 * **写了、是空的** = ★ 作者明确说了"这份插件不需要任何能力" —— 那是一种
+	 * 合法的状态（"视频模式"那一类工程界面插件就是这样：它只画用户自己磁盘上的
+	 * 工程，一个需要能力的 op 都不调）。
+	 *
+	 * ⚠ 反过来说：**不许**把"没写"也当成"不需要" —— 那样一份本来要配
+	 * `world-ip` 的模板漏写一格之后会**静默地**变成"什么能力都不要"，
+	 * 而它签出去的文件上那一格就是空的（客户端只拿它显示，不会因此拒绝），
+	 * 于是没有任何地方会报错。
+	 */
+	if !capsWritten {
 		row.Problem = fmt.Sprintf("这份模板没写 %q —— 它是「这份插件要配哪些能力」的唯一来源，"+
-			"而能力名是运营的知识、代码推不出来。请写下它需要的能力（例如 [%q]）。",
+			"而能力名是运营的知识、代码推不出来。请写下它需要的能力（例如 [%q]）；"+
+			"如果它确实一个能力都不要，就写一个空数组 []（那是有意的声明，与「漏写」是两件事）。",
 			templateCapabilitiesKey, CapabilityWorldIP)
 		return row
 	}
@@ -230,6 +346,19 @@ func loadOneTemplate(path, wantID string, into map[string]*PluginTemplate) *Plug
 		}
 	}
 	row.Capabilities = caps
+
+	/*
+	 * ★ 可见性（`x-visibility`）。它**排在能力之后**：能力那一格缺席是**错误**
+	 * （见上面那段 —— 能力名是运营的知识，代码推不出来），而可见性缺席是
+	 * **有默认值的**（`private`）。先报那个真错，别让一句"没写可见性"
+	 * 把更值钱的那句盖掉。
+	 */
+	vis, err := templateVisibility(manifest)
+	if err != nil {
+		row.Problem = err.Error()
+		return row
+	}
+	row.Visibility = vis
 
 	if _, dup := into[wantID]; dup {
 		row.Problem = fmt.Sprintf("有两份模板都叫 %q", wantID)
@@ -261,6 +390,24 @@ func templateShapeProblem(manifest map[string]any) string {
 			return fmt.Sprintf("第 %d 屏的 kind 是 %q，本应用不认识（已知的是 %s）。",
 				i+1, kind, strings.Join(knownPluginKinds(), " / "))
 		}
+		/*
+		 * ★★ `kind: "engineering"` 那一支（`docs/27` §2）：它**不读任何目录**，
+		 * 改要一格 `medium`（"我是哪一家的工程界面"）。
+		 *
+		 * ⚠ 这一支**必须在 source 那一关之前**：让它也去过 `source` 只会有
+		 * 一个下场 —— 每一份正确的工程界面模板都被判"没有写 source"，
+		 * 而运营手里那份文件完全是对的（他也说不清该填哪个目录，因为这一屏
+		 * 压根不取目录）。与客户端 `plugin-manifest.js` 里那段逐字同形。
+		 */
+		if kind == pluginKindEngineering {
+			medium := strings.TrimSpace(stringField(s, "medium", ""))
+			if !isKnownPluginMedium(medium) {
+				return fmt.Sprintf("第 %d 屏的 medium 是 %q，本应用不认识（能写的是 %s）—— "+
+					"kind 是 engineering 的屏要说明自己是哪一家的工程界面。",
+					i+1, medium, strings.Join(knownPluginMediums(), " / "))
+			}
+			continue
+		}
 		source := strings.TrimSpace(stringField(s, "source", ""))
 		if source == "" {
 			return fmt.Sprintf("第 %d 屏没有写 source。", i+1)
@@ -280,14 +427,21 @@ func templateShapeProblem(manifest map[string]any) string {
 }
 
 // templateCapabilities reads `x-capabilities` and normalises it.
-func templateCapabilities(manifest map[string]any) ([]string, error) {
+//
+// ★ 三个返回值：清洗后的名字、**这一格写没写**、错误。
+//
+// ⚠★ 中间那一个是 2026-…（`docs/27` §2）新加的，而它买的正是"空数组"这一种
+// 写法：调用方要能区分「**漏写**了这一格」（拦下来）与「**写了 `[]`**」
+// （作者明确声明"这份插件不需要任何能力"）。只看 `len(caps)==0` 的话，
+// 两种情形长得一模一样，而它们的处置完全相反 —— 见 `loadOneTemplate`。
+func templateCapabilities(manifest map[string]any) ([]string, bool, error) {
 	raw, ok := manifest[templateCapabilitiesKey]
 	if !ok || raw == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	list, ok := raw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("%s 应当是一个字符串数组", templateCapabilitiesKey)
+		return nil, true, fmt.Errorf("%s 应当是一个字符串数组", templateCapabilitiesKey)
 	}
 	out := make([]string, 0, len(list))
 	seen := map[string]struct{}{}
@@ -302,7 +456,12 @@ func templateCapabilities(manifest map[string]any) ([]string, error) {
 		seen[name] = struct{}{}
 		out = append(out, name)
 	}
-	return out, nil
+	/*
+	 * ⚠ 空的那一份要返回**非 nil** 的空切片（`make` 已经保证了）：调用方若用
+	 * `caps == nil` 去判"漏写"，返回 nil 会让"写了 []"与"漏写"又混成一种。
+	 * 现在这个区分由第二个返回值明确给出，这一条只是不去破坏它。
+	 */
+	return out, true, nil
 }
 
 // PluginTemplateByID answers one template by id, reading the file every time.
@@ -364,7 +523,31 @@ func stringField(obj map[string]any, key, fallback string) string {
 // 其实能装的模板，也不要签出一份装不上的）。真正说了算的仍然是客户端。
 
 // knownPluginKinds mirrors the client's `KINDS`.
-func knownPluginKinds() []string { return []string{"catalog", "world"} }
+//
+// ★ `engineering` 是 2026-…（`docs/27` §2）加的第三格：**某一介质的工程界面**
+// （"视频模式 / 音频模式 / 文本模式"那三份）。它不读目录、不要 `card`，
+// 只要一格 `medium`。
+func knownPluginKinds() []string { return []string{"catalog", "world", pluginKindEngineering} }
+
+// pluginKindEngineering is the kind whose screens carry a `medium`.
+const pluginKindEngineering = "engineering"
+
+// knownPluginMediums mirrors the client's `PLUGIN_MEDIUMS`.
+//
+// ⚠★ 与 `engineering` 配套的那一格，而且它**同样不许写错一个字母**：
+// 客户端的校验器对 `medium` 是**拒收**（不像 `normalizeMedium` 那样回落成
+// `video`）—— 理由写在那边的 `PLUGIN_MEDIUMS` 上（回落的表现是"装得上、
+// 看着正常、只是永远列错一家"，而作者以为自己写的是另一家）。
+func knownPluginMediums() []string { return []string{"video", "audio", "text"} }
+
+func isKnownPluginMedium(m string) bool {
+	for _, k := range knownPluginMediums() {
+		if k == m {
+			return true
+		}
+	}
+	return false
+}
 
 func isKnownPluginKind(kind string) bool {
 	for _, k := range knownPluginKinds() {

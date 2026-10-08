@@ -69,9 +69,13 @@ type pluginTemplateView struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
 	Capabilities []string `json:"capabilities"`
-	Screens      []string `json:"screens"`
-	Problem      string   `json:"problem"`
-	Source       string   `json:"source"`
+	// Visibility 是 `public` / `private`（`docs/27` §3）。★ 它必须回报：
+	// 后台那一屏要显示"这份插件会不会出现在所有人的插件页里" ——
+	// 而那是运营唯一能看出"我是不是把它设成了公共"的地方。
+	Visibility string   `json:"visibility"`
+	Screens    []string `json:"screens"`
+	Problem    string   `json:"problem"`
+	Source     string   `json:"source"`
 }
 
 // listPluginTemplates (GET /dashboard/zsy/world/plugins)
@@ -87,6 +91,7 @@ func listPluginTemplates(c *gin.Context) {
 			ID:           row.ID,
 			Name:         row.Name,
 			Capabilities: nonNilStrings(row.Capabilities),
+			Visibility:   row.Visibility,
 			Screens:      templateScreenTitles(row.Manifest),
 			Problem:      row.Problem,
 			Source:       row.Source,
@@ -250,8 +255,21 @@ func resolveIssueCapabilities(requested, fromTemplate []string) ([]string, error
 		seen[name] = struct{}{}
 		out = append(out, name)
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("这份文件要配至少一个能力")
+	/*
+	 * ★★ 空列表是**合法**的（2026-…，`docs/27` §3）—— 这一条原来写的是
+	 * 「这份文件要配至少一个能力」，而它现在会挡住一整类正当的插件。
+	 *
+	 * 「私有 + 一个能力都不要」是一种**明确的状态**：那份文件只是一份
+	 * **按账号发的凭据**（"音频模式"那个界面插件就是这样 —— 它只画用户自己
+	 * 磁盘上的音频工程，一个需要能力的 op 都不调；运营只是不想让它公开可装）。
+	 * 拦下它 = 这类插件**只能**做成公共的，而那正是用户点名不要的形状。
+	 *
+	 * ⚠ 但"请求里给了名字、清洗之后一个不剩"仍然是错：那说明它写歪了
+	 * （给的全是空白），而错误的那份文件照样会被客户端的账号核对放行 ——
+	 * 静默地把一份"本来要配能力"的文件签成"不要能力"。
+	 */
+	if len(out) == 0 && len(requested) > 0 {
+		return nil, fmt.Errorf("capabilities 里给的名字清洗之后一个都不剩（是不是全填成了空白？）")
 	}
 	return out, nil
 }
@@ -290,15 +308,21 @@ func renderPluginFile(manifest map[string]any, block PluginEntitlementBlock) (st
 		out[k] = v
 	}
 	/*
-	 * ⚠ 拿掉宿主专用的那两格再写出去：
+	 * ⚠ 拿掉宿主专用的那几格再写出去（清单在 `hostOnlyKeys` 里，**只有一份**）：
 	 *
-	 *	`x-capabilities` 是**给这个后台看的**（"这份插件要配哪些能力"），
+	 *	`x-capabilities`  是**给这个后台看的**（"这份插件要配哪些能力"），
 	 *	                  它不属于插件格式；留着它会让每份签发的文件都带一格
 	 *	                  客户端不认识的扩展，而"不认识的字段原样保留"意味着它会
 	 *	                  被原样存进用户本机的插件表、再原样写回磁盘。
+	 *	`x-visibility`    ★ 同理，而且更该拿掉：它是**服务端的分发策略**
+	 *	                  （公共 / 私有），对一个已经拿到文件的用户没有任何意义。
+	 *	                  留着它还会给"用户手改这一格"留一个诱人的错念 ——
+	 *	                  那一格**从来不是**判据（判据在服务端那一份模板上）。
 	 *	`entitlement`     若模板里手写了一份（不该有），必须被下面这份**覆盖**。
 	 */
-	delete(out, templateCapabilitiesKey)
+	for _, k := range hostOnlyKeys {
+		delete(out, k)
+	}
 	out[PluginEntitlementField] = block
 
 	raw, err := json.MarshalIndent(out, "", "  ")

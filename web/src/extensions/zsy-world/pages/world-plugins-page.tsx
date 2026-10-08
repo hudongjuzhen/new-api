@@ -52,6 +52,7 @@ import {
   issueSuccessLine,
   missingCapabilities,
   parseUserId,
+  visibilityLabel,
 } from '../lib/plugin-issue-view'
 
 /**
@@ -414,6 +415,17 @@ export function WorldPluginsPage() {
                         </span>
                       </span>
                       <span className='mt-1 flex flex-wrap items-center gap-1'>
+                        {/*
+                          ★★ 可见性排在**最前面**：它是这一份模板"发给谁"的那一格，
+                          而它只差一个词（public / private），后果却完全不同 ——
+                          运营扫一眼就该看出这份是不是公开可装的（见 `visibilityLabel`）。
+                        */}
+                        <Badge
+                          variant={row.visibility === 'public' ? 'default' : 'secondary'}
+                          data-testid={`world-template-visibility-${row.id}`}
+                        >
+                          {visibilityLabel(row.visibility)}
+                        </Badge>
                         {row.screens.map((s) => (
                           <Badge key={s} variant='secondary'>
                             {s}

@@ -1,0 +1,21 @@
+{
+  "format": "aimv-plugin",
+  "formatVersion": 1,
+  "category": "mode",
+  "id": "text-mode",
+  "name": "文本模式",
+  "version": "1.0.0",
+  "author": "矩阵科技",
+  "description": "文本工程那一屏：正文、章节大纲、文稿导出都从这儿进。装上之后首页顶上多一条「文本工程」。",
+  "x-capabilities": [],
+  "x-visibility": "public",
+  "screens": [
+    {
+      "id": "text-mode",
+      "title": "文本工程",
+      "subtitle": "只列文本工程。正文、章节大纲、文稿导出都从这儿进。",
+      "kind": "engineering",
+      "medium": "text"
+    }
+  ]
+}

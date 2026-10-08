@@ -12,6 +12,7 @@ import (
 //
 //	/api/zsy/world/op             (Bearer account key)  the only op entrance
 //	/api/zsy/world/entitlements   (Bearer account key)  capabilities of this account
+//	/api/zsy/plugins              (public, no auth)     ★ the public plugin catalog
 //	/dashboard/zsy/world/…        (admin auth)          projects, versions, entitlements
 //
 // Middleware parity with the host's /api group (RouteTag, global API rate limit,
@@ -29,6 +30,27 @@ func mountRoutes(router *gin.Engine) {
 	if !cfg.Enabled {
 		common.SysLog("zsy-world: routes not mounted, " + envEnabled + " is false")
 		return
+	}
+
+	/*
+	 * ★★ 公共插件目录（`docs/27` §3）—— `GET /api/zsy/plugins`。
+	 *
+	 * ⚠ 它**挂在 `/api/zsy/plugins` 而不是 `/api/zsy/world/plugins`**：这一面
+	 * 回答的是"站上有哪些插件可以装"，而世界 IP 只是其中**一份**插件 ——
+	 * 挂在 world 底下会让"为什么一个声线墙插件要去世界的地址拿"变成每个
+	 * 新人都要问一遍的问题。
+	 *
+	 * ⚠★ 它**没有鉴权**，而且这与"任何账号都能一键安装"不是矛盾：
+	 * 这一面按定义只回答 `x-visibility: public` 的那些模板，私有模板
+	 * 一个字节都不出现（见 `plugin_public.go` 文件头）。真正的闸门 ——
+	 * "这个账号有没有某个能力" —— 在每一次 op 里现算（docs/23 §8.3 ①）。
+	 */
+	pluginPublic := router.Group("/api/zsy/plugins")
+	pluginPublic.Use(middleware.RouteTag("api"))
+	pluginPublic.Use(middleware.GlobalAPIRateLimit())
+	pluginPublic.Use(middleware.DisableCache())
+	{
+		pluginPublic.GET("", listPublicPlugins)
 	}
 
 	user := router.Group("/api/zsy/world")
@@ -60,5 +82,6 @@ func mountRoutes(router *gin.Engine) {
 
 	common.SysLog("zsy-world: mounted /api/zsy/world/{op,entitlements} and " +
 		"/dashboard/zsy/world/{projects,projects/:id,projects/:id/versions/:version," +
-		"entitlements,entitlements/grant,entitlements/revoke,plugins,plugins/issue}")
+		"entitlements,entitlements/grant,entitlements/revoke,plugins,plugins/issue} " +
+		"and /api/zsy/plugins (public catalog)")
 }

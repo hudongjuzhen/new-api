@@ -19,7 +19,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/extcore"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -460,6 +459,8 @@ func TestMountRoutes_PublishesTheDocumentedURLs(t *testing.T) {
 	assert.ElementsMatch(t, []string{
 		"POST /api/zsy/world/op",
 		"GET /api/zsy/world/entitlements",
+		// ★ 公共插件目录（docs/27 §3）：私有模板一个字节都不在这一面上
+		"GET /api/zsy/plugins",
 		"GET /dashboard/zsy/world/projects",
 		"GET /dashboard/zsy/world/projects/:id",
 		"GET /dashboard/zsy/world/projects/:id/versions/:version",
@@ -1332,22 +1333,13 @@ const smallNovel = `序
 玄尘子从后山竹林里走出来，手里提着青锋剑。剑身泛着青光。
 `
 
-// seedQuota gives a user a quota balance and registers the model ratio the billing
-// code needs, restoring both at the end of the test.
+// seedQuota gives a user a quota balance.
+//
+// ★ 它**不再**去配「模型倍率」表：世界解析的模型费由中继按它自己的价目表扣，
+// 插件不参与算价（理由见 billing.go 文件头）。余额仍然是必需的——跑之前那道准入
+// 门槛（`E_QUOTA`）看的就是它。
 func seedQuota(t *testing.T, userID int, quota int) {
 	t.Helper()
-
-	originalRatios := ratio_setting.GetModelRatioCopy()
-	originalQuotaPerUnit := common.QuotaPerUnit
-	t.Cleanup(func() {
-		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(mustJSONString(t, originalRatios)))
-		common.QuotaPerUnit = originalQuotaPerUnit
-	})
-
-	// A priced model, so `tokenQuota` can do its job. The value is arbitrary — the
-	// test asserts the formula, so any ratio works as long as it is known.
-	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(
-		fmt.Sprintf(`{"%s": 2}`, ingestDefaultModel)))
 
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", userID).
 		Update("quota", quota).Error)
@@ -1367,13 +1359,23 @@ func quotaOf(t *testing.T, userID int) int {
 	return user.Quota
 }
 
-// TestIngestRun_BillsActualTokensThroughTheHostConversion is the billing test.
+// TestIngestRun_ChargesOnlyTheGatewayNotThePlugin is the billing test.
 //
-// The assertion is deliberately arithmetic: it recomputes what the host's own
-// token formula must yield for the engine's reported token counts, and requires the
-// committed charge to equal it. A test that only checked "quota went down" would
-// pass for a wrong rate, a wrong unit, or a wrong rounding.
-func TestIngestRun_BillsActualTokensThroughTheHostConversion(t *testing.T) {
+// # 它守的是"一本账"（docs/23 §12.13 的落地）
+//
+// 模型调用打回本机中继、用的是发起者的令牌，中继已经把这一跑的钱扣在那个用户的
+// 额度上了。所以这里的断言是**反方向**的：
+//
+//   - 钱包**一分钱都不许动**——插件不许自己再扣一次；
+//   - 响应里**不许出现金额**：`billing.quota` 已删除。那个数既不是积分
+//     （差一个 `QuotaPerUnit`），又是第二笔账——2026-10-08 实测中继 111,577
+//     vs 插件 757,166，差 6.8 倍；
+//   - token 与按阶段的用量**必须照旧报**（"钱花在哪了"仍然答得出来）。
+//
+// ⚠ 用 mock 引擎跑，所以这一条里**没有任何真实的模型调用**——这正是重点：
+// 即使一笔都没被计费，插件也**不许**自己造一笔出来。反过来，若哪天有人把
+// 扣费逻辑加回来，这条测试会立刻红。
+func TestIngestRun_ChargesOnlyTheGatewayNotThePlugin(t *testing.T) {
 	env := newTestEnv(t)
 	env.seedAccount("admin", common.RoleAdminUser)
 	env.seedAccount("writer", common.RoleCommonUser)
@@ -1398,32 +1400,22 @@ func TestIngestRun_BillsActualTokensThroughTheHostConversion(t *testing.T) {
 	billing, ok := data["billing"].(map[string]any)
 	require.True(t, ok, "billing missing: %v", data)
 
+	// The engine really did make calls: a zero-token run would make this test vacuous.
 	promptTokens := int(jsonInt(t, billing, "prompt_tokens"))
 	completionTokens := int(jsonInt(t, billing, "completion_tokens"))
-	charged := int(jsonInt(t, billing, "quota"))
-
-	// The engine really did make calls: a zero-token run would make this test vacuous.
 	require.Positive(t, promptTokens, "the engine must report real token usage: %v", billing)
-	require.Positive(t, charged, "a run that used tokens must cost something")
+	require.Positive(t, completionTokens, "the engine must report real token usage: %v", billing)
 
-	// ★ The host's formula, restated here on purpose: if the plugin's conversion
-	// drifts, this test is what catches it.
-	const modelRatio = 2.0
-	const groupRatio = 1.0
-	expected := common.QuotaFromFloat(
-		(float64(promptTokens)/1_000_000.0 +
-			float64(completionTokens)*modelRatio/1_000_000.0) *
-			groupRatio * common.QuotaPerUnit)
-	require.Equal(t, expected, charged,
-		"charge must equal the host's token conversion for prompt=%d completion=%d",
-		promptTokens, completionTokens)
+	// ★ 一：不许出现金额。
+	_, hasQuota := billing["quota"]
+	require.False(t, hasQuota,
+		"billing 不许再带金额：那个数既不是积分、又是第二笔账（实测差 6.8 倍）：%v", billing)
 
-	// And the balance really moved by exactly that much.
-	require.Equal(t, startQuota-charged, quotaOf(t, writerID),
-		"the account must be debited by exactly the reported charge")
+	// ★ 二：钱包一分不动。
+	require.Equal(t, startQuota, quotaOf(t, writerID),
+		"模型费由中继那一笔承担；插件自己再扣一次就是同一次解析收两次钱")
 
-	// The engine's per-stage breakdown survives to the client, so an operator can
-	// explain the bill (docs/23 §6.5).
+	// ★ 三：用量照旧，按阶段的拆解也要到客户端（docs/23 §6.5）。
 	stages, ok := billing["usage_by_stage"].([]any)
 	require.True(t, ok, "usage_by_stage missing: %v", billing)
 	assert.NotEmpty(t, stages, "the per-stage breakdown must reach the caller")
@@ -1456,8 +1448,13 @@ func TestIngestRun_RefusesWhenTheAccountCannotAffordIt(t *testing.T) {
 	assert.Equal(t, CodeQuota, codeOf(t, payload))
 	assert.NotContains(t, payload, "data", "a refused run must not hand back a document")
 	message, _ := payload["message"].(string)
-	assert.Contains(t, message, "积分不足")
+	// ★ 2026-10-08：金额一律走宿主自己的格式化器（`logger.LogQuota`），不再把裸
+	// `quota` 写成"积分"——那个写法差一个 `QuotaPerUnit`（默认 500,000），
+	// 用户手上那个数（2.23154 积分）与消息里那个数（757166）就是这么对不上的。
+	assert.Contains(t, message, "余额不足")
+	assert.NotContains(t, message, "积分", "裸 quota 不许再被写成\"积分\"")
 	assert.Contains(t, message, "还差", "the client needs the shortfall to draw it")
+	assert.Contains(t, message, "＄", "金额必须由宿主的格式化器给出（带单位）")
 
 	// ★ Nothing was parsed and nothing was spent: the check runs BEFORE the engine.
 	project, err := WorldProjectGet(projectID)
@@ -1466,11 +1463,16 @@ func TestIngestRun_RefusesWhenTheAccountCannotAffordIt(t *testing.T) {
 	assert.Equal(t, 0, quotaOf(t, writerID))
 }
 
-// TestIngestRun_UnpricedModelIsRefusedRatherThanGuessed: the host's model-ratio
-// lookup answers a DEFAULT ratio for unknown models. Billing a user at a default
-// price for a model nobody priced is the kind of silent overcharge that cannot be
-// explained later, so it is reported instead.
-func TestIngestRun_UnpricedModelIsRefusedRatherThanGuessed(t *testing.T) {
+// TestIngestRun_UnpricedModelIsNoLongerThePluginsBusiness
+//
+// 这条测试以前守的是"运营没给这个型号配「模型倍率」就拒绝这次解析"。2026-10-08 之后
+// 插件**不再自己算价**：模型调用打回本机中继、由中继按它自己的价目表逐次扣费
+// （billing.go 文件头记着两笔账的实测差额）。于是"这个型号有没有倍率"不再是插件的
+// 问题——中继会照它自己的规则处理，插件管不着也不该管。
+//
+// ★ 所以断言是**反方向**的：倍率表里没有的型号名照样跑完，而且那个名字必须原样回报
+// （`billing.model`）——否则客户端无法解释"我指定了 A，为什么账单上写着 B"。
+func TestIngestRun_UnpricedModelIsNoLongerThePluginsBusiness(t *testing.T) {
 	env := newTestEnv(t)
 	env.seedAccount("admin", common.RoleAdminUser)
 	env.seedAccount("writer", common.RoleCommonUser)
@@ -1482,14 +1484,18 @@ func TestIngestRun_UnpricedModelIsRefusedRatherThanGuessed(t *testing.T) {
 	projectID, version := env.mustSeedWorld("writer", emptyWorldDoc)
 
 	// A model name that is deliberately absent from the ratio table.
+	const unpricedModel = "definitely-not-a-priced-model-xyz"
 	body := fmt.Sprintf(
-		`{"op":"ingest.run","params":{"project_id":%d,"base_version":%d,"source_text":%s,"max_chapters":1,"media":false,"model":"definitely-not-a-priced-model-xyz","mock_script":%s}}`,
-		projectID, version, mustJSONString(t, smallNovel), mustJSONString(t, ingestMockScript))
+		`{"op":"ingest.run","params":{"project_id":%d,"base_version":%d,"source_text":%s,"max_chapters":1,"media":false,"model":%q,"mock_script":%s}}`,
+		projectID, version, mustJSONString(t, smallNovel), unpricedModel,
+		mustJSONString(t, ingestMockScript))
 	rec, payload := env.callOp("writer", body)
 
-	assert.Equal(t, http.StatusBadGateway, rec.Code, "body=%s", rec.Body.String())
-	assert.Equal(t, CodeUpstream, codeOf(t, payload))
-	assert.Contains(t, payload["message"], "definitely-not-a-priced-model-xyz")
+	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	billing, ok := dataMap(t, payload)["billing"].(map[string]any)
+	require.True(t, ok, "billing missing: %v", payload)
+	assert.Equal(t, unpricedModel, billing["model"],
+		"型号名必须原样回报：客户端要能对上自己指定了什么")
 }
 
 // TestIngestRun_NeedsTheAICapability: the plain capability must NOT open the paid op.

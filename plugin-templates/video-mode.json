@@ -1,0 +1,21 @@
+{
+  "format": "aimv-plugin",
+  "formatVersion": 1,
+  "id": "video-mode",
+  "name": "视频模式",
+  "version": "1.0.0",
+  "author": "矩阵科技",
+  "category": "mode",
+  "description": "视频工程那一屏：分镜、镜头版本、成片导出都从这儿进。装上之后首页顶上多一条「视频工程」。",
+  "x-capabilities": [],
+  "x-visibility": "public",
+  "screens": [
+    {
+      "id": "video-mode",
+      "title": "视频工程",
+      "subtitle": "只列视频工程。分镜、镜头版本、成片导出都从这儿进。",
+      "kind": "engineering",
+      "medium": "video"
+    }
+  ]
+}
