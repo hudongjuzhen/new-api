@@ -33,6 +33,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { SectionPageLayout } from '@/components/layout'
 
 import {
   grantCapability,
@@ -45,13 +46,18 @@ import {
 } from '../api'
 import { signAndDownloadPluginFile } from '../lib/plugin-download'
 import {
-  ENTITLEMENT_STATE_LABEL,
+  accountCapabilityState,
+  accountCapabilityStateLabel,
   bucketTemplates,
+  capabilityHintFallback,
+  capabilityHints,
   emptyTemplatesHint,
   entitlementState,
+  entitlementStateLabel,
   issueSuccessLine,
   missingCapabilities,
   parseUserId,
+  templatesOfCapabilities,
   visibilityLabel,
 } from '../lib/plugin-issue-view'
 
@@ -60,18 +66,44 @@ import {
  *
  * # 这一屏做三件事，而且**顺序就是运营的动作顺序**
  *
- * ⚠★ 这一屏最要紧的一句话是"**签发不等于授权**"：
+ * ⚠★ 这一屏最要紧的一句话是"**签发不等于开通**"：
  *
  * 	1. **签发**：按「某个账号 + 某个插件」产出一份插件 JSON，下载下来发给那个人。
  * 	   导入时客户端会核对账号 —— 把给 A 的文件发给了 B，B 当场就知道。
- * 	   而这份文件**不改变任何授权**。
- * 	2. **授予 / 撤销**：真正决定"他能不能用"的那一步。没授予的话，文件装得上、
+ * 	   而这份文件**不改变任何权限**。
+ * 	2. **开通 / 取消**：真正决定"他能不能用"的那一步。没开通的话，文件装得上、
  * 	   菜单也出得来，**但打开那一屏会被服务端拒绝**（`E_ENTITLEMENT`）。
  * 	3. **看现在是什么状态**：每次现算，不是从历史行推的。
  *
- * 所以界面上把第 1 步与第 2 步分成两块，并在签发结果里明确写出"还差哪个能力"。
+ * 所以界面上把第 1 步与第 2 步分开，并在签发结果里明确写出"还差哪个能力"。
  * 把它们合成一个按钮（"生成并开通"）会省一次点击，代价是**再也看不出**某个人
- * 到底是被授权了还是只是拿到了一份文件。
+ * 到底是被开通了还是只是拿到了一份文件。
+ *
+ * # ★★ 第三版：左边填 ID、右边就是这个人的能力表（用户 2026-… 报的那件事）
+ *
+ * 用户的原话：
+ *
+ * > "我希望左侧是输入ID的位置，右侧是选择的列表，不要每个模式或者每个插件单独占一行，
+ * >  太浪费空间了。……另外页面要适配国际化，我看现在很多就是英文，
+ * >  我希望适配上其他语言"
+ *
+ * 于是这一屏的形状是：
+ *
+ *	┌─ 左：账号 ID ─┬─ 右：这个账号的每一个能力 ──────────────┐
+ *	│  [ 7        ]  │  world-ip     已开通 需要它的插件：…  [取消开通] │
+ *	│  说明那一行     │  world-ip-ai  未开通 需要它的插件：…  [开通]     │
+ *	│                │  …（**一行好几个**，不再一个能力一行）           │
+ *	└────────────────┴────────────────────────────────────────────────┘
+ *
+ * ⚠★ 这一屏**没有**"编辑"那一副面孔（模式那一屏有）：插件模板要怎么发出去写在
+ * 模板文件里，而这一面从第一天起就不改那几份文件 —— 所以左边那一格空着时，
+ * 右边只是"还没读到状态"的列表，而不是"可编辑"的列表。
+ *
+ * # ⚠★ 这里的文案一律走 `t()`（绝不写死中文）
+ *
+ * 见 `lib/plugin-issue-view.ts` 文件头那段：那一组曾经把中文写死在代码里，
+ * 于是中文界面上正常、换任何语言都还是中文，而旁边那些走 `t()` 的字跟着语言变
+ * —— 一块屏幕上两种语言并存，用户报的就是这件事。
  */
 export function WorldPluginsPage() {
   const { t } = useTranslation()
@@ -80,8 +112,6 @@ export function WorldPluginsPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
-  /** 选中的模板 id（默认第一个能用的）。 */
-  const [selected, setSelected] = useState('')
   /** 账号 ID 那一格（**文本**：判据在 `parseUserId`，不在这里）。 */
   const [userIdText, setUserIdText] = useState('')
   const [issuing, setIssuing] = useState(false)
@@ -91,9 +121,9 @@ export function WorldPluginsPage() {
   const [entitlements, setEntitlements] = useState<EntitlementList | null>(null)
   const [entitlementsError, setEntitlementsError] = useState('')
   /*
-   * ★ 这一份数据对应**哪个账号 + 哪个模板**。
+   * ★ 这一份数据对应**哪个账号**。
    *
-   * 它是"手上这份还算不算数"的判据：账号或模板一变，`entitlements` 里的东西就属于
+   * 它是"手上这份还算不算数"的判据：账号一变，`entitlements` 里的东西就属于
    * **上一个**账号了 —— 而两个都有 `world-ip` 时看起来完全正常，那正是最危险的一种错。
    *
    * ⚠ 用"记下它属于谁"而不是"在 effect 里把它清空"，是为了避开
@@ -103,7 +133,7 @@ export function WorldPluginsPage() {
    */
   const [entitlementsOf, setEntitlementsOf] = useState('')
   /**
-   * 判定"已撤销 / 已过期"要用的"现在"。
+   * 判定"已取消 / 已过期"要用的"现在"。
    *
    * ⚠★ 它**不能**在渲染里 `Date.now()`：那是**渲染期读时钟**，同一份数据两次渲染
    * 可能得出不同的界面（`react(purity)` 报的就是这件事，而它不只是洁癖 ——
@@ -113,6 +143,12 @@ export function WorldPluginsPage() {
    * 初值 0 是安全的：那时还没有任何一份数据，所以没有人会去看状态标签。
    */
   const [nowSeconds, setNowSeconds] = useState(0)
+  /**
+   * ★ 正在开通 / 取消的那一个能力（**只锁那一行**）。
+   *
+   * ⚠ 它是"这一下点过了，等它回来"的凭据：没有它的话，运营连点两下会给同一个人
+   * **插两行**权限（服务端不会报错，界面上也看不出多了一行）。
+   */
   const [busyCapability, setBusyCapability] = useState('')
 
   /**
@@ -139,14 +175,8 @@ export function WorldPluginsPage() {
     try {
       const data = await listPluginTemplates()
       setTemplates(data)
-      /*
-       * 默认选中第一个**能用的**（不是第一个）：默认选一份坏的会让运营
-       * 一进来就看见一句红色的话，而他什么都没做错。
-       */
-      const first = bucketTemplates(data.items || []).usable[0]
-      setSelected((prev) => prev || first?.id || '')
     } catch (err) {
-      setLoadError(readError(err, '读不到插件模板列表'))
+      setLoadError(readError(err, t('Could not read the plugin template list')))
     } finally {
       setLoading(false)
     }
@@ -155,26 +185,28 @@ export function WorldPluginsPage() {
   /*
    * ── 由状态推出来的那几格（全部放在任何 effect 之前 —— 见下面 TDZ 那条说明）──
    */
-  const parsedId = parseUserId(userIdText)
+  const parsedId = parseUserId(t, userIdText)
   /** 只把**那个数字**取出来：effect 的依赖用它，不用 `parsedId`（每渲染都是新对象） */
   const targetUserId = parsedId.value
   const buckets = bucketTemplates(templates?.items || [])
-  const selectedTemplate = buckets.usable.find((row) => row.id === selected)
-  const selectedTemplateId = selectedTemplate?.id || ''
+  /**
+   * ★★ 这一屏列的是**能力**，不是模板：一个能力可能被好几份插件要，
+   * 也可能一份插件要好几个能力。所以右边那一块的名册来自**全部能用的模板**，
+   * 而每一行上那句"哪几份插件要它"由 `templatesOfCapabilities` 现算。
+   */
+  const allCapabilities = capabilityHints(buckets.usable)
+  const templatesByCapability = templatesOfCapabilities(t, buckets.usable)
 
   /** 手上那份能力数据属于谁；空串 = 没有任何一份数据算数 */
-  const wantEntitlementsOf = targetUserId && selectedTemplateId
-    ? `${targetUserId}:${selectedTemplateId}`
-    : ''
+  const wantEntitlementsOf = targetUserId ? String(targetUserId) : ''
   /** ★ 过期的数据当"没有数据"用 —— 见 `entitlementsOf` 那段说明 */
   const isStale = entitlementsOf !== wantEntitlementsOf
   const currentEntitlements = isStale ? null : entitlements
   const currentError = isStale ? '' : entitlementsError
-  const activeCaps = new Set(currentEntitlements?.active || [])
 
   /*
    * ── 那一块要画哪一支（**先算好，别在 JSX 里串三元**：`no-nested-ternary` 在本仓库
-   *    是开的，而串起来的三元读起来像谜题）──
+   *    是开着的，而串起来的三元读起来像谜题）──
    */
   const hasUserIdText = userIdText.trim().length > 0
   const isBlockedById = !!parsedId.problem
@@ -183,20 +215,18 @@ export function WorldPluginsPage() {
    *
    * | 判据 | 回答的问题 | 什么时候为真 |
    * |---|---|---|
-   * | `showsCapabilityRows` | **有没有东西可画** | 填了账号、选好了模板 |
+   * | `showsCapabilityRows` | **有没有东西可画** | 模板里报出了能力 |
    * | `hasFreshEntitlements` | **手上那份数据算不算数** | 读回来了、没报错 |
    *
-   * 能力行画的是**模板声明的那几个能力**（静态的事），不是账号的状态 ——
-   * 所以"账号 id 还没填对"或"读不到账号状态"时**照样要把行画出来**（按钮禁用），
-   * 否则运营看到的是"这一块消失了"，而原因在另一处。
-   *
-   * ⚠ 第一版只有一个判据（而且名字与含义还是反的），于是：
-   *   · 账号 id 填错 → 行消失（本该画出来、按钮禁用）；
-   *   · 数据到了 → 一直画骨架（本该画行）。
-   * 两种都**不报错**，只是界面上那一块空着 —— 而测试红在"找不到按钮"上，
-   * 很难看出是判据写错。
+   * ⚠★★ **挂载判据只许用 `showsCapabilityRows`**（不许把 `hasFreshEntitlements` /
+   * `!currentError` 搭进去）。这一条是**实测**得到的（与「模式管理」那一屏同一条）：
+   * 读不到时会先落一次"还没有数据"的渲染（那时 `currentError` 还是空串），
+   * 紧接着那次读失败落地 —— 条件是 `… && !currentError` 的话，第二次渲染就把整块
+   * **连根拆掉**（React 把 `div` 换成 `null`，那是删除，不是隐藏）。症状是
+   * "这一块从来没出现过"，而日志里能看到卡片**明明被构造过**。
+   * 判据与"这一格写什么"分开，就没有这一出。
    */
-  const showsCapabilityRows = hasUserIdText && !!selectedTemplate
+  const showsCapabilityRows = allCapabilities.length > 0
   const hasFreshEntitlements = !isStale && !currentError
 
   /**
@@ -205,8 +235,8 @@ export function WorldPluginsPage() {
    * ⚠ 同上：它是**普通函数**，不是 `useCallback` —— 两条路（effect 与按钮）都要调它，
    * 而把它包成 memo 会让 `react(preserve-manual-memoization)` 有意见，收益却为零。
    */
-  async function refreshEntitlements(userId: number, pluginId: string) {
-    const key = userId && pluginId ? `${userId}:${pluginId}` : ''
+  async function refreshEntitlements(userId: number) {
+    const key = userId ? String(userId) : ''
     if (!key) return
     try {
       const data = await listEntitlements(userId)
@@ -220,14 +250,14 @@ export function WorldPluginsPage() {
        * ★ 读不到就**说读不到**，而不是把"没读到"画成"没有能力"。
        *
        * ⚠ 这一条是实测改的：第一版读失败时只是把那一块留空，于是界面照样画出
-       * 两个「授予」按钮 —— 而那时真实状态**未知**。运营按下"授予"，可能是在给一个
-       * 已经有能力的人再授一次（服务端会多插一行，看不出错），也可能对着一个不存在的
+       * 两个「开通」按钮 —— 而那时真实状态**未知**。运营按下"开通"，可能是在给一个
+       * 已经有能力的人再开一次（服务端会多插一行，看不出错），也可能对着一个不存在的
        * 账号操作。两种都比"显示 loading"坏得多。
        *
-       * 它**不打断签发**（签发与授权是两件事），所以只影响下面那一块。
+       * 它**不打断签发**（签发与开通是两件事），所以只影响右边那一块。
        */
       setEntitlements(null)
-      setEntitlementsError(readError(err, '读不到这个账号的能力'))
+      setEntitlementsError(readError(err, t('Could not read this account’s capabilities')))
       setEntitlementsOf(key)
     }
   }
@@ -235,25 +265,25 @@ export function WorldPluginsPage() {
   useEffect(() => {
     void loadTemplates()
     /*
-     * ⚠ 依赖是空数组：`loadTemplates` 是**普通函数**（不是 memo 的回调），把它写进
-     * 依赖里会让这个 effect 每一轮渲染都跑一次 —— 而它做的是**取一次模板列表**。
+     * ⚠ 依赖是空数组：`loadTemplates` 是**普通函数**（不是 memo 的回调），把它写进依赖里
+     * 会让这个 effect 每一轮渲染都跑一次 —— 而它做的是**取一次模板列表**。
      * 首次挂载取一次就够了（要重取有「重新读取」那颗按钮）。
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   /**
-   * 账号或模板变了就去读一次。
+   * 账号变了就去读一次。
    *
    * ⚠ 这里**不**清空旧数据（那会犯 `set-state-in-effect`）：清空交给 `isStale` ——
    * 账号一变，`wantEntitlementsOf` 就与 `entitlementsOf` 不同，于是上面那几行
-   * 立刻把它当成"还没有数据"（画骨架），而 effect 只负责把新的读回来。
+   * 立刻把它当成"还没有数据"（显示"正在读"），而 effect 只负责把新的读回来。
    *
-   * 依赖用 `wantEntitlementsOf` 这一个字符串：它由"账号 id + 模板 id"拼成，
-   * 所以**输入没变它就不变**，而两个对象引用每次渲染都会变。
+   * 依赖用 `wantEntitlementsOf` 这一个字符串：它由账号 id 拼成，
+   * 所以**输入没变它就不变**，而 `parsedId` 那种对象引用每次渲染都会变。
    */
   useEffect(() => {
-    void refreshEntitlements(targetUserId, selectedTemplateId)
+    void refreshEntitlements(targetUserId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantEntitlementsOf])
 
@@ -265,13 +295,13 @@ export function WorldPluginsPage() {
    * "memo 的依赖数组有没有真的保住记忆化"，而这里的依赖里有每次渲染都新建的
    * `parsedId`），收益为零。
    */
-  async function onIssue() {
+  async function onIssue(pluginId: string) {
     if (parsedId.problem) {
       setIssueError(parsedId.problem)
       return
     }
-    if (!selected) {
-      setIssueError('请先选一份插件。')
+    if (!pluginId) {
+      setIssueError(t('Pick a plugin first.'))
       return
     }
     setIssuing(true)
@@ -285,17 +315,17 @@ export function WorldPluginsPage() {
        * 于是界面上显示的 `check` 与用户手上那份文件对不上，而运营照着核对时
        * 会以为文件被改过（见 `plugin-download.ts` 的说明）。
        */
-      const result = await signAndDownloadPluginFile(parsedId.value, selected)
+      const result = await signAndDownloadPluginFile(parsedId.value, pluginId)
       setIssued(result)
-      await refreshEntitlements(parsedId.value, selected)
+      await refreshEntitlements(parsedId.value)
     } catch (err) {
-      setIssueError(readError(err, '签发失败'))
+      setIssueError(readError(err, t('Could not sign')))
     } finally {
       setIssuing(false)
     }
   }
 
-  /** 授予 / 撤销一个能力（同上：普通函数，不做 memo）。 */
+  /** 开通 / 取消一个能力（同上：普通函数，不做 memo）。 */
   async function toggleCapability(capability: string, active: boolean) {
     if (parsedId.problem) {
       setIssueError(parsedId.problem)
@@ -312,52 +342,293 @@ export function WorldPluginsPage() {
          *
          * 服务端的 `expires_at` 是可选字段，缺省即"永不过期" —— 而 0 与"不传"
          * 在那边是同一个意思，所以少传**不会报错**。
-         * 但它会让"授予"这个方法在调用记录里少一格：一条测试当场红在
+         * 但它会让"开通"这个方法在调用记录里少一格：一条测试当场红在
          * "参数不对"，而界面看起来完全正常（见本文件那条用例的说明）。
          * 显式写 0 是为了让**参数个数**也是契约的一部分。
          */
         await grantCapability(targetUserId, capability, 0)
       }
-      await refreshEntitlements(targetUserId, selectedTemplateId)
+      await refreshEntitlements(targetUserId)
     } catch (err) {
-      setIssueError(readError(err, active ? '撤销失败' : '授予失败'))
+      setIssueError(readError(err, active ? t('Could not revoke') : t('Could not open')))
     } finally {
       setBusyCapability('')
     }
   }
 
   return (
-    <div className='flex flex-col gap-4 p-4 md:p-6'>
-      <div className='flex items-start justify-between gap-4'>
-        <div>
-          <h1 className='text-xl font-semibold'>{t('World IP · Plugins')}</h1>
-          <p className='text-muted-foreground mt-1 text-sm'>
-            {t(
-              'Sign a plugin file for one account, then send it to that person. The file records which account it is for — importing it under a different account is refused, so a file sent to the wrong person is caught immediately.'
-            )}
-          </p>
-        </div>
+    /*
+     * ★★ **必须包一层 `SectionPageLayout`**（用户 2026-… 报的那件事）：
+     * `SidebarInset` 是 `h-[calc(100svh-…)] overflow-hidden`，**它自己不滚** ——
+     * 滚动条由 `SectionPageLayout` 里那个 `overflow-auto` 的容器提供。
+     * 少了这一层，内容一多**下面就看不见了，而且没有任何滚动条**
+     * （不报错，只是"页面像被截断了"）。
+     *
+     * ⚠ 这里**不加 `fixedContent`**：那一档是给"页面内自己有滚动表格"的屏用的
+     * （`overflow-hidden` + 内部滚动）—— 这一屏是普通的文档式滚动。
+     */
+    <SectionPageLayout>
+      <SectionPageLayout.Title>{t('World IP · Plugin management')}</SectionPageLayout.Title>
+      <SectionPageLayout.Actions>
         <Button variant='outline' size='sm' onClick={() => void loadTemplates(true)}>
           <RefreshCw className='mr-1 h-4 w-4' />
           {t('Reload')}
         </Button>
-      </div>
+      </SectionPageLayout.Actions>
 
-      {/*
+      <SectionPageLayout.Content>
+        <div className='flex flex-col gap-4'>
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'Sign a plugin file for one account, then send it to that person. The file records which account it is for — importing it under a different account is refused, so a file sent to the wrong person is caught immediately.'
+            )}
+          </p>
+
+          {/*
         ★ 这一条横幅是整屏最要紧的一句话，所以它不是提示气泡而是常驻的 Alert：
-        「签发」与「授予」是两件事，而把两者混起来会让"这个人到底有没有被授权"
+        「签发」与「开通」是两件事，而把两者混起来会让"这个人到底有没有被授权"
         变成一个看不出来的问题。
       */}
       <Alert>
         <AlertTitle>{t('Signing is not granting')}</AlertTitle>
         <AlertDescription>
           {t(
-            'Signing only produces a file. Whether the account can actually use the capability is decided by the grants below, and checked on every request by the server. A signed file with no grant installs fine and then gets refused when opened.'
+            'Signing only produces a file. Whether the account can actually use the capability is decided by the opens below, and checked on every request by the server. A signed file with no open installs fine and then gets refused when opened.'
           )}
         </AlertDescription>
       </Alert>
 
-      {/* ────────────────────────────── 一、模板 ────────────────────────────── */}
+      {/*
+        ────────────────────────── 一、按账号签发 / 开通 ──────────────────────────
+
+        ★★ 这一张卡是**这一版的形状**（用户 2026-…）：左边那一格是"这个人是谁"，
+        右边就是"他手上每一个能力是怎么回事" —— 签发的入口也在右边（模板那一栏）。
+      */}
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('Open plugins for an account')}</CardTitle>
+          <CardDescription>
+            {t(
+              'Enter the account ID first: then this account’s every capability is listed at once, and the file to send him can be signed from the plugin template below. Signing is not opening — a signed file with nothing opened installs fine and then gets refused.'
+            )}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className='flex flex-col gap-4'>
+          {/*
+            ★★ 左 ID / 右列表（用户 2026-…："我希望左侧是输入ID的位置，右侧是选择的列表，
+            不要每个插件单独占一行，太浪费空间了"）。
+
+            ⚠ 窄屏（`lg` 以下）自动叠成一列 —— 那时把 ID 挤在左边会让右边只剩一条缝，
+            而"一行放好几个"正是这一版要的。
+          */}
+          <div className='flex flex-col gap-4 lg:flex-row lg:items-start'>
+            <div className='flex shrink-0 flex-col gap-2 lg:w-64'>
+              <Label htmlFor='world-plugin-user-id'>{t('Account ID')}</Label>
+              <Input
+                id='world-plugin-user-id'
+                value={userIdText}
+                onChange={(e) => setUserIdText(e.target.value)}
+                placeholder={t('e.g. 7')}
+                className='w-full'
+              />
+              {/* 填错时**当场**说，而不是点下去之后由服务端说一句"需要 user_id" */}
+              {userIdText && parsedId.problem ? (
+                <p className='text-destructive text-xs'>{parsedId.problem}</p>
+              ) : (
+                <p className='text-muted-foreground text-xs' data-testid='world-open-hint'>
+                  {t(
+                    'The account that will import this file. Signing needs it too — the file carries the account.'
+                  )}
+                </p>
+              )}
+            </div>
+
+            <div className='flex min-w-0 flex-1 flex-col gap-3'>
+              {issueError ? (
+                <Alert variant='destructive' data-testid='world-action-error'>
+                  <AlertDescription>{issueError}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              {issued ? (
+                <Alert variant={missingCapabilities(issued).length ? 'destructive' : 'default'}>
+                  <AlertTitle>
+                    {missingCapabilities(issued).length
+                      ? t('Signed — but this account cannot use it yet')
+                      : t('Signed and ready to send')}
+                  </AlertTitle>
+                  <AlertDescription>
+                    <span className='block'>{issueSuccessLine(t, issued)}</span>
+                    <span className='text-muted-foreground mt-1 block font-mono text-xs'>
+                      {issued.fileName} · {issued.check} · {issued.site}
+                    </span>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              {/*
+                ⚠ 账号 ID 还不合法时**照样把列表画出来**、按钮禁用，并在上面加一句说明。
+                不画的话用户看到的是"这一块消失了"，而原因（ID 那一格填错了）在另一处。
+              */}
+              {hasUserIdText && isBlockedById ? (
+                <Alert data-testid='world-entitlements-blocked'>
+                  <AlertDescription>
+                    {parsedId.problem} {t('Fix the account ID above to open or cancel.')}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              {/*
+                ★★ 还没读到（第一次读还在路上）时那一块是**空的**，所以要有一句话 ——
+                否则运营填完 ID 看到的是"什么都没有"，而真相是它正在读。
+                ⚠ 它与"读不到"那条 Alert（`currentError`）**不是同一句话**：那条说"读失败"，
+                这一条说"正在读"。
+              */}
+              {showsCapabilityRows && !hasFreshEntitlements && !currentError ? (
+                <p
+                  className='text-muted-foreground text-sm'
+                  data-testid='world-entitlements-loading'
+                >
+                  {t('Reading what this account holds — opening is enabled in a moment.')}
+                </p>
+              ) : null}
+
+              {/* 读不到就说读不到 —— 绝不把"没读到"画成"没有能力"（见 refreshEntitlements） */}
+              {showsCapabilityRows && currentError ? (
+                <Alert variant='destructive' data-testid='world-entitlements-error'>
+                  <AlertDescription>
+                    {currentError}{' '}
+                    {t('Capabilities cannot be opened or cancelled until this is read.')}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              {/*
+                ★★ **这一块的挂载判据只有 `showsCapabilityRows`**：还没读到 / 读失败都
+                **不换掉它**。见上面那段说明（换掉就是"连根拆掉"，而下一帧再挂回来时
+                运营看到的是"这一块刚才闪了一下 / 从来没有过"）。
+              */}
+              {showsCapabilityRows ? (
+                /*
+                 * ★★ **一行放好几个**（用户 2026-…："不要每个模式或者每个插件单独占一行，
+                 * 太浪费空间了"）。每一格只有一行字那么高，所以一屏能看十几个能力。
+                 */
+                <div className='grid grid-cols-1 gap-1.5 xl:grid-cols-2'>
+                  {allCapabilities.map((capability) => {
+                    const state = accountCapabilityState({
+                      readable: hasFreshEntitlements,
+                      active: currentEntitlements?.active || [],
+                      capability,
+                    })
+                    const active = state === 'open'
+                    const busy = busyCapability === capability
+                    /*
+                     * ⚠ 只有两种情况下按钮禁用：账号 ID 不合法（那一下会发一个 userId=0 的
+                     * 请求），或**读不到他的能力**（此刻未知）。忙的时候只锁**这一行**。
+                     */
+                    const disabled = busy || isBlockedById || !hasFreshEntitlements
+                    /*
+                     * ⚠★ 「开通 / 取消开通」那两枚按钮上的字只有两三个字（一行放好几个的
+                     * 前提），所以它们的**可访问名**要带上这一份能力 —— 否则读屏用户听到的
+                     * 是一长串一模一样的"开通"。`aria-label` 不占视觉空间，正是这里要的东西。
+                     */
+                    const actionLabel = active
+                      ? t('Cancel access to {{capability}}', { capability })
+                      : t('Open {{capability}} for this account', { capability })
+                    return (
+                      <div
+                        key={capability}
+                        data-testid={`world-capability-${capability}`}
+                        data-state={active ? 'open' : 'closed'}
+                        className='flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5'
+                      >
+                        <span className='flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1'>
+                          <span className='font-mono text-sm'>{capability}</span>
+                          <Badge
+                            variant={active ? 'default' : 'secondary'}
+                            data-testid={`world-capability-state-${capability}`}
+                            className='gap-1'
+                          >
+                            {active ? (
+                              <ShieldCheck className='size-3' />
+                            ) : (
+                              <ShieldOff className='size-3' />
+                            )}
+                            {accountCapabilityStateLabel(t, state)}
+                          </Badge>
+                          {/*
+                            ★ 能力名与插件名不是一回事：这一句说清"这份能力是哪几份插件要的"，
+                            运营才知道开通它之后那个人能打开什么、以及该签哪一份文件给他。
+                          */}
+                          <span className='text-muted-foreground text-xs'>
+                            {t('Required by {{plugins}}', {
+                              plugins:
+                                templatesByCapability[capability] || capabilityHintFallback(t),
+                            })}
+                          </span>
+                        </span>
+                        <Button
+                          variant={active ? 'outline' : 'default'}
+                          size='xs'
+                          disabled={disabled}
+                          aria-label={actionLabel}
+                          onClick={() => void toggleCapability(capability, active)}
+                        >
+                          {busy ? <Loader2 className='mr-1 size-3 animate-spin' /> : null}
+                          {active ? t('Cancel access') : t('Open')}
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : null}
+
+              {/*
+                ★ 这一屏的"开通"与"签发"是两件事（签发在下面那一栏、按插件走）——
+                所以在右栏里补一句：那个人能打开什么，取决于这里开通了哪几个能力。
+              */}
+              {hasUserIdText && allCapabilities.length ? (
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Opening a capability here is what decides whether the account can use it; the file to send him is signed on a plugin template below.'
+                  )}
+                </p>
+              ) : null}
+
+              {hasUserIdText && !allCapabilities.length ? (
+                <p className='text-muted-foreground text-sm'>
+                  {t('No capability can be opened yet — the plugin templates below declare none.')}
+                </p>
+              ) : null}
+
+              {/* 历史行（取消过的 / 过期的）—— 运营常问"他什么时候没的" */}
+              {hasUserIdText && currentEntitlements?.items?.length ? (
+                <details data-testid='world-history'>
+                  <summary className='text-muted-foreground cursor-pointer text-xs'>
+                    {t('History (including cancelled and expired rows)')}
+                  </summary>
+                  <div className='mt-1 flex flex-col gap-1'>
+                    {currentEntitlements.items.map((row) => {
+                      const state = entitlementState(row, nowSeconds)
+                      return (
+                        <p key={row.id} className='text-muted-foreground text-xs'>
+                          <span className='font-mono'>{row.capability}</span>
+                          {' · '}
+                          {entitlementStateLabel(t, state)}
+                          {' · '}
+                          {row.source}
+                        </p>
+                      )
+                    })}
+                  </div>
+                </details>
+              ) : null}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ────────────────────────── 二、插件模板（有哪几份） ────────────────────────── */}
       <Card>
         <CardHeader>
           <CardTitle>{t('Plugin templates')}</CardTitle>
@@ -370,7 +641,7 @@ export function WorldPluginsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className='flex flex-col gap-3'>
-          {loading ? <Skeleton className='h-16 w-full' /> : null}
+          {loading ? <Skeleton className='h-20 w-full' /> : null}
 
           {!loading && loadError ? (
             <Alert variant='destructive' data-testid='world-templates-error'>
@@ -396,53 +667,75 @@ export function WorldPluginsPage() {
                 </Alert>
               ))}
 
-              {buckets.usable.length || buckets.broken.length ? (
-                buckets.usable.map((row) => {
-                  const on = row.id === selected
-                  return (
-                    <button
+              {buckets.usable.length ? (
+                /*
+                 * ★★ 一行放**好几份**（用户 2026-… 那条"不要占一行"的同一件事）——
+                 * 与「模式管理」那一屏同一个形状。
+                 *
+                 * ⚠ 每一份上有一颗「签发」：插件文件是**按插件**签发的，
+                 * 而上面那一块是按**能力**开通的 —— 两件事，两处动作，别合成一个。
+                 */
+                <div className='grid grid-cols-1 gap-1.5 xl:grid-cols-2'>
+                  {buckets.usable.map((row) => (
+                    <div
                       key={row.id}
-                      type='button'
-                      onClick={() => setSelected(row.id)}
-                      className={`rounded-md border p-3 text-left transition-colors ${
-                        on ? 'border-primary bg-accent/40' : 'hover:bg-accent/20'
-                      }`}
+                      data-testid={`world-template-${row.id}`}
+                      className='flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5'
                     >
-                      <span className='flex items-center gap-2'>
-                        <span className='font-medium'>{row.name}</span>
-                        <span className='text-muted-foreground font-mono text-xs'>
-                          {row.id}
+                      <div className='flex min-w-0 flex-1 flex-col gap-1'>
+                        <span className='flex flex-wrap items-center gap-2'>
+                          <span className='font-medium'>{row.name}</span>
+                          <span className='text-muted-foreground font-mono text-xs'>{row.id}</span>
                         </span>
-                      </span>
-                      <span className='mt-1 flex flex-wrap items-center gap-1'>
-                        {/*
-                          ★★ 可见性排在**最前面**：它是这一份模板"发给谁"的那一格，
-                          而它只差一个词（public / private），后果却完全不同 ——
-                          运营扫一眼就该看出这份是不是公开可装的（见 `visibilityLabel`）。
-                        */}
-                        <Badge
-                          variant={row.visibility === 'public' ? 'default' : 'secondary'}
-                          data-testid={`world-template-visibility-${row.id}`}
-                        >
-                          {visibilityLabel(row.visibility)}
-                        </Badge>
-                        {row.screens.map((s) => (
-                          <Badge key={s} variant='secondary'>
-                            {s}
+                        <span className='flex flex-wrap items-center gap-1'>
+                          {/*
+                            ★★ 可见性排在**最前面**：它是这一份模板"发给谁"的那一格，
+                            而它只差一个词（public / private），后果却完全不同 ——
+                            运营扫一眼就该看出这份是不是公开可装的（见 `visibilityLabel`）。
+                          */}
+                          <Badge
+                            variant={row.visibility === 'public' ? 'default' : 'secondary'}
+                            data-testid={`world-template-visibility-${row.id}`}
+                          >
+                            {visibilityLabel(t, row.visibility)}
                           </Badge>
-                        ))}
-                        {row.capabilities.map((c) => (
-                          <Badge key={c} variant='outline'>
-                            {c}
-                          </Badge>
-                        ))}
-                      </span>
-                    </button>
-                  )
-                })
+                          {row.screens.map((s) => (
+                            <Badge key={s} variant='secondary'>
+                              {s}
+                            </Badge>
+                          ))}
+                          {row.capabilities.map((c) => (
+                            <Badge key={c} variant='outline'>
+                              {c}
+                            </Badge>
+                          ))}
+                        </span>
+                      </div>
+                      {/*
+                        ★ 签发是**按插件**的：这一颗签的就是**这一张卡**上那份插件，
+                        而账号在左边那一格里填（一个账号，一次填）。
+                      */}
+                      <Button
+                        variant='outline'
+                        size='xs'
+                        data-testid={`world-issue-${row.id}`}
+                        disabled={issuing || isBlockedById}
+                        onClick={() => void onIssue(row.id)}
+                      >
+                        {issuing ? (
+                          <Loader2 className='mr-1 size-3 animate-spin' />
+                        ) : (
+                          <Download className='mr-1 size-3' />
+                        )}
+                        {t('Sign')}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <p className='text-muted-foreground text-sm'>
                   {emptyTemplatesHint(
+                    t,
                     templates?.directory || '',
                     templates?.knownSources || []
                   )}
@@ -452,195 +745,9 @@ export function WorldPluginsPage() {
           ) : null}
         </CardContent>
       </Card>
-
-      {/* ────────────────────────── 二、按账号签发 ────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('Sign a file for an account')}</CardTitle>
-          <CardDescription>
-            {t(
-              'The file carries the account it was signed for. Importing it under a different account is refused with both account names, so a mix-up surfaces at import time.'
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className='flex flex-col gap-4'>
-          <div className='flex flex-col gap-2'>
-            <Label htmlFor='world-plugin-user-id'>{t('Account ID')}</Label>
-            <div className='flex flex-wrap items-center gap-2'>
-              <Input
-                id='world-plugin-user-id'
-                value={userIdText}
-                onChange={(e) => setUserIdText(e.target.value)}
-                placeholder={t('e.g. 7')}
-                className='w-40'
-              />
-              <Button
-                onClick={() => void onIssue()}
-                disabled={issuing || !selected || !!parsedId.problem}
-              >
-                {issuing ? (
-                  <Loader2 className='mr-1 h-4 w-4 animate-spin' />
-                ) : (
-                  <Download className='mr-1 h-4 w-4' />
-                )}
-                {t('Sign and download')}
-              </Button>
-            </div>
-            {/* 填错时**当场**说，而不是点下去之后由服务端说一句"需要 user_id" */}
-            {userIdText && parsedId.problem ? (
-              <p className='text-destructive text-xs'>{parsedId.problem}</p>
-            ) : (
-              <p className='text-muted-foreground text-xs'>
-                {t('The account that will import this file.')}
-              </p>
-            )}
-          </div>
-
-          {issueError ? (
-            <Alert variant='destructive'>
-              <AlertDescription>{issueError}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {issued ? (
-            <Alert variant={missingCapabilities(issued).length ? 'destructive' : 'default'}>
-              <AlertTitle>
-                {missingCapabilities(issued).length
-                  ? t('Signed — but this account cannot use it yet')
-                  : t('Signed and ready to send')}
-              </AlertTitle>
-              <AlertDescription>
-                <span className='block'>
-                  {issueSuccessLine(issued, selectedTemplate)}
-                </span>
-                <span className='text-muted-foreground mt-1 block font-mono text-xs'>
-                  {issued.fileName} · {issued.check} · {issued.site}
-                </span>
-              </AlertDescription>
-            </Alert>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      {/* ────────────────────── 三、这个账号的能力（真的那一步） ────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('Capabilities of this account')}</CardTitle>
-          <CardDescription>
-            {t(
-              'Decided here, and re-checked on every request — revoking takes effect immediately, with no need for the user to log in again.'
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className='flex flex-col gap-3'>
-          {/*
-            ★ 四支的次序是**实测**定下来的（第一版只有两支，于是"填了 abc"落到第一支，
-            界面上连能力行都不见了 —— 而用户明明填了东西，看起来像这一块坏了）。
-
-            ⚠ 写成"先算几个布尔量、再让 JSX 里最多一层三元"（`no-nested-ternary` 在本
-            仓库是开的）：串起来的三元读起来像谜题，而这一块正是最需要一眼看懂的地方。
-          */}
-          {!hasUserIdText ? (
-            <p className='text-muted-foreground text-sm'>
-              {t('Fill in an account ID above to see and change its capabilities.')}
-            </p>
-          ) : null}
-
-          {hasUserIdText && isBlockedById ? (
-            /*
-             * ⚠ 账号 ID 还不合法时**照样把行画出来**、按钮禁用，并在上面加一句说明。
-             * 不画的话用户看到的是"这一块消失了"，而原因（ID 那一格填错了）在另一处。
-             */
-            <Alert data-testid='world-entitlements-blocked'>
-              <AlertDescription>
-                {parsedId.problem} {t('Fix the account ID above to grant or revoke.')}
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {/*
-            ★★ 还没读到就画**骨架**，不画按钮。
-            *
-            * ⚠ 这一条也是实测改的：第一版在这里直接按"没生效"渲染，于是服务端
-            * 还没答话的那一瞬间，界面上已经摆着两个「授予」按钮 —— 而真实状态未知。
-            * 抢在那一下点下去，可能给一个已有能力的人再授一次。
-          */}
-          {showsCapabilityRows && !hasFreshEntitlements && !currentError ? (
-            <Skeleton className='h-16 w-full' data-testid='world-entitlements-loading' />
-          ) : null}
-
-          {/* 读不到就说读不到 —— 绝不把"没读到"画成"没有能力"（见 refreshEntitlements） */}
-          {showsCapabilityRows && currentError ? (
-            <Alert variant='destructive' data-testid='world-entitlements-error'>
-              <AlertDescription>{currentError}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {showsCapabilityRows
-            ? (selectedTemplate?.capabilities || []).map((capability) => {
-                const active = activeCaps.has(capability)
-                const busy = busyCapability === capability
-                return (
-                  <div
-                    key={capability}
-                    data-testid={`world-capability-${capability}`}
-                    className='flex flex-wrap items-center justify-between gap-2 rounded-md border p-3'
-                  >
-                    <span className='flex items-center gap-2'>
-                      {active ? (
-                        <ShieldCheck className='h-4 w-4' />
-                      ) : (
-                        <ShieldOff className='text-muted-foreground h-4 w-4' />
-                      )}
-                      <span className='font-mono text-sm'>{capability}</span>
-                      <Badge variant={active ? 'default' : 'secondary'}>
-                        {active ? t('Active') : t('Not held')}
-                      </Badge>
-                    </span>
-                    <Button
-                      variant={active ? 'outline' : 'default'}
-                      size='sm'
-                      /*
-                       * ⚠ 账号 ID 不合法、或**读不到这个账号的能力**时都要禁用：
-                       * 两种情况下"此刻他有没有这个能力"都是**未知**，而未知不许画成
-                       * "没有"（点一下"授予"可能给一个已经有能力的人再授一次）。
-                       */
-                      disabled={busy || isBlockedById || !!currentError}
-                      onClick={() => void toggleCapability(capability, active)}
-                    >
-                      {busy ? <Loader2 className='h-4 w-4 animate-spin' /> : null}
-                      {active ? t('Revoke') : t('Grant')}
-                    </Button>
-                  </div>
-                )
-              })
-            : null}
-
-          {/* 历史行（撤销过的 / 过期的）—— 运营常问"他什么时候没的" */}
-          {currentEntitlements?.items?.length
-            ? (
-                <div className='flex flex-col gap-1'>
-                  <p className='text-muted-foreground text-xs'>
-                    {t('History (including revoked and expired rows)')}
-                  </p>
-                  {currentEntitlements.items.map((row) => {
-                    const state = entitlementState(row, nowSeconds)
-                    return (
-                      <p key={row.id} className='text-muted-foreground text-xs'>
-                        <span className='font-mono'>{row.capability}</span>
-                        {' · '}
-                        {ENTITLEMENT_STATE_LABEL[state]}
-                        {' · '}
-                        {row.source}
-                      </p>
-                    )
-                  })}
-                </div>
-              )
-            : null}
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </SectionPageLayout.Content>
+    </SectionPageLayout>
   )
 }
 

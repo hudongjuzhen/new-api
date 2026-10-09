@@ -1,0 +1,254 @@
+{
+  "format": "aimv-work-mode",
+  "formatVersion": 1,
+  "x-visibility": "private",
+  "x-summary": "通用文稿：从选题到大纲再到正文，适合长文与专栏。",
+  "id": "article",
+  "label": "通用文稿",
+  "medium": "text",
+  "workScale": "single",
+  "words": {
+    "audio": "导入音频",
+    "audioNone": "",
+    "audioShort": "音频",
+    "text": "正文",
+    "textImport": "",
+    "textExport": "",
+    "textNone": "",
+    "planDialog": "AI 全篇规划",
+    "shotDialog": "版本",
+    "shot": "段落",
+    "segment": "章节",
+    "nodeInput": "任务需要这一段正文作为节点输入。",
+    "statement": "整篇",
+    "textPlain": "",
+    "textNoneHint": "",
+    "refSection": "【参考（按类型）】",
+    "segments": "大纲",
+    "planning": "正在规划这一篇的结构…",
+    "writing": "模型正在按选题与大纲、参考资料库里的素材来写这一篇的正文（这一趟不带音频，它读的是文字）。",
+    "whole": "整篇",
+    "wholeSegment": "",
+    "singShots": "成文",
+    "planSelfCheck": {
+      "musicName": "",
+      "musicUse": "这一趟不带音频 —— 结构由模型按选题与大纲自己划分",
+      "textName": "",
+      "textUse": "正文是唯一的交付物；资料库里的素材是它的来源，引用要能对回出处",
+      "refName": "参考",
+      "refUse": "「资料」那几条提供事实与细节（这是\"深入\"那一层的原料）；「文风」决定这一篇用什么语气写（那是\"共情\"那一层）",
+      "segName": "",
+      "segUse": "每一章单独成稿、按顺序拼起来就是完整的一篇"
+    },
+    "notNeeded": "这一项在当前模式下不是必填的 —— 不填也能开始规划。",
+    "audioScript": "AI 生成音频脚本",
+    "audioGenerate": "生成音频",
+    "audioScriptName": "音频脚本",
+    "audioGenerateHint": "这一屏要发出去的音频提示词（音色表 + 音频脚本）。"
+  },
+  "appRows": {
+    "sd": "5",
+    "hd": "10",
+    "upscale": "9",
+    "faceswap": "12",
+    "edit": "11"
+  },
+  "lipSync": {
+    "when": "byScenario",
+    "text": "人物开口时，嘴唇与下颌要随音频逐音节精准开合，只在真正出声的音节上开闭，绝不脱离音频独立动作。（这一档交付的是文字，没有画面。）"
+  },
+  "requires": {
+    "audio": false,
+    "lyrics": false,
+    "refs": true,
+    "segments": false
+  },
+  "core": "prompt",
+  "coreLabels": {
+    "audio": "参考音频",
+    "prompt": "选题与大纲"
+  },
+  "planDialog": {
+    "label": "AI 全篇规划",
+    "title": "AI 全篇规划",
+    "templates": [
+      "请你作为资深编辑，结合这份选题与大纲，参考资料库里的素材，来规划这一篇的结构与写法：",
+      "请你作为资深编辑，结合这份选题与大纲，参考资料库里的素材，来规划这一篇的结构与写法：\n把复杂的事讲清楚：先给结论，再给推导；每出现一个术语就当场解释，不攒到最后。",
+      "请你作为资深编辑，结合这份选题与大纲，参考资料库里的素材，来规划这一篇的结构与写法：\n观点评论：开头就立论，中段给证据，结尾落到一个读者明天就能做的判断上。",
+      "请你作为资深编辑，结合这份选题与大纲，参考资料库里的素材，来规划这一篇的结构与写法：\n深度报道：从一个人物或一个具体的场景切进去，事实与细节交替推进，结论让读者自己得出。",
+      "请你作为资深编辑，结合这份选题与大纲，参考资料库里的素材，来规划这一篇的结构与写法：\n从场景讲到价值：不喊口号，先写一个读者认得出的场景，再讲这件事为什么值得在意。",
+      "请你作为资深编辑，结合这份选题与大纲，参考资料库里的素材，来规划这一篇的结构与写法：\n从一件小事写起：开头只写一件很小的事，感受藏在细节里，全文不出现\"我认为\"这类自我指认。"
+    ]
+  },
+  "shotDialog": {
+    "label": "版本"
+  },
+  "extraButtons": [],
+  "libraries": [
+    {
+      "id": "works",
+      "label": "作品库",
+      "dir": "works",
+      "itemFile": "item.json",
+      "fields": [
+        {
+          "key": "name",
+          "label": "作品名称",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "id": "materials",
+      "label": "资料库",
+      "dir": "materials",
+      "itemFile": "item.json",
+      "fields": [
+        {
+          "key": "name",
+          "label": "资料名称",
+          "type": "text"
+        },
+        {
+          "key": "materialKind",
+          "label": "资料类型",
+          "type": "select",
+          "options": [
+            "文字",
+            "图片",
+            "音频",
+            "视频",
+            "其他"
+          ]
+        },
+        {
+          "key": "body",
+          "label": "正文",
+          "type": "longtext"
+        },
+        {
+          "key": "primary",
+          "label": "图片",
+          "type": "image"
+        },
+        {
+          "key": "videoFile",
+          "label": "视频",
+          "type": "video"
+        },
+        {
+          "key": "audioFile",
+          "label": "音频",
+          "type": "audio"
+        },
+        {
+          "key": "source",
+          "label": "来源",
+          "type": "longtext"
+        },
+        {
+          "key": "note",
+          "label": "备注",
+          "type": "longtext"
+        }
+      ]
+    },
+    {
+      "id": "excerpts",
+      "label": "摘录库",
+      "dir": "excerpts",
+      "itemFile": "item.json",
+      "fields": [
+        {
+          "key": "name",
+          "label": "摘录名称",
+          "type": "text"
+        },
+        {
+          "key": "body",
+          "label": "摘录正文",
+          "type": "longtext"
+        },
+        {
+          "key": "source",
+          "label": "出处",
+          "type": "text"
+        },
+        {
+          "key": "note",
+          "label": "我的批注",
+          "type": "longtext"
+        }
+      ]
+    },
+    {
+      "id": "entities",
+      "label": "实体库",
+      "dir": "entities",
+      "itemFile": "item.json",
+      "fields": [
+        {
+          "key": "name",
+          "label": "实体名称",
+          "type": "text"
+        },
+        {
+          "key": "entityClass",
+          "label": "类别",
+          "type": "select",
+          "options": [
+            "人物",
+            "地点",
+            "组织",
+            "概念",
+            "事件",
+            "作品"
+          ]
+        },
+        {
+          "key": "alias",
+          "label": "别名",
+          "type": "text"
+        },
+        {
+          "key": "brief",
+          "label": "简述",
+          "type": "longtext"
+        }
+      ]
+    },
+    {
+      "id": "claims",
+      "label": "论点库",
+      "dir": "claims",
+      "itemFile": "item.json",
+      "fields": [
+        {
+          "key": "name",
+          "label": "论点名称",
+          "type": "text"
+        },
+        {
+          "key": "body",
+          "label": "主张",
+          "type": "longtext"
+        },
+        {
+          "key": "stance",
+          "label": "立场",
+          "type": "select",
+          "options": [
+            "主张",
+            "反对",
+            "存疑"
+          ]
+        },
+        {
+          "key": "evidence",
+          "label": "证据",
+          "type": "longtext"
+        }
+      ]
+    }
+  ]
+}

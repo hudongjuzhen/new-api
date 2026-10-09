@@ -32,6 +32,23 @@ import { api } from '@/lib/api'
 
 const ADMIN_BASE = '/dashboard/zsy/world'
 
+/**
+ * ★★ 这一组接口**出错时也返回 HTTP 200**（`common.ApiErrorMsg` 就是这么写的），
+ * 所以 axios 的拦截器**不会**让 promise 失败 —— 它只弹一个 toast，然后把那个
+ * `success: false` 的信封原样交回来。
+ *
+ * ⚠★ 那意味着"读不到"会被读成"读回来的是空"：`listEntitlements` 失败时界面会画成
+ * "这个账号一个能力都没有"，而运营照着它去**重复开通**（服务端会多插一行，
+ * 哪里都不报错）。所以这里把 `success: false` 当场转成一次**失败**，
+ * 让上层那几处 `readError` 与服务端那句原话接住它。
+ */
+function ok<T>(body: { success?: boolean; message?: string; data?: T }): T {
+  if (body?.success === false) {
+    throw { response: { data: { message: body.message } } }
+  }
+  return body.data as T
+}
+
 /** One template file under the server's plugin-templates directory. */
 export interface PluginTemplateView {
   /** 插件的 id（= 模板文件名去掉 .json）。 */
@@ -110,10 +127,10 @@ export interface IssueResult {
 }
 
 export async function listPluginTemplates(): Promise<PluginTemplateList> {
-  const res = await api.get<{ success: boolean; data: PluginTemplateList }>(
+  const res = await api.get<{ success: boolean; message?: string; data: PluginTemplateList }>(
     `${ADMIN_BASE}/plugins`
   )
-  return res.data.data
+  return ok(res.data)
 }
 
 /**
@@ -128,7 +145,7 @@ export async function issuePluginFile(
   pluginId: string,
   capabilities?: string[]
 ): Promise<IssueResult> {
-  const res = await api.post<{ success: boolean; data: IssueResult }>(
+  const res = await api.post<{ success: boolean; message?: string; data: IssueResult }>(
     `${ADMIN_BASE}/plugins/issue`,
     {
       user_id: userId,
@@ -136,15 +153,15 @@ export async function issuePluginFile(
       ...(capabilities?.length ? { capabilities } : {}),
     }
   )
-  return res.data.data
+  return ok(res.data)
 }
 
 export async function listEntitlements(userId: number): Promise<EntitlementList> {
-  const res = await api.get<{ success: boolean; data: EntitlementList }>(
+  const res = await api.get<{ success: boolean; message?: string; data: EntitlementList }>(
     `${ADMIN_BASE}/entitlements`,
     { params: { user_id: userId } }
   )
-  return res.data.data
+  return ok(res.data)
 }
 
 export async function grantCapability(
@@ -152,20 +169,28 @@ export async function grantCapability(
   capability: string,
   expiresAt = 0
 ): Promise<void> {
-  await api.post(`${ADMIN_BASE}/entitlements/grant`, {
-    user_id: userId,
-    capability,
-    source: 'admin',
-    expires_at: expiresAt,
-  })
+  const res = await api.post<{ success: boolean; message?: string }>(
+    `${ADMIN_BASE}/entitlements/grant`,
+    {
+      user_id: userId,
+      capability,
+      source: 'admin',
+      expires_at: expiresAt,
+    }
+  )
+  ok(res.data)
 }
 
 export async function revokeCapability(
   userId: number,
   capability: string
 ): Promise<void> {
-  await api.post(`${ADMIN_BASE}/entitlements/revoke`, {
-    user_id: userId,
-    capability,
-  })
+  const res = await api.post<{ success: boolean; message?: string }>(
+    `${ADMIN_BASE}/entitlements/revoke`,
+    {
+      user_id: userId,
+      capability,
+    }
+  )
+  ok(res.data)
 }

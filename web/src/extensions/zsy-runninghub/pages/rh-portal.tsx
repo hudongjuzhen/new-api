@@ -50,6 +50,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -1331,15 +1332,26 @@ export function RhPortalPage() {
   }
 
   return (
-    <div className='container mx-auto max-w-[1400px] space-y-4 px-4 py-6'>
-      <div>
-        <h1 className='text-xl font-semibold'>{t('RunningHub App Center')}</h1>
-        <p className='text-muted-foreground text-sm'>
-          {t(
-            'Browse RunningHub applications, fill in the parameters and generate.'
-          )}
-        </p>
-      </div>
+    /*
+     * ★★ **必须包一层 `SectionPageLayout`**（用户 2026-… 报的那件事）：
+     * `SidebarInset` 是 `h-[calc(100svh-…)] overflow-hidden`，**它自己不滚** ——
+     * 滚动条由 `SectionPageLayout` 里那个 `overflow-auto` 的容器提供。
+     * 少了这一层，内容一多**下面就看不见了，而且没有任何滚动条**
+     * （不报错，只是"页面像被截断了"）。这一屏下面还挂着整块
+     * `ApiExamples`（很长），所以它是最容易撞上的那一屏。
+     */
+    <SectionPageLayout>
+      <SectionPageLayout.Title>
+        {t('RunningHub App Center')}
+      </SectionPageLayout.Title>
+
+      <SectionPageLayout.Content>
+        <div className='container mx-auto max-w-[1400px] space-y-4 px-4 py-6'>
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'Browse RunningHub applications, fill in the parameters and generate.'
+            )}
+          </p>
 
       <div className='grid gap-4 lg:grid-cols-[180px_300px_1fr]'>
         {/* ---- left: categories ---- */}
@@ -1473,6 +1485,8 @@ export function RhPortalPage() {
           Rendered full width under the app introduction so the samples stay
           readable (the intro column is only a third of the page). */}
       {app && <ApiExamples app={app} />}
-    </div>
+        </div>
+      </SectionPageLayout.Content>
+    </SectionPageLayout>
   )
 }

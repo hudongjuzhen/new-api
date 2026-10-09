@@ -27,6 +27,11 @@ import './zsy-tone'
 // grant or revoke its capabilities), not a public catalog — so it opens its own
 // top-level group instead of joining "Public Data". Order does not matter for it.
 import './zsy-world'
+// zsy-mode is the same kind of page as zsy-world (an operator action, not a
+// catalog): it grants a private **mode** to one account. The two are a pair —
+// one manages capabilities, the other manages modes — so they sit next to each
+// other here and neither joins "Public Data".
+import './zsy-mode'
 
 export * from './menus'
 export * from './channel-types'
