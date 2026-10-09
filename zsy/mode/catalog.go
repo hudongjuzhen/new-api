@@ -681,14 +681,43 @@ func stringField(obj map[string]any, key, fallback string) string {
 	return fallback
 }
 
-// numberField reads one numeric field (JSON numbers arrive as float64).
+// numberField reads one numeric field.
+//
+// ⚠★ 它必须同时认**两种**数字：JSON 解出来的 `float64`，以及
+// **在 Go 里拼出来的对象**里的 `int`。
+//
+// 这一条是**实测**改的（`ai_generate_test.go` 抓到的）："AI 生成模式"那一条路
+// 把身份那几格**用 Go 直接写进 map**（`generated["formatVersion"] = modeFormatVersion`
+// —— 那是一个无类型常量，进 `map[string]any` 之后是 `int`），而这一格原来只认
+// `float64`，于是同一份内容会得到两种结论：
+//
+//	从 JSON 读回来的那份   → formatVersion 认得出 → 能保存
+//	在 Go 里拼出来的那份   → 认不出 → ★ "这份模式没有写 formatVersion"
+//
+// 而那句话说的是**假话**（它明明写着），运营照着它去改文件永远改不好。
 func numberField(obj map[string]any, key string) float64 {
 	raw, ok := obj[key]
 	if !ok || raw == nil {
 		return 0
 	}
-	if n, ok := raw.(float64); ok {
+	switch n := raw.(type) {
+	case float64:
 		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int32:
+		return float64(n)
+	case int64:
+		return float64(n)
+	case json.Number:
+		value, err := n.Float64()
+		if err != nil {
+			return 0
+		}
+		return value
+	default:
+		return 0
 	}
-	return 0
 }

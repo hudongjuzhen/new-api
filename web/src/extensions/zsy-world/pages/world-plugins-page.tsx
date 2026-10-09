@@ -418,11 +418,12 @@ export function WorldPluginsPage() {
             ★★ 左 ID / 右列表（用户 2026-…："我希望左侧是输入ID的位置，右侧是选择的列表，
             不要每个插件单独占一行，太浪费空间了"）。
 
-            ⚠ 窄屏（`lg` 以下）自动叠成一列 —— 那时把 ID 挤在左边会让右边只剩一条缝，
-            而"一行放好几个"正是这一版要的。
+            ⚠ 窄屏（`md` 以下）自动叠成一列 —— 那时把 ID 挤在左边会让右边只剩一条缝。
+            ⚠ 断点用 `md`（48rem）而不是 `lg`（64rem）：左边只有一格输入框 + 一行说明，
+            不需要那么宽 —— 早点并排，右边就能早点多出一列。
           */}
-          <div className='flex flex-col gap-4 lg:flex-row lg:items-start'>
-            <div className='flex shrink-0 flex-col gap-2 lg:w-64'>
+          <div className='flex flex-col gap-4 md:flex-row md:items-start'>
+            <div className='flex shrink-0 flex-col gap-2 md:w-56'>
               <Label htmlFor='world-plugin-user-id'>{t('Account ID')}</Label>
               <Input
                 id='world-plugin-user-id'
@@ -511,9 +512,24 @@ export function WorldPluginsPage() {
               {showsCapabilityRows ? (
                 /*
                  * ★★ **一行放好几个**（用户 2026-…："不要每个模式或者每个插件单独占一行，
-                 * 太浪费空间了"）。每一格只有一行字那么高，所以一屏能看十几个能力。
+                 * 太浪费空间了"）。每一行只有一行字那么高，所以一屏能看十几个能力。
+                 *
+                 * ⚠★★ 列数是**按实际可用宽度算**的（`auto-fill` + 最小列宽），
+                 * **不用 `sm:` / `xl:` 那种断点** —— 这一条是实测改的：
+                 * 断点看的是**视口**宽度，而这一屏的内容区被侧边栏与内边距吃掉一截，
+                 * 于是 `xl:grid-cols-2`（Tailwind 4 里 = 1280px）在这块屏幕上**从来没生效**，
+                 * 表现就是"一行一个、跟没改一样"（用户 2026-… 报的原话）。
+                 * `minmax(20rem, 1fr)` 里的 **20rem 是唯一要调的那个数**：
+                 * 它决定"内容区至少多宽才排得下两列"。⚠★ 第一版给的 24rem 偏大 ——
+                 * 内容区要 784px 才两列，而带侧边栏时那大约要 1568px 视口，
+                 * 于是常见笔记本上仍然是一列、看起来"跟没改一样"（用户 2026-… 第二次报的话）。
+                 * 这一屏每一行比模式那一边多一句"需要它的插件：…"，所以要宽一点。
                  */
-                <div className='grid grid-cols-1 gap-1.5 xl:grid-cols-2'>
+                <div
+                  data-testid='world-capability-grid'
+                  className='grid gap-1.5'
+                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(20rem, 1fr))' }}
+                >
                   {allCapabilities.map((capability) => {
                     const state = accountCapabilityState({
                       readable: hasFreshEntitlements,
@@ -672,10 +688,16 @@ export function WorldPluginsPage() {
                  * ★★ 一行放**好几份**（用户 2026-… 那条"不要占一行"的同一件事）——
                  * 与「模式管理」那一屏同一个形状。
                  *
+                 * ⚠★ 列数同样**按可用宽度算**（见上面那一块那段说明）：写死的 `xl:` 断点
+                 * 在这一屏**根本不生效**。
+                 *
                  * ⚠ 每一份上有一颗「签发」：插件文件是**按插件**签发的，
                  * 而上面那一块是按**能力**开通的 —— 两件事，两处动作，别合成一个。
                  */
-                <div className='grid grid-cols-1 gap-1.5 xl:grid-cols-2'>
+                <div
+                  className='grid gap-1.5'
+                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(20rem, 1fr))' }}
+                >
                   {buckets.usable.map((row) => (
                     <div
                       key={row.id}

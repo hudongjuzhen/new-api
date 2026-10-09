@@ -54,11 +54,19 @@ func mountRoutes(router *gin.Engine) {
 	{
 		admin.GET("/list", listAdminModes)
 		admin.POST("/:id/meta", updateModeMeta)
+		// ★★ 模式**正文**的读与写（编辑弹窗那一屏）：与 `/:id/meta` 那两格
+		// 分发策略是两件事 —— 这一对动的是模式本身。
+		admin.GET("/:id/content", getModeContent)
+		admin.POST("/:id/content", saveModeContent)
+		// ★★ 「添加模式」：选自己的一个密钥，走站内中继让模型写一整份模式。
+		admin.GET("/ai/keys", listModeAIKeys)
+		admin.POST("/create", generateMode)
 		admin.GET("/entitlements", listAdminEntitlements)
 		admin.POST("/entitlements/grant", grantModeEntitlement)
 		admin.POST("/entitlements/revoke", revokeModeEntitlement)
 	}
 
 	common.SysLog("zsy-mode: mounted /api/zsy/mode/{list,:id/file} and " +
-		"/dashboard/zsy/mode/{list,:id/meta,entitlements,entitlements/grant,entitlements/revoke}")
+		"/dashboard/zsy/mode/{list,:id/meta,:id/content,ai/keys,create," +
+		"entitlements,entitlements/grant,entitlements/revoke}")
 }

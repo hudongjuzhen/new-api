@@ -267,6 +267,183 @@ func revokeModeEntitlement(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{"userId": in.UserID, "modeId": modeID, "revoked": affected})
 }
 
+// adminContentParams is the body of POST …/:id/content.
+//
+// ⚠ 请求体是**下划线**（宿主 dashboard 那一套），与 `adminGrantParams` 同一条；
+// 而正文那一格本身就是 JSON 对象，所以它原样收进来再交给 `WriteModeContent` 去校验。
+type adminContentParams struct {
+	Content map[string]any `json:"content"`
+}
+
+// getModeContent (GET /dashboard/zsy/mode/:id/content)
+//
+// ★★ 编辑弹窗那一屏要的就是它（用户 2026-…："里面有这个模式的具体内容编辑，
+// 根据 json 中的内容做编辑"）—— 列表那几条接口**只回元信息**（名字 / 媒介 /
+// 可见性 / 几个人有权限），一份模式的正文有 7–33 KB，塞进列表意味着每次打开
+// 模式管理都要传几百 KB，而九成九不会被用到。
+//
+// ⚠ 坏文件**不给读**（也说清为什么）：一份读不出正文的东西，给运营一个表单去改它
+// 只会把问题搅得更乱 —— 该做的是照着「发不出去的模式」那一块里那句话去修文件。
+func getModeContent(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	content, err := ReadModeContent(id)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	common.ApiSuccess(c, content)
+}
+
+// saveModeContent (POST /dashboard/zsy/mode/:id/content)
+//
+// ★★ 它写的是**模式本身**（`words` / `planDialog` / `requires` / `libraries`…），
+// 与 `updateModeMeta`（只改那两格分发策略）**是两件事**：
+//
+//	| 动作 | 改什么 | 保存的粒度 |
+//	|---|---|---|
+//	| `POST …/:id/meta`    | 公开 / 私有 + 一句话说明 | 只动那两行（逐字节可验） |
+//	| ★ `POST …/:id/content` | 模式正文（几乎整份） | 校验 + 原子替换 + 留 `.bak` |
+//
+// ⚠★ **保存前跑一遍与读盘同源的校验**（`modeShapeProblem`）：用第二份校验的坏法是
+// "保存时放行了、读盘时判成坏文件"，而那时磁盘上已经躺着一份**发不出去**的东西了。
+// 校验没过时磁盘**一个字节都不动**。
+func saveModeContent(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	var in adminContentParams
+	if err := c.ShouldBindJSON(&in); err != nil {
+		common.ApiErrorMsg(c, "请求体错误: "+err.Error())
+		return
+	}
+	if in.Content == nil {
+		common.ApiErrorMsg(c, "这次没有任何要写的内容：请给 content（一整份模式文件的 JSON 对象）。")
+		return
+	}
+
+	rendered, err := WriteModeContent(id, in.Content)
+	if err != nil {
+		/* ⚠ 那些话已经是**能照做**的（哪一格不对、该写什么），原样透出去 */
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+
+	/*
+	 * ★ 改完**重读一遍**回给界面，而不是把请求体回显出去：磁盘上那份才是权威
+	 * （缩进、键序、trim 之后的可见性都在那里），而界面拿它去更新那一行 ——
+	 * 于是"看到的"与"磁盘上的"永远是同一个。
+	 */
+	row, found := ModeByID(id)
+	if !found {
+		common.ApiErrorMsg(c, fmt.Sprintf(
+			"写完之后反而读不到 %q 了 —— 文件可能被别的进程动过，请点「重新读取」看一眼。", id))
+		return
+	}
+
+	common.SysLog(fmt.Sprintf(
+		"[zsy-mode] updated content of mode=%q bytes=%d by admin", id, len(rendered)))
+	common.ApiSuccess(c, adminModeView{
+		modeView:   viewOf(row),
+		Visibility: row.Visibility,
+		Granted:    liveGrantCountOf(row.ID),
+		Problem:    row.Problem,
+		Source:     row.Source,
+	})
+}
+
+// adminGenerateParams is the body of POST …/create.
+//
+// ⚠ 请求体是**下划线**（宿主 dashboard 那一套），与 `adminGrantParams` 同一条。
+type adminGenerateParams struct {
+	// Label is the mode name (what the plaza card shows).
+	Label string `json:"label"`
+	// Medium is `video` / `audio` / `text`.
+	Medium string `json:"medium"`
+	// Summary is the one-liner written into `x-summary`.
+	Summary string `json:"summary"`
+	// Request is the operator's prose handed to the model.
+	Request string `json:"request"`
+	// TokenID is which of the caller's own tokens pays for this generation.
+	TokenID int `json:"token_id"`
+	// Visibility is `public` / `private`（空 = 按服务端的默认，即 private）。
+	Visibility string `json:"visibility"`
+	// ID is optional; when empty the backend derives one from the label.
+	ID string `json:"id"`
+}
+
+// listModeAIKeys (GET /dashboard/zsy/mode/ai/keys)
+//
+// ★ 弹窗里那个「选择 API 密钥」下拉就是它。
+//
+// ⚠★ **明文 key 一格都不回**（`ModeAIKey` 里只有前缀）：弹窗只需要"选哪一个"，
+// 而回明文意味着那一把 key 会出现在 DOM、浏览器历史、以及任何一份前端日志里。
+func listModeAIKeys(c *gin.Context) {
+	userID := c.GetInt("id")
+	if userID <= 0 {
+		common.ApiErrorMsg(c, "读不到当前管理员的账号 —— 生成模式要用你自己的密钥走站内中继。")
+		return
+	}
+	items, err := ListModeAIKeys(userID)
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"items": items,
+		"model": AIModelName(),
+	})
+}
+
+// generateMode (POST /dashboard/zsy/mode/create)
+//
+// ★★ 它一次做完"AI 生成 + 落盘"（用户 2026-…："点击添加模式，可以输入模式名称，
+// 模式类型，模式简介，然后能够 AI一键生成，选择一个API密钥，然后调用 glm-5.3-flash
+// 这个模型生成"）。
+//
+// ⚠★ 这一整条链的次序写在 `GenerateMode` 的注释里（七步，每一步的失败都在下一步
+// 之前挡住）。这里只负责：取参数 → 调它 → 把**新那一份**回给界面。
+func generateMode(c *gin.Context) {
+	userID := c.GetInt("id")
+	if userID <= 0 {
+		common.ApiErrorMsg(c, "读不到当前管理员的账号 —— 生成模式要用你自己的密钥走站内中继。")
+		return
+	}
+	var in adminGenerateParams
+	if err := c.ShouldBindJSON(&in); err != nil {
+		common.ApiErrorMsg(c, "请求体错误: "+err.Error())
+		return
+	}
+
+	row, prompt, err := GenerateMode(userID, ModeGenerateInput{
+		Label:      in.Label,
+		Medium:     in.Medium,
+		Summary:    in.Summary,
+		Request:    in.Request,
+		TokenID:    in.TokenID,
+		Visibility: in.Visibility,
+		ID:         in.ID,
+	})
+	if err != nil {
+		/*
+		 * ⚠ 那些话已经是**能照做**的（哪一格不对、该去哪儿改），原样透出去。
+		 * ⚠ 提示词**不回**给界面（它几千字，而界面上没有地方放它）——
+		 * 只在服务端日志里留一行长度，方便排查"模型为什么不懂"。
+		 */
+		common.SysLog(fmt.Sprintf("[zsy-mode] generate mode failed by admin=%d: %v", userID, err))
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+
+	common.SysLog(fmt.Sprintf(
+		"[zsy-mode] generated mode=%q label=%q medium=%q prompt=%d chars model=%q by admin=%d",
+		row.ID, row.Label, row.Medium, len(prompt), AIModelName(), userID))
+	common.ApiSuccess(c, adminModeView{
+		modeView:   viewOf(row),
+		Visibility: row.Visibility,
+		Granted:    liveGrantCountOf(row.ID),
+		Problem:    row.Problem,
+		Source:     row.Source,
+	})
+}
+
 // nonNilModeIDs turns the active-set map into a sorted array.
 //
 // ⚠ 它回**数组**而不是那个 map：Go 的 map 序列化成 JSON 时键序是随机的，

@@ -231,7 +231,7 @@ describe('世界 IP · 插件管理', () => {
     expect(await screen.findByText('Signing is not granting')).toBeInTheDocument()
   })
 
-  test('★★ 左 ID / 右列表：两块在**同一个横向容器**里，一行放好几个能力', async () => {
+  test('★★ 左 ID / 右列表：两块在**同一个横向容器**里', async () => {
     renderPage()
 
     const input = await screen.findByLabelText('Account ID')
@@ -239,20 +239,44 @@ describe('世界 IP · 插件管理', () => {
     const left = input.parentElement as HTMLElement
     const split = left.parentElement as HTMLElement
 
-    /*
-     * ⚠ 判据是**排列方向与断点**（大屏 `lg:flex-row`、小屏一列）与"一行好几个"，
-     * 不是某一串完整 class。
-     */
     expect(split.className).toContain('flex')
     expect(split.className).toContain('flex-col')
-    expect(split.className).toContain('lg:flex-row')
-    expect(left.className).toContain('lg:w-64')
+    expect(split.className).toContain('md:flex-row')
+    expect(left.className).toContain('md:w-56')
 
-    const grid = rowOf('world-ip').parentElement as HTMLElement
-    expect(grid.className).toContain('grid-cols-1')
-    expect(grid.className).toContain('xl:grid-cols-2')
+    const grid = screen.getByTestId('world-capability-grid')
     /* ⚠ 而且它确实在 split 里面 */
     expect(split.contains(grid)).toBe(true)
+  })
+
+  test('★★ 一行放好几个：列数按**可用宽度**算，不看视口断点', async () => {
+    /*
+     * ⚠★★ 这一条是**回归**判据，保护的是一个真发生过的错（用户 2026-…）：
+     *
+     * > "模式库还是在上面一行一个，太丑了，也没变化呀"
+     *
+     * 原因：列数写成了 `xl:grid-cols-2`，而 Tailwind 4 的 `xl` = 1280px 看的是
+     * **视口**宽度 —— 这一屏的内容区被侧边栏与内边距吃掉一截，那个断点**从来没生效**，
+     * 于是永远只有一列；而当时的测试查的是"class 里有没有 xl:grid-cols-2",
+     * 它绿着、界面上却是一行一个。
+     *
+     * 所以判据换成**真正决定列数的那件事**：`auto-fill` + 一个最小列宽。
+     */
+    renderPage()
+
+    const grids = [
+      await screen.findByTestId('world-capability-grid'),
+      /* 模板那一块也是同一个形状 */
+      (await screen.findByTestId('world-template-world-ip')).parentElement as HTMLElement,
+    ]
+
+    for (const grid of grids) {
+      expect(grid.className).toContain('grid')
+      expect(grid.style.gridTemplateColumns).toContain('auto-fill')
+      expect(grid.style.gridTemplateColumns).toContain('minmax(')
+      expect(grid.className).not.toContain('grid-cols-1')
+      expect(grid.className).not.toMatch(/xl:grid-cols/)
+    }
   })
 
   test('★★ 没填账号时：签发按钮是禁用的，并说明要先填 ID', async () => {

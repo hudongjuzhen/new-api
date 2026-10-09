@@ -200,6 +200,105 @@ export async function listEntitlementsByMode(modeId: string): Promise<ModeEntitl
 }
 
 /**
+ * ★★ **新增一档模式**（用户 2026-…："右上角增加一个添加模式的功能"）。
+ *
+ * 它把新那份模式写进**服务端的模式目录**（`<模式目录>/<id>.json`）——
+ * 服务端那份 = 客户端将来会拿到的那一份，所以这个动作就是"把这个模式做出来"。
+ *
+ * ⚠ 请求体是**下划线**（宿主 dashboard 那一套）：`ai` 那一格是可选的 ——
+ * 不带它时正文由调用方给（`body`），带了它就由服务端按那几个输入去生成。
+ */
+export interface ModeCreateInput {
+  /** 模式名称（界面上的 `label`）。 */
+  label: string
+  /** `video` / `audio` / `text` —— 客户端按它分类。 */
+  medium: string
+  /** 一句话说明（写进 `x-summary`，广场卡片上那一句）。 */
+  summary: string
+  /** 模式 id（文件名）。留空则由后端按 label 推一个。 */
+  id?: string
+  /** 公开 / 私有。 */
+  visibility?: string
+  /** ★ AI 生成那一路：给模型的需求（用户写的那段话）。 */
+  request?: string
+  /** ★ AI 生成用哪个模型（默认由服务端配置决定）。 */
+  model?: string
+  /** ★ 生成用的密钥（用户在弹窗里选的那一把）。 */
+  api_key?: string
+  /** 不走 AI 时的正文（一整份模式文件）。 */
+  body?: Record<string, unknown>
+}
+
+export async function createMode(input: ModeCreateInput): Promise<ModeView> {
+  const res = await api.post<{ success: boolean; message?: string; data: ModeView }>(
+    `${ADMIN_BASE}/create`,
+    input
+  )
+  return ok(res.data)
+}
+
+/** 读一档模式的**完整正文**（编辑弹窗里那份表单与原始 JSON 都要它）。 */
+export async function getModeContent(modeId: string): Promise<Record<string, unknown>> {
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data: { modeId: string; content: Record<string, unknown> }
+  }>(`${ADMIN_BASE}/${encodeURIComponent(modeId)}/content`)
+  return ok(res.data).content
+}
+
+/**
+ * ★★ **写回一档模式的完整正文**（编辑弹窗里的表单 / 原始 JSON 都走它）。
+ *
+ * ⚠★ 它与 `updateModeMeta`（只改 `x-visibility` / `x-summary`）**是两件事**：
+ * 那一条改的是**分发策略**，这一条改的是**模式本身**。
+ * 服务端保存前会跑一遍与读盘同源的校验（`format` / `id` / `label` / `medium`…），
+ * 校验没过时磁盘**一个字节都不动**。
+ */
+export async function saveModeContent(
+  modeId: string,
+  content: Record<string, unknown>
+): Promise<ModeView> {
+  const res = await api.post<{ success: boolean; message?: string; data: ModeView }>(
+    `${ADMIN_BASE}/${encodeURIComponent(modeId)}/content`,
+    { content }
+  )
+  return ok(res.data)
+}
+
+/** 生成模式时能选的那把密钥（服务端只回前缀，绝不回明文）。 */
+export interface ModeAiKey {
+  id: number
+  name: string
+  /** ★ 只用于显示 —— 真正的密钥在这一条**不在**响应里。 */
+  keyPrefix: string
+  status: number
+  /** 这个密钥是否被允许调用生成用的那个模型（服务端判的）。 */
+  usable: boolean
+  /** 不可用的原因（能照做的一句话）。 */
+  problem: string
+}
+
+/**
+ * 生成模式时那两格：能选的密钥 + 服务端这一趟会用的模型。
+ *
+ * ⚠★ 模型名**不是给运营改的**（它由服务端的 `ZSY_MODE_AI_MODEL` 决定，
+ * 默认 `glm-5.3-flash`）：界面上再放一格只会多一个与渠道配置分叉的地方。
+ * 回它是为了让界面**念出来**——运营一定会问"它到底调了哪个模型"。
+ */
+export interface ModeAiSetup {
+  items: ModeAiKey[]
+  model: string
+}
+
+export async function listModeAiKeys(): Promise<ModeAiSetup> {
+  const res = await api.get<{ success: boolean; message?: string; data: ModeAiSetup }>(
+    `${ADMIN_BASE}/ai/keys`
+  )
+  return ok(res.data)
+}
+
+/**
  * 给一个账号开通一档模式。
  *
  * ⚠★ 请求体是**下划线**（`user_id` / `mode_id` / `expires_at`）—— 宿主 dashboard

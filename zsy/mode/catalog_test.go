@@ -279,12 +279,19 @@ func TestMountRoutes_PublishesTheDocumentedURLs(t *testing.T) {
 	 * ⚠ 第 3b 段（私有模式）加了后面三条 —— 它们就是"后台给权限"那一下，
 	 * 而 `docs/28` §6 里那一段的全部内容就是这三条路 + 一张表。
 	 * ⚠ `/:id/meta` 是 2026-… 加的："后台能改一档的公开 / 私有"（用户点名要的）。
+	 * ⚠ `/:id/content` 那两条也是 2026-… 加的：**模式正文**的读与写
+	 * （编辑弹窗里那份表单与原始 JSON 都走它们）—— 与 `/:id/meta` 那一对
+	 * 是**两件事**（那一条只动分发策略那两格）。
 	 */
 	require.ElementsMatch(t, []string{
 		"GET /api/zsy/mode/list",
 		"GET /api/zsy/mode/:id/file",
 		"GET /dashboard/zsy/mode/list",
 		"POST /dashboard/zsy/mode/:id/meta",
+		"GET /dashboard/zsy/mode/:id/content",
+		"POST /dashboard/zsy/mode/:id/content",
+		"GET /dashboard/zsy/mode/ai/keys",
+		"POST /dashboard/zsy/mode/create",
 		"GET /dashboard/zsy/mode/entitlements",
 		"POST /dashboard/zsy/mode/entitlements/grant",
 		"POST /dashboard/zsy/mode/entitlements/revoke",

@@ -18,7 +18,16 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useState } from 'react'
 import type { TFunction } from 'i18next'
-import { Layers, Loader2, Pencil, RefreshCw, ShieldCheck, ShieldOff } from 'lucide-react'
+import {
+  Layers,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  ShieldOff,
+  Users,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -33,18 +42,16 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Skeleton } from '@/components/ui/skeleton'
 import { SectionPageLayout } from '@/components/layout'
 
-import { ModeMetaDialog } from '../components/mode-meta-dialog'
+import { ModeCreateDialog } from '../components/mode-create-dialog'
+import { ModeEditDialog } from '../components/mode-edit-dialog'
+import { ModeHoldersDialog } from '../components/mode-holders-dialog'
 import {
   grantMode,
-  listEntitlementsByMode,
   listEntitlementsByUser,
   listModes,
   revokeMode,
-  updateModeMeta,
-  type ModeEntitlementByMode,
   type ModeEntitlementByUser,
   type ModeList,
   type ModeView,
@@ -97,7 +104,7 @@ import {
  *
  * # ⚠★ 那一格"现在生效吗"必须**读回来**，不许按点击推
  *
- * 开通 / 取消之后一律重新读一遍（`refreshUser` + `refreshMode` + 模式列表），
+ * 开通 / 取消之后一律重新读一遍（`refreshUser` + 模式列表），
  * 而不是把本地那一份改一改。理由是服务端的判据是**每次现算**的
  * （有过期、有取消），本地推一份就可能与服务端分叉 —— 而分叉的表现是
  * 界面上写着"已开通"、用户那边什么都看不到。
@@ -115,9 +122,6 @@ export function ModePlazaPage() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
-  /** 选中的模式 id（默认第一个能用的）—— 它只喂「这一档给了谁」那一张卡。 */
-  const [selected, setSelected] = useState('')
-
   /** 账号 ID 那一格（**文本**：判据在 `parseUserId`，不在这里）。 */
   const [userIdText, setUserIdText] = useState('')
   /**
@@ -134,10 +138,6 @@ export function ModePlazaPage() {
   const [byUserOf, setByUserOf] = useState('')
   const [byUserError, setByUserError] = useState('')
 
-  const [byMode, setByMode] = useState<ModeEntitlementByMode | null>(null)
-  const [byModeOf, setByModeOf] = useState('')
-  const [byModeError, setByModeError] = useState('')
-
   /**
    * ★★ **编辑那一档**（用户 2026-…："模式管理 应该是可以编辑的，可以设置
    * 权限是公开还是私有"）。
@@ -147,8 +147,29 @@ export function ModePlazaPage() {
    * （否则弹窗里显示的还是改之前那个可见性）。
    */
   const [editingId, setEditingId] = useState('')
-  const [savingMeta, setSavingMeta] = useState(false)
-  const [metaError, setMetaError] = useState('')
+  /**
+   * ★★ **添加模式**（用户 2026-…："右上角增加一个添加模式的功能"）。
+   *
+   * ⚠ 它只记"弹窗开着没有"：那四格输入与生成那一下全在弹窗自己身上
+   * （关掉就该丢，而放在这里会让它们跨次存活 —— 运营会看到上一次那几个字）。
+   */
+  const [creating, setCreating] = useState(false)
+
+  /**
+   * ★★ **正在看"谁有这一档的权限"**（用户 2026-…："再加上一个点击查看拥有权限的
+   * 账号列表的按钮，点击出来对应的弹窗可以显示"）。
+   *
+   * ⚠ 存 **id** 而不是那一行对象：读完名单要回填"这一档现在几个人"，
+   * 而那时手上那份行对象已经过期了（与 `editingId` 同一条理由）。
+   */
+  const [holdersId, setHoldersId] = useState('')
+  /**
+   * ★ 这一档现在几个账号有权限（名单弹窗读完回填那一行）。
+   *
+   * ⚠ 它是**一份补丁**而不是"把模式列表重读一遍"：名单那一次请求已经拿到了准确的
+   * 生效行数，为了一个数字再读一遍列表会让"点开名单"变成两次往返。
+   */
+  const [grantedCounts, setGrantedCounts] = useState<Record<string, number>>({})
 
   /**
    * 判定"已取消 / 已过期"要用的"现在"。
@@ -166,29 +187,23 @@ export function ModePlazaPage() {
   /** 只把**那个数字**取出来：effect 的依赖用它，不用 `parsedId`（每渲染都是新对象） */
   const targetUserId = parsedId.value
   const buckets = bucketModes(modes?.items || [])
-  const selectedMode = buckets.usable.find((row) => row.id === selected)
-  const selectedModeId = selectedMode?.id || ''
-  const selectedVisibility = selectedMode ? modeVisibilityLabel(t, selectedMode.visibility) : ''
+  /** ★ 正在看名单的那一档（弹窗要它的 label 与可见性）。 */
+  const holdersMode = buckets.usable.find((row) => row.id === holdersId) || null
 
   /**
-   * ★ 手上那份数据属于谁 / 属于哪一档 —— 三个键。
+   * ★ 手上那份数据属于谁 —— 一个键。
    *
-   * 它是"手上这份还算不算数"的判据：账号（或选中的那一档）一变，旧数据就属于
-   * **上一个**账号了 —— 而两个人都有同一档权限时看起来完全正常，那正是最危险的一种错。
+   * 它是"手上这份还算不算数"的判据：账号一变，旧数据就属于**上一个**账号了 ——
+   * 而两个人都有同一档权限时看起来完全正常，那正是最危险的一种错。
    *
    * ⚠ 用"记下它属于谁"而不是"在 effect 里把它清空"，是为了避开
    * `react(set-state-in-effect)`（在 effect 里同步 setState 会引发级联渲染）。
-   * 清空的活交给读取方：下面用 `isUserStale` / `isModeStale` 把"过期的数据"
-   * 当成"还没有数据"。
+   * 清空的活交给读取方：下面用 `isUserStale` 把"过期的数据"当成"还没有数据"。
    */
   const wantUserKey = targetUserId ? String(targetUserId) : ''
-  const wantModeKey = selectedModeId
   const isUserStale = byUserOf !== wantUserKey
-  const isModeStale = byModeOf !== wantModeKey
   const currentByUser = isUserStale ? null : byUser
   const currentByUserError = isUserStale ? '' : byUserError
-  const currentByMode = isModeStale ? null : byMode
-  const currentByModeError = isModeStale ? '' : byModeError
 
   const hasUserIdText = userIdText.trim().length > 0
   const isBlockedById = !!parsedId.problem
@@ -220,20 +235,6 @@ export function ModePlazaPage() {
    * ⚠ `no-nested-ternary` 在本仓库是开的，而"嵌套三元"写在这一块最容易读成谜题
    * （`zsy-world` 那一屏留了同一条注释）。所以三支各写一行，JSX 里最多一层三元。
    */
-  const showsHolders = !currentByModeError && !!currentByMode
-  const holderRows = currentByMode?.items || []
-  /**
-   * ★★ 空名单**不是同一句话**，取决于这一档是公共的还是私有的：
-   *
-   *	公共    "谁都能开通，所以没有名单可列"（这不是一个问题）
-   *	私有    ★ "还没有账号被开通这一档"（★ 这多半意味着运营忘了给谁开）
-   *
-   * 两句合成一句（"暂无"）会把后者那件**要动手的事**说成一件平常事。
-   */
-  const noHoldersLine = isPublicMode(selectedMode || { visibility: '' })
-    ? t('This mode is public — every account can open it, so there is nobody to list.')
-    : t('No account holds this mode yet.')
-
   /**
    * 读一次模式列表。
    *
@@ -253,11 +254,10 @@ export function ModePlazaPage() {
       const data = await listModes()
       setModes(data)
       /*
-       * 默认选中第一个**能用的**（不是第一个）：默认选一份坏的会让运营
-       * 一进来就看见一句"这一档发不出去"，而他什么都没做错。
+       * ⚠ 这里**不再**"默认选中第一档"（用户 2026-…）：选中这个概念随着
+       * 「这一档给了谁」那张卡一起没了 —— 名单现在由每一行上的按钮打开。
        */
-      const first = bucketModes(data.items || []).usable[0]
-      setSelected((prev) => prev || first?.id || '')
+      void data
     } catch (err) {
       setLoadError(readError(err, t('Could not read the mode list')))
     } finally {
@@ -288,21 +288,6 @@ export function ModePlazaPage() {
     }
   }
 
-  /** 拉一次这一档"给了谁"（同上：普通函数，不做 memo）。 */
-  async function refreshMode(modeId: string) {
-    if (!modeId) return
-    try {
-      const data = await listEntitlementsByMode(modeId)
-      setByMode(data)
-      setByModeError('')
-      setByModeOf(modeId)
-    } catch (err) {
-      setByMode(null)
-      setByModeError(readError(err, t('Could not read who holds this mode')))
-      setByModeOf(modeId)
-    }
-  }
-
   useEffect(() => {
     void loadAll()
     /*
@@ -314,21 +299,16 @@ export function ModePlazaPage() {
   }, [])
 
   /*
-   * 账号或模式一变就去读一次。⚠ 这里**不**清空旧数据（那会犯 `set-state-in-effect`）：
-   * 清空交给 `isUserStale` / `isModeStale`。
+   * 账号一变就去读一次。⚠ 这里**不**清空旧数据（那会犯 `set-state-in-effect`）：
+   * 清空交给 `isUserStale`。
    *
-   * 依赖用那两个**字符串**：它们由"账号 id"与"模式 id"拼成，所以输入没变它们就不变，
+   * 依赖用那个**字符串**：它由"账号 id"拼成，所以输入没变它就不变，
    * 而 `parsedId` 那种对象引用每次渲染都会变。
    */
   useEffect(() => {
     void refreshUser(targetUserId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wantUserKey])
-
-  useEffect(() => {
-    void refreshMode(selectedModeId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wantModeKey])
 
   /**
    * 开通 / 取消**某一档**（列表里那一下 —— 用户要的就是"一次填 ID，全都在这儿点完"）。
@@ -354,40 +334,17 @@ export function ModePlazaPage() {
         await grantMode(targetUserId, modeId, 0)
       }
       /*
-       * ★ 三件都要重读：账号手上有什么、这一档给了谁、以及**每档几个人**那一个数
-       * （它显示在模式库上，不重读的话运营刚开通完看到的还是旧计数）。
+       * ★★ **两件都要重读**：这个账号手上有什么（右栏每一行的状态由它算出来）、
+       * 以及模式列表（每一行上"已给 N 个账号开通"那一个数）。
+       *
+       * ⚠ 第三件（"这一档给了谁"的名单）**不在这里读** —— 它现在是弹窗的事，
+       * 而弹窗每次打开都会自己读一遍（那比"跟着每一次开通去读"省一半请求）。
        */
-      await Promise.all([refreshUser(targetUserId), refreshMode(modeId), loadAll()])
+      await Promise.all([refreshUser(targetUserId), loadAll()])
     } catch (err) {
       setActionError(readError(err, active ? t('Could not cancel') : t('Could not open')))
     } finally {
       setBusyModeId('')
-    }
-  }
-
-  /**
-   * ★★ **保存那一档的分发策略**（公开 / 私有 + 说明）。
-   *
-   * ⚠★ 保存之后**重读列表**（不就地改本地那一行）：服务端回的才是权威
-   * （它会把可见性 trim、把文件里真实的值读回来）—— 本地推一份就可能与磁盘分叉，
-   * 而分叉的表现是"界面上写着公开、而客户端那边看不到"。
-   *
-   * ⚠ 成功之后**关掉弹窗**：不关的话运营会对着一个"已经存过了"的表单再点一次保存
-   * （而第二次保存没有任何效果，看起来像"保存没反应"）。
-   */
-  async function saveMeta({ visibility, summary }: { visibility: string; summary: string }) {
-    const id = editingId
-    if (!id) return
-    setSavingMeta(true)
-    setMetaError('')
-    try {
-      await updateModeMeta(id, { visibility, summary })
-      await loadAll()
-      setEditingId('')
-    } catch (err) {
-      setMetaError(readError(err, t('Could not save')))
-    } finally {
-      setSavingMeta(false)
     }
   }
 
@@ -405,6 +362,18 @@ export function ModePlazaPage() {
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Mode Plaza')}</SectionPageLayout.Title>
       <SectionPageLayout.Actions>
+        {/*
+          ★★ **右上角那颗「添加模式」**（用户 2026-…："右上角增加一个添加模式的功能，
+          点击添加模式，可以输入模式名称，模式类型，模式简介，然后能够 AI一键生成，
+          选择一个API密钥，然后调用 glm-5.3-flash 这个模型生成"）。
+
+          ⚠ 它排在「重新读取」**左边**：这一屏的主语是"这一档模式"，
+          而重读是维护动作（与"在列表里选一个人"同一类，不是这一屏的目的）。
+        */}
+        <Button size='sm' onClick={() => setCreating(true)} data-testid='mode-create-open'>
+          <Plus className='mr-1 h-4 w-4' />
+          {t('Add a mode')}
+        </Button>
         <Button variant='outline' size='sm' onClick={() => void loadAll(true)}>
           <RefreshCw className='mr-1 h-4 w-4' />
           {t('Reload')}
@@ -448,11 +417,15 @@ export function ModePlazaPage() {
         </CardHeader>
         <CardContent className='flex flex-col gap-4'>
           {/*
-            ★★ 左 ID / 右列表。窄屏（`lg` 以下）自动叠成一列 —— 那时候把 ID 挤在
+            ★★ 左 ID / 右列表。窄屏（`md` 以下）自动叠成一列 —— 那时候把 ID 挤在
             左边会让右边只剩一条缝，而"一行放好几个"正是这一版要的。
+
+            ⚠ 断点用 `md`（48rem）而不是 `lg`（64rem）：左边那一格只有一格输入框 +
+            一行说明，它不需要 640px 那么宽 —— 早点并排，右边就能早点多出一列
+            （实测：用 `lg` 时右边在常见笔记本上只有一列，看起来像"没变化"）。
           */}
-          <div className='flex flex-col gap-4 lg:flex-row lg:items-start'>
-            <div className='flex shrink-0 flex-col gap-2 lg:w-64'>
+          <div className='flex flex-col gap-4 md:flex-row md:items-start'>
+            <div className='flex shrink-0 flex-col gap-2 md:w-56'>
               <Label htmlFor='mode-user-id'>{t('Account ID')}</Label>
               <Input
                 id='mode-user-id'
@@ -504,17 +477,30 @@ export function ModePlazaPage() {
                 /*
                  * ★★ **一行放好几个**（用户 2026-…："不要每个模式或者每个插件单独占一行，
                  * 太浪费空间了"）。每一行只有一行字那么高，所以一屏能看十几档。
+                 *
+                 * ⚠★★ 列数是**按实际可用宽度算**的（`auto-fill` + 最小列宽），
+                 * **不用 `sm:` / `xl:` 那种断点** —— 这一条是实测改的：
+                 * 断点看的是**视口**宽度，而这一屏的内容区被侧边栏与内边距吃掉一截，
+                 * 于是 `xl:grid-cols-2`（Tailwind 4 里 = 1280px）在这块屏幕上**从来没生效**，
+                 * 表现就是"一行一个、跟没改一样"（用户 2026-… 报的原话）。
+                 * `minmax(18rem, 1fr)` 里的 **18rem 是唯一要调的那个数**：
+                 * 它决定"内容区至少多宽才排得下两列"。⚠★ 第一版给的 22rem 偏大 ——
+                 * 内容区要 736px 才两列，而带侧边栏时那大约要 **1472px 视口**，
+                 * 于是常见笔记本上仍然是一列、看起来"跟没改一样"（用户 2026-… 第二次报的话）。
+                 * 18rem 让两列在约 1248px 视口就出现；宽屏会给到三列。
                  */
                 <div
                   data-testid='mode-account-grid'
-                  className='grid grid-cols-1 gap-1.5 xl:grid-cols-2'
+                  className='grid gap-1.5'
+                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(18rem, 1fr))' }}
                 >
                   {buckets.usable.map((row) => (
                     <ModeRow
                       key={row.id}
                       t={t}
                       row={row}
-                      selected={row.id === selected}
+                      /* ★ 这一档现在几个人（名单弹窗读完回填的那一份补丁优先） */
+                      granted={grantedCounts[row.id] ?? row.granted}
                       hasUserIdText={hasUserIdText}
                       state={accountModeState({
                         readable: hasFreshUser,
@@ -523,11 +509,8 @@ export function ModePlazaPage() {
                       })}
                       busy={busyModeId === row.id}
                       disabled={busyModeId === row.id || isBlockedById || !hasFreshUser}
-                      onSelect={() => setSelected(row.id)}
-                      onEdit={() => {
-                        setMetaError('')
-                        setEditingId(row.id)
-                      }}
+                      onEdit={() => setEditingId(row.id)}
+                      onViewHolders={() => setHoldersId(row.id)}
                       onToggle={(open) => void toggle(row.id, open)}
                     />
                   ))}
@@ -591,172 +574,57 @@ export function ModePlazaPage() {
         </CardContent>
       </Card>
 
-      {/* ────────────────────────── 二、模式库（有哪几档） ────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('Mode library')}</CardTitle>
-          <CardDescription>
-            {modes?.directory
-              ? t('Read from {{dir}} — the file name is the plugin id.', {
-                  dir: modes.directory,
-                })
-              : t('Loading…')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className='flex flex-col gap-3'>
-          {loading ? <Skeleton className='h-20 w-full' /> : null}
+      {/*
+        ★★ **「模式库」那一张卡没有了**（用户 2026-…）：
 
-          {!loading && loadError ? (
-            <Alert variant='destructive' data-testid='mode-list-error'>
-              <AlertDescription>{loadError}</AlertDescription>
-            </Alert>
-          ) : null}
+        > "下面的 模式库 就没有必要显示了吧，直接在上面右侧的模式列表就可以了"
 
-          {!loading && !loadError ? (
-            <>
-              {/*
-                ★ 坏模式**排在最前面**并带上原因：它是运营唯一需要动手去修的东西，
-                而"我放进去的文件不见了"看起来像后台坏了。
-              */}
-              {buckets.broken.map((row) => (
-                <Alert key={row.id} variant='destructive'>
-                  <AlertTitle>{row.label || row.id}</AlertTitle>
-                  <AlertDescription>
-                    <span className='block'>{row.problem}</span>
-                    <span className='text-muted-foreground mt-1 block text-xs'>{row.source}</span>
-                  </AlertDescription>
-                </Alert>
-              ))}
+        原来它列的就是"磁盘上有哪几档"，而上面那一张卡的右栏**列的是同一批** ——
+        同一件事写两遍，正是下一步会分叉的地方。所以现在只有一处：
 
-              {buckets.usable.length ? (
-                /*
-                 * ★★ 一行放**好几档**，而且每一档只占一行字的高度。
-                 *
-                 * ⚠ 这一块的按钮是「选中」（它喂下面"这一档给了谁"那张卡），
-                 * 与上面那一块按账号开通/取消**不是同一件事** —— 所以两块都在，
-                 * 各自解决一个问题。
-                 */
-                <div className='grid grid-cols-1 gap-1.5 xl:grid-cols-2'>
-                  {buckets.usable.map((row) => {
-                    const on = row.id === selected
-                    return (
-                      <div
-                        key={row.id}
-                        data-testid={`mode-row-${row.id}`}
-                        data-selected={on ? 'true' : 'false'}
-                        className={`flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 transition-colors ${
-                          on ? 'border-primary bg-accent/40' : 'hover:bg-accent/20'
-                        }`}
-                      >
-                        {/*
-                          ⚠★ 那一行**不是**整块 button：里面还有「编辑」，
-                          而 button 里套 button 是非法结构、点「编辑」还会同时把这一行选中
-                          （两件事一起发生）。所以外层是 div，"点它就选中"落在里面那个
-                          铺满的 button 上。
-                        */}
-                        <button
-                          type='button'
-                          aria-current={on ? 'true' : undefined}
-                          onClick={() => setSelected(row.id)}
-                          className='flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left'
-                        >
-                          <span className='font-medium'>{row.label}</span>
-                          <span className='text-muted-foreground font-mono text-xs'>{row.id}</span>
-                          <Badge variant='outline'>{row.medium}</Badge>
-                          {/*
-                            ★★ 可见性必须看得见（它是这一档"发给谁"的那一格）。
-                            它只差一个词，后果却完全不同 —— 而文件本身长得一模一样。
-                          */}
-                          <Badge
-                            variant={isPublicMode(row) ? 'default' : 'secondary'}
-                            data-testid={`mode-visibility-${row.id}`}
-                          >
-                            {modeVisibilityLabel(t, row.visibility)}
-                          </Badge>
-                          <span className='text-muted-foreground text-xs'>
-                            {grantedLabel(t, row)}
-                          </span>
-                        </button>
-                        {/*
-                          ★★ 「编辑」= 改这一档的**分发策略**（公开 / 私有 + 说明）。
-                          它**在行内**（不是藏进一个"⋯"菜单里）：这一格是运营天天要动的
-                          那一个，而"藏起来"的代价是他找不到"公开/私有到底在哪儿改"。
-                        */}
-                        <Button
-                          variant='outline'
-                          size='xs'
-                          data-testid={`mode-edit-library-${row.id}`}
-                          onClick={() => {
-                            setMetaError('')
-                            setEditingId(row.id)
-                          }}
-                        >
-                          <Pencil className='mr-1 size-3' />
-                          {t('Edit')}
-                        </Button>
-                      </div>
-                    )
-                  })}
-                </div>
-              ) : (
-                <p className='text-muted-foreground text-sm'>
-                  {emptyModesHint(t, modes?.directory || '', modes?.knownMediums || [])}
-                </p>
+        	账号卡右栏 = 这一档的**全部**事实（名字 / id / 媒介 / 可见性 /
+        	这一档给了几个账号 / 编辑 / 查看拥有权限的账号）
+
+        ⚠★ 但**坏模式必须留着**（下面那一段）：它原来排在模式库那一块的头上，
+        跟着卡片一起删掉就变成"我放进去的文件不见了"，而运营唯一能动手修的东西
+        正是它 —— 服务端那一面也一直坚持"坏文件照样列出来并说明原因"。
+
+        ⚠ 「这一档给了谁」那张卡也一起撤了：它的入口现在是每一行上的
+        「查看拥有权限的账号」按钮（弹窗），比"先选中一行、再往下找名单"少一步。
+      */}
+      {buckets.broken.length ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t('Modes that cannot be shipped')}</CardTitle>
+            <CardDescription>
+              {t(
+                'These files are in the mode directory but cannot be handed to a client. Fix the file, then click Reload.'
               )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className='flex flex-col gap-3'>
+            {buckets.broken.map((row) => (
+              <Alert key={row.id} variant='destructive' data-testid={`mode-broken-${row.id}`}>
+                <AlertTitle>{row.label || row.id}</AlertTitle>
+                <AlertDescription>
+                  <span className='block'>{row.problem}</span>
+                  <span className='text-muted-foreground mt-1 block text-xs'>{row.source}</span>
+                </AlertDescription>
+              </Alert>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
-              {modes?.note ? (
-                <p className='text-muted-foreground text-xs'>{modes.note}</p>
-              ) : null}
-            </>
-          ) : null}
-        </CardContent>
-      </Card>
+      {/*
+        ⚠ 列表读失败时说清楚（它是**上面那一张卡**的数据源，所以那句话留在上面那一张卡里）。
+      */}
+      {!loading && loadError ? (
+        <Alert variant='destructive' data-testid='mode-list-error'>
+          <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      {/* ────────────────────────── 三、这一档给了谁 ────────────────────────── */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('Who holds the selected mode')}</CardTitle>
-          <CardDescription>
-            {selectedMode
-              ? `${selectedMode.label} · ${selectedVisibility}`
-              : t('Pick a mode above.')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className='flex flex-col gap-2'>
-          {currentByModeError ? (
-            <Alert variant='destructive' data-testid='mode-holders-error'>
-              <AlertDescription>{currentByModeError}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {/*
-            ⚠★ 读不到时说读不到，**不画成"还没有人"**：那个空名单是一个结论
-            （"这一档没人有权限"），把它当成一次读取失败的表现会让运营照着它
-            去重复授权。与上面 `refreshUser` 那一条同源。
-          */}
-          {!currentByModeError && !currentByMode && selectedModeId ? (
-            <Skeleton className='h-8 w-full' />
-          ) : null}
-
-          {showsHolders
-            ? holderRows.map((row) => (
-                <p key={row.id} className='text-sm'>
-                  <span className='font-mono'>{row.userId}</span>
-                  {' · '}
-                  <span className='text-muted-foreground text-xs'>
-                    {entitlementStateLabel(t, entitlementState(row, nowSeconds))}
-                  </span>
-                </p>
-              ))
-            : null}
-
-          {showsHolders && holderRows.length === 0 ? (
-            <p className='text-muted-foreground text-sm' data-testid='mode-no-holders'>
-              {noHoldersLine}
-            </p>
-          ) : null}
-        </CardContent>
-      </Card>
 
           <p className='text-muted-foreground flex items-center gap-1 text-xs'>
             <Layers className='h-3 w-3' />
@@ -771,20 +639,42 @@ export function ModePlazaPage() {
           它是**覆盖层**，不该受内容的滚动与层级影响（放进 `Content` 里也行，
           但那样它会跟着内容一起被滚走 —— 而一个"跟着滚"的弹窗在长列表上是看得见的坏）。
         */}
-        <ModeMetaDialog
+        <ModeEditDialog
           /* ★ `key` = 换一档就换一个实例（草稿跟着重新初始化，见那个组件的说明） */
           key={editingId || 'none'}
           mode={buckets.usable.find((row) => row.id === editingId) || null}
           open={!!editingId}
-          saving={savingMeta}
-          error={metaError}
           onOpenChange={(next) => {
-            if (!next) {
-              setEditingId('')
-              setMetaError('')
-            }
+            if (!next) setEditingId('')
           }}
-          onSubmit={(patch) => void saveMeta(patch)}
+          /* ★★ 存完**重读列表**：服务端那份才是权威（它会把可见性 trim、把人数读回来） */
+          onSaved={() => void loadAll()}
+        />
+
+        {/*
+          ★★ 「谁有这一档的权限」那个弹窗（用户 2026-…）：
+          它由每一行上那一颗按钮打开，而**名单是它自己读的** ——
+          页面不再为了"选中那一档"去预先读一份名单（那正是它取代掉的那张卡）。
+        */}
+        <ModeHoldersDialog
+          mode={holdersMode}
+          open={!!holdersId}
+          onOpenChange={(next) => {
+            if (!next) setHoldersId('')
+          }}
+          onGrantedCount={(modeId, count) =>
+            setGrantedCounts((prev) => ({ ...prev, [modeId]: count }))
+          }
+        />
+
+        {/*
+          ★★ 「添加模式」那个弹窗（用户 2026-…）：四格输入 + 一颗「AI 一键生成」。
+          ⚠ 生成成功之后**重读列表** —— 新那一档就在磁盘上了，界面得跟着出现它。
+        */}
+        <ModeCreateDialog
+          open={creating}
+          onOpenChange={setCreating}
+          onCreated={() => void loadAll()}
         />
       </SectionPageLayout.Content>
     </SectionPageLayout>
@@ -812,24 +702,30 @@ export function ModePlazaPage() {
 function ModeRow({
   t,
   row,
-  selected,
+  granted,
   hasUserIdText,
   state,
   busy,
   disabled,
-  onSelect,
   onEdit,
+  onViewHolders,
   onToggle,
 }: {
   t: TFunction
   row: ModeView
-  selected: boolean
+  /**
+   * ★ 这一档现在几个人有权限。
+   *
+   * ⚠ 它与 `row.granted` **不是同一份**：打开过名单弹窗之后，弹窗读回来的那个数
+   * 比列表里那份新（列表是页面加载时读的）。所以这里接的是"手上最新的那个数"。
+   */
+  granted: number
   hasUserIdText: boolean
   state: 'unknown' | 'open' | 'closed'
   busy: boolean
   disabled: boolean
-  onSelect: () => void
   onEdit: () => void
+  onViewHolders: () => void
   onToggle: (open: boolean) => void
 }) {
   const open = state === 'open'
@@ -842,99 +738,179 @@ function ModeRow({
     ? t('Cancel access for {{mode}}', { mode: row.label })
     : t('Open {{mode}} for this account', { mode: row.label })
 
+  /*
+   * ★★ 这一行**画成什么颜色**（用户 2026-…）：
+   *
+   * > "输入了ID之后，已开通和未开通的背景颜色换一下吧，未开通和没有输入ID的颜色
+   * >  是一样的，保持现在这样就行，已开通的弄个深色主题，是不是就更好了"
+   *
+   * 于是三支，而只有一支有颜色：
+   *
+   *	没填 ID / 未开通  → ★ **一个字节都不改**（用户点名要"保持现在这样"）
+   *	已开通            → ★ 反色（`bg-foreground text-background`）
+   *	状态读不到        → 反色（它与"已开通"是**同一句"这个人现在能用了"**，
+   *	                    而这一屏的纪律是"未知不许画成没有"——见 `accountModeState`）
+   *
+   * ⚠★ 为什么是 `bg-foreground text-background` 而不是写死的深灰：
+   * 这个站有**一整套主题变量 + 十个预设**（`theme-presets.css`），还各有暗色一版。
+   * 写死 `bg-slate-800 text-white` 在暗色主题下就是**深色压深色**（那一行会糊掉）。
+   * `bg-foreground text-background` 是仓库里现成的反色写法（`public-header.tsx`
+   * 的按钮、`tooltip.tsx` 的气泡），亮色下正是"深色卡片"，
+   * 而暗色下自动反过来 —— 十套预设里它都是**反色**，读得清。
+   */
+  const tinted = open || state === 'unknown'
+  const rowTone = tinted ? `border-transparent bg-foreground text-background` : ''
+
   return (
     <div
       data-testid={`mode-grant-${row.id}`}
       data-state={hasUserIdText ? state : 'editing'}
-      className={`flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 ${
-        selected && !hasUserIdText ? 'border-primary bg-accent/40' : ''
-      }`}
+      /* ★ 颜色也放进 `data-*`：测试与排查时不用去猜 class 拼出来的结果 */
+      data-tone={tinted ? 'inverted' : 'plain'}
+      className={`flex items-center justify-between gap-2 rounded-md border px-2.5 py-1.5 ${rowTone}`}
     >
-      {/*
-        ⚠ 空着 ID 时这一行**可点**（点它就选中，下面"这一档给了谁"跟着它走）；
-        填了 ID 之后它是**纯文字** —— 那时运营要的是开通/取消，而不是再选一次。
-      */}
-      {hasUserIdText ? (
-        <span className='flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1'>
-          <ModeRowText t={t} row={row} hasUserIdText={hasUserIdText} state={state} />
-        </span>
-      ) : (
-        <button
-          type='button'
-          aria-current={selected ? 'true' : undefined}
-          onClick={onSelect}
-          className='flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1 text-left'
-        >
-          <ModeRowText t={t} row={row} hasUserIdText={hasUserIdText} state={state} />
-        </button>
-      )}
+      <span className='flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1'>
+        <ModeRowText
+          t={t}
+          row={row}
+          granted={granted}
+          hasUserIdText={hasUserIdText}
+          state={state}
+          tinted={tinted}
+        />
+      </span>
 
-      {hasUserIdText ? (
-        <Button
-          variant={open ? 'outline' : 'default'}
-          size='xs'
-          disabled={disabled}
-          aria-label={actionLabel}
-          onClick={() => onToggle(open)}
-        >
-          {busy ? <Loader2 className='mr-1 size-3 animate-spin' /> : null}
-          {open ? t('Cancel access') : t('Open')}
-        </Button>
-      ) : (
-        <Button
-          variant='outline'
-          size='xs'
-          data-testid={`mode-edit-${row.id}`}
-          onClick={onEdit}
-        >
-          <Pencil className='mr-1 size-3' />
-          {t('Edit')}
-        </Button>
-      )}
+      <span className='flex shrink-0 items-center gap-1'>
+        {/*
+          ★★ 空着 ID 时给**两颗**按钮（用户 2026-…）：
+          「查看拥有权限的账号列表」+「编辑」。
+
+          ⚠★ 「查看名单」**只在空着 ID 时出现**：填了 ID 之后右边那两枚是
+          "开通 / 取消开通"（同一个位置只放得下两件事），而那时运营关心的是
+          **这个人**的权限，不是"谁还有这一档"。
+        */}
+        {hasUserIdText ? null : (
+          <Button
+            variant='outline'
+            size='xs'
+            data-testid={`mode-holders-${row.id}`}
+            aria-label={t('View the accounts that hold {{mode}}', { mode: row.label })}
+            onClick={onViewHolders}
+          >
+            <Users className='mr-1 size-3' />
+            {t('Accounts')}
+          </Button>
+        )}
+
+        {hasUserIdText ? (
+          <Button
+            variant={open ? 'outline' : 'default'}
+            size='xs'
+            disabled={disabled}
+            aria-label={actionLabel}
+            /* ★ 屏幕阅读器也该知道"处在哪一边"（视觉上那一行已经反色了） */
+            aria-pressed={open}
+            onClick={() => onToggle(open)}
+          >
+            {busy ? <Loader2 className='mr-1 size-3 animate-spin' /> : null}
+            {open ? t('Cancel access') : t('Open')}
+          </Button>
+        ) : (
+          <Button
+            variant='outline'
+            size='xs'
+            data-testid={`mode-edit-${row.id}`}
+            onClick={onEdit}
+          >
+            <Pencil className='mr-1 size-3' />
+            {t('Edit')}
+          </Button>
+        )}
+      </span>
     </div>
   )
 }
 
 /**
- * 那一行里的字（两副面孔共用）：名字 + id + 可见性 + 状态。
+ * 那一行里的字：名字 + id + 媒介 + 可见性 + （状态 / 给了几个账号）。
  *
- * ⚠ 抽出来是因为两副面孔（可点的 button / 纯文字的 span）**必须长得一模一样** ——
+ * ⚠ 抽出来是因为两副面孔（空 ID / 填了 ID）**必须长得一模一样** ——
  * 各写一份的代价是"填了 ID 之后那一行悄悄变了个样"，而运营会以为换了一块东西。
  */
 function ModeRowText({
   t,
   row,
+  granted,
   hasUserIdText,
   state,
+  tinted,
 }: {
   t: TFunction
   row: ModeView
+  granted: number
   hasUserIdText: boolean
   state: 'unknown' | 'open' | 'closed'
+  /** ★ 这一行是反色的（已开通 / 状态读不到）—— 里面那些灰字与徽章要跟着换色。 */
+  tinted: boolean
 }) {
   const open = state === 'open'
+  /*
+   * ⚠★ 反色那一行上的**每一处**都要单独给色：
+   * `text-muted-foreground` 是"浅灰"，而它压在深色底上几乎看不见；
+   * `Badge` 的 `outline` / `secondary` 也各自带着自己的底色与边框色。
+   * 少改一处的表现是"那一行上有一个字/一枚签读不出来"，而它**不会报错**。
+   */
+  const muted = tinted ? 'text-background/70' : 'text-muted-foreground'
+  const badgeTone = tinted ? 'border-background/30 text-background' : ''
+  /*
+   * ⚠ `no-nested-ternary` 在本仓库是开的 —— 所以可见性那一枚签的 variant
+   * 用一个**提前返回**的小函数算（串两层三元读着像谜题）。
+   */
+  const visibilityVariant = visibilityBadgeVariant(row, tinted)
   return (
     <>
       <span className='font-medium'>{row.label}</span>
-      <span className='text-muted-foreground font-mono text-xs'>{row.id}</span>
-      <Badge variant='outline'>{row.medium}</Badge>
-      <Badge variant={isPublicMode(row) ? 'default' : 'secondary'}>
+      <span className={`font-mono text-xs ${muted}`}>{row.id}</span>
+      <Badge variant='outline' className={badgeTone}>
+        {row.medium}
+      </Badge>
+      <Badge variant={visibilityVariant} className={badgeTone}>
         {modeVisibilityLabel(t, row.visibility)}
       </Badge>
       {hasUserIdText ? (
         <Badge
-          variant={open ? 'default' : 'secondary'}
+          variant={tinted ? 'outline' : 'secondary'}
           data-testid={`mode-state-${row.id}`}
-          className='gap-1'
+          className={`gap-1 ${badgeTone}`}
         >
           {open ? <ShieldCheck className='size-3' /> : <ShieldOff className='size-3' />}
           {accountModeStateLabel(t, state)}
         </Badge>
       ) : (
-        <span className='text-muted-foreground text-xs'>{grantedLabel(t, row)}</span>
+        <span className={`text-xs ${muted}`} data-testid={`mode-granted-${row.id}`}>
+          {grantedLabel(t, { visibility: row.visibility, granted })}
+        </span>
       )}
     </>
   )
+}
+
+/**
+ * 可见性那一枚签用哪个 variant。
+ *
+ * ⚠ 单独一个函数是因为 `no-nested-ternary` 在本仓库是开的，而这里的判据是两层
+ * （先看这一行反不反色，再看这一档是不是公共的）—— 提前返回比串三元好读。
+ *
+ * ⚠★ 反色那一行上它必须是 `outline`：`default` 是 `bg-primary`（一块彩色底），
+ * 压在深色底上会变成"两块颜色打架"，而 `outline` 只要把边框与字调成背景色就统一了。
+ */
+function visibilityBadgeVariant(
+  row: ModeView,
+  tinted: boolean
+): 'default' | 'secondary' | 'outline' {
+  if (tinted) return 'outline'
+  if (isPublicMode(row)) return 'default'
+  return 'secondary'
 }
 
 /**
