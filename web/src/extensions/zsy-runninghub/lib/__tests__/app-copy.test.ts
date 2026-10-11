@@ -34,6 +34,7 @@ function sourceApp(overrides: Partial<AppView> = {}): AppView {
     coverUrl: 'https://files.rh.local/cover.png',
     published: true,
     adminOnly: false,
+    sort: 7,
     paramSchema: [
       {
         nodeId: '642',

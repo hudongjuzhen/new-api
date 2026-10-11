@@ -1632,6 +1632,7 @@
     "Download file": "下載檔案",
     "Draft": "草稿",
     "Drag {{group}} to reorder": "拖曳 {{group}} 以重新排序",
+    "Drag to reorder": "拖曳排序",
     "Draw": "繪圖",
     "Drawing": "繪圖",
     "Drawing logs": "繪製日誌",
@@ -1650,6 +1651,7 @@
     "Duration Unit": "有效期單位",
     "Duration Value": "有效期數值",
     "Dynamic": "動態",
+    "Dynamic Billing": "動態計費",
     "Dynamic Pricing": "動態收費",
     "e.g. ¥ or HK$": "例如，¥ 或 HK$",
     "e.g. 401, 403, 429, 500-599": "例如 401、403、429、500-599",
@@ -2740,6 +2742,7 @@
     "Language Preferences": "語言偏好",
     "Language preferences sync across your signed-in devices and affect API error messages.": "語言偏好會同步到您登入的所有設備，並影響 API 錯誤訊息語言。",
     "Language tag is too long (max 16 characters)": "語言標籤過長（最多 16 字元）",
+    "Larger values are shown first": "序號越大越靠前",
     "Larger values rank higher in the model square; same values ordered by ID descending.": "數值越大在模型廣場中越靠前；相同時按 ID 倒序排列。",
     "Last 24h usage": "近 24 小時消耗",
     "Last 30 days uptime": "近 30 天可用率",
@@ -4866,6 +4869,7 @@
     "Sort Order": "排序",
     "Sort order is out of range": "排序值超出範圍",
     "Sort order must be a whole number": "排序值必須是整數",
+    "Sort order updated": "排序已更新",
     "Sort updated successfully": "排序更新成功",
     "Source": "來源",
     "Source Endpoint": "來源端點",
@@ -6016,12 +6020,5 @@
     "Zhipu": "智譜",
     "Zhipu V4": "智譜 V4",
     "Zoom": "縮放"
-  },
-  "Dynamic Billing": "Dynamic Billing",
-  "Per-Second Billing": "Per-Second Billing",
-  "Quota Per Second": "Quota Per Second",
-  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.",
-  "Billing API Key": "Billing API Key",
-  "Select an API key to bill this run": "Select an API key to bill this run",
-  "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one.": "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one."
+  }
 }

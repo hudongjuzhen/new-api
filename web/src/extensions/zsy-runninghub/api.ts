@@ -42,6 +42,11 @@ export interface AppView {
   coverUrl: string
   published: boolean
   adminOnly: boolean
+  /**
+   * Display position the admin arranges by dragging rows on /rh-apps. A larger
+   * value is shown earlier: both lists order by `sort desc, id desc`.
+   */
+  sort: number
   paramSchema: SchemaParam[]
   perCallBilling: boolean
   fixedQuotaPerCall: number
@@ -178,6 +183,30 @@ export async function updateApp(id: number, dto: AppCreateDTO) {
 
 export async function deleteApp(id: number) {
   await api.delete(`/dashboard/zsy/rh/apps/${id}`)
+}
+
+/**
+ * Persist a drag-and-drop reorder of the app list.
+ *
+ * `ids` lists the apps the admin rearranged, front first — it carries the rows
+ * the page showed, not the whole table: the backend rewrites exactly the
+ * positions those apps already occupied, so a drag inside a filtered or
+ * paginated view never disturbs the apps it cannot see.
+ *
+ * Returns how many rows actually moved. Business errors (success:false) are
+ * surfaced to the caller instead of the global interceptor so the failed
+ * reorder rolls the list back with a single message.
+ */
+export async function reorderApps(ids: number[]): Promise<number> {
+  const res = await api.post<{
+    success: boolean
+    message?: string
+    data?: { updated: number }
+  }>('/dashboard/zsy/rh/apps/reorder', { ids }, { skipBusinessError: true })
+  if (!res.data.success) {
+    throw new Error(res.data.message || 'Failed to save the new order')
+  }
+  return res.data.data?.updated ?? 0
 }
 
 // ---------------------------------------------------------------------------

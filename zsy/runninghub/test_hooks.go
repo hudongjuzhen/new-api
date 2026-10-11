@@ -27,6 +27,9 @@ func TestHookDeleteApp(c *gin.Context) { deleteApp(c) }
 // TestHookListApps exposes listApps for tests.
 func TestHookListApps(c *gin.Context) { listApps(c) }
 
+// TestHookReorderApps exposes the drag-order endpoint for tests.
+func TestHookReorderApps(c *gin.Context) { reorderApps(c) }
+
 // TestHookSyncApps exposes syncAppsFromChannel for tests.
 func TestHookSyncApps(c *gin.Context) { syncAppsFromChannel(c) }
 

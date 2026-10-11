@@ -47,6 +47,9 @@ func mountRoutes(router *gin.Engine) {
 			apps.POST("", createApp)
 			apps.PUT("/:id", updateApp)
 			apps.DELETE("/:id", deleteApp)
+			// Display order (drag-and-drop on /rh-apps). Sits beside
+			// /parse-curl, i.e. a literal segment under /apps, never a ":id".
+			apps.POST("/reorder", reorderApps)
 			apps.POST("/parse-curl", parseCurlEndpoint)
 			apps.POST("/fetch-template", fetchAppTemplate)
 			apps.POST("/sync-from-channel", syncAppsFromChannel)

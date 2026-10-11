@@ -163,6 +163,10 @@ func normalizeAudioConfig(config *dto.AudioGenerationConfig) *dto.AudioGeneratio
 //
 // 上游要求音频与图片参考不能混用，且每条只设置一个字段。把非法组合发上去只会换来
 // 400，所以这里主动收敛：图片参考优先（它是更严格的单条模式）。
+//
+// 音频那一类有**三种指名方式**（speaker / audio_url / audio_data，上游文档写明三者
+// 互斥、只传其中一个）。同一条里混着写时以 speaker 为准——它是最精确的那一个
+// （直接指名音色，不必再传一段样本），与客户端的取舍一致。
 func normalizeReferences(references []dto.AudioGenerationReference) []dto.AudioGenerationReference {
 	if len(references) == 0 {
 		return nil
@@ -170,6 +174,7 @@ func normalizeReferences(references []dto.AudioGenerationReference) []dto.AudioG
 	var audio []dto.AudioGenerationReference
 	var image *dto.AudioGenerationReference
 	for _, reference := range references {
+		speaker := strings.TrimSpace(reference.Speaker)
 		audioURL := strings.TrimSpace(reference.AudioURL)
 		audioData := strings.TrimSpace(reference.AudioData)
 		imageURL := strings.TrimSpace(reference.ImageURL)
@@ -182,10 +187,15 @@ func normalizeReferences(references []dto.AudioGenerationReference) []dto.AudioG
 			}
 			continue
 		}
-		if audioURL == "" && audioData == "" {
+		if speaker == "" && audioURL == "" && audioData == "" {
 			continue
 		}
 		if len(audio) >= MaxAudioReferences {
+			continue
+		}
+		// 三格互斥：有音色 ID 就只发音色 ID。
+		if speaker != "" {
+			audio = append(audio, dto.AudioGenerationReference{Speaker: speaker})
 			continue
 		}
 		audio = append(audio, dto.AudioGenerationReference{AudioURL: audioURL, AudioData: audioData})

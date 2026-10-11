@@ -71,6 +71,15 @@ type App struct {
 	Published   bool    `gorm:"index"                                     json:"published"`
 	AdminOnly   bool    `gorm:"index"                                     json:"adminOnly"`
 
+	// Sort is the display position the admin arranges by dragging rows on
+	// /rh-apps: a LARGER value shows earlier, and both the admin list and the
+	// public app center order by `sort DESC, id DESC`. Rows written before this
+	// column existed carry 0, which makes that order identical to the previous
+	// `id DESC` default; a newly created app takes max(sort)+1, so it still
+	// opens at the top of the list. See AppReorder for how dragging renumbers
+	// the table.
+	Sort int `gorm:"index;default:0;not null" json:"sort"`
+
 	// Optional category reference for grouping apps in the admin list and the
 	// app center. Soft-deleted categories null this column out (FK-less
 	// integer reference by design — see AppCategory).

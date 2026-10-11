@@ -60,10 +60,10 @@ type AppCatalogCategory struct {
 	Apps      []*AppView `json:"apps"`
 }
 
-// AppCatalogGet assembles the catalog for one query. Apps are ordered by name
-// inside their category so the response is stable across calls; rows whose
-// category row is missing (soft-deleted, or never set) land in the
-// uncategorized group.
+// AppCatalogGet assembles the catalog for one query. Apps keep the admin's
+// display order (App.Sort) inside their category, so the response is stable
+// across calls; rows whose category row is missing (soft-deleted, or never set)
+// land in the uncategorized group.
 func AppCatalogGet(q AppCatalogQuery) (*AppCatalogResponse, error) {
 	if db() == nil {
 		return nil, fmt.Errorf("database is not initialised")
@@ -93,8 +93,9 @@ func AppCatalogGet(q AppCatalogQuery) (*AppCatalogResponse, error) {
 	return buildAppCatalog(views, categories, time.Now().Unix()), nil
 }
 
-// catalogAppRows loads every app the query matches, name-ordered so each
-// category's apps come back in a stable order.
+// catalogAppRows loads every app the query matches, in the admin's display
+// order (see App.Sort) so the catalog — and therefore the app center built from
+// it — lists apps in the sequence arranged on /rh-apps.
 func catalogAppRows(q AppCatalogQuery) ([]App, error) {
 	base := db().Model(&App{}).
 		Where("published = ? AND admin_only = ?", true, false)
@@ -109,7 +110,7 @@ func catalogAppRows(q AppCatalogQuery) ([]App, error) {
 	}
 
 	var rows []App
-	if err := base.Order("name asc, id asc").Find(&rows).Error; err != nil {
+	if err := base.Order("sort desc, id desc").Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("runninghub app catalog: %w", err)
 	}
 	return rows, nil

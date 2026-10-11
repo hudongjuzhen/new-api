@@ -173,6 +173,58 @@ func TestConvertClampsRateKnobs(t *testing.T) {
 	assert.Equal(t, MaxPitchRate, *payload.AudioConfig.PitchRate)
 }
 
+// TestConvertKeepsSpeakerReference pins the "音色 ID" reference.
+//
+// 上游文档写明 speaker / audio_data / audio_url 三格互斥，而 speaker 收的是
+// 豆包语音合成 2.0（或声音复刻）的音色 ID —— 客户端勾了参考音色时发的就是它。
+//
+// 这个字段曾经整格漏掉，后果是**静默的**：encoding/json 忽略认不出的键，
+// 于是 {"speaker":"…"} 解出来是一条四字段全空的条目，再被当成空条目丢掉，
+// 上游收到"没有参考"就用默认嗓子出声 —— 回包 200、照常计费，谁都看不出错。
+// 所以这里既钉住"留着"，也钉住"真的出现在发出去的那个体里"。
+func TestConvertKeepsSpeakerReference(t *testing.T) {
+	payload := convertForTest(t, dto.AudioGenerationRequest{
+		TextPrompt: "hello",
+		References: []dto.AudioGenerationReference{
+			{Speaker: "  zh_male_tiancaitongsheng_uranus_bigtts  "},
+		},
+	})
+
+	require.Len(t, payload.References, 1, "音色 ID 那一格被丢掉了（上游会用默认嗓子）")
+	assert.Equal(t, "zh_male_tiancaitongsheng_uranus_bigtts", payload.References[0].Speaker)
+
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"references"`)
+	assert.Contains(t, string(body), `"speaker":"zh_male_tiancaitongsheng_uranus_bigtts"`)
+
+	// 三格互斥：同一条里既写了音色 ID 又写了参考音频时，发的是音色 ID。
+	payload = convertForTest(t, dto.AudioGenerationRequest{
+		TextPrompt: "hello",
+		References: []dto.AudioGenerationReference{
+			{Speaker: "vt_a", AudioData: "QUJD"},
+		},
+	})
+	require.Len(t, payload.References, 1)
+	assert.Equal(t, "vt_a", payload.References[0].Speaker)
+	assert.Empty(t, payload.References[0].AudioData, "音色 ID 与参考音频不许同时发")
+
+	// 音色 ID 与参考音频一样占"最多 3 条"的名额。
+	payload = convertForTest(t, dto.AudioGenerationRequest{
+		TextPrompt: "hello",
+		References: []dto.AudioGenerationReference{
+			{Speaker: "vt_1"},
+			{Speaker: "vt_2"},
+			{AudioURL: "https://cdn.example.com/3.mp3"},
+			{Speaker: "vt_4"},
+		},
+	})
+	require.Len(t, payload.References, MaxAudioReferences)
+	assert.Equal(t, "vt_1", payload.References[0].Speaker)
+	assert.Equal(t, "vt_2", payload.References[1].Speaker)
+	assert.Equal(t, "https://cdn.example.com/3.mp3", payload.References[2].AudioURL)
+}
+
 // TestConvertSeparatesAudioAndImageReferences pins the upstream mutual
 // exclusion: a mixed list is rejected upstream, so the stricter image mode wins.
 func TestConvertSeparatesAudioAndImageReferences(t *testing.T) {

@@ -1632,6 +1632,7 @@
     "Download file": "下载文件",
     "Draft": "草稿",
     "Drag {{group}} to reorder": "拖动 {{group}} 以重新排序",
+    "Drag to reorder": "拖拽排序",
     "Draw": "绘图",
     "Drawing": "绘图",
     "Drawing logs": "绘制日志",
@@ -1650,6 +1651,7 @@
     "Duration Unit": "有效期单位",
     "Duration Value": "有效期数值",
     "Dynamic": "动态",
+    "Dynamic Billing": "动态计费",
     "Dynamic Pricing": "动态计费",
     "e.g. ¥ or HK$": "例如，¥ 或 HK$",
     "e.g. 401, 403, 429, 500-599": "例如 401、403、429、500-599",
@@ -2740,6 +2742,7 @@
     "Language Preferences": "语言偏好",
     "Language preferences sync across your signed-in devices and affect API error messages.": "语言偏好会同步到您登录的所有设备，并影响 API 错误消息语言。",
     "Language tag is too long (max 16 characters)": "语言标签过长（最多 16 字符）",
+    "Larger values are shown first": "序号越大越靠前",
     "Larger values rank higher in the model square; same values ordered by ID descending.": "数值越大在模型广场中越靠前；相同时按 ID 倒序排列。",
     "Last 24h usage": "近 24 小时消耗",
     "Last 30 days uptime": "近 30 天可用率",
@@ -4866,6 +4869,7 @@
     "Sort Order": "排序",
     "Sort order is out of range": "排序值超出范围",
     "Sort order must be a whole number": "排序值必须是整数",
+    "Sort order updated": "排序已更新",
     "Sort updated successfully": "排序更新成功",
     "Source": "来源",
     "Source Endpoint": "来源端点",
@@ -6016,12 +6020,5 @@
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放"
-  },
-  "Dynamic Billing": "动态计费",
-  "Per-Second Billing": "按秒计费",
-  "Quota Per Second": "每秒额度",
-  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "按秒计费按 seconds/duration 参数的值扣费；按次计费每次执行扣取固定额度。",
-  "Billing API Key": "计费 API Key",
-  "Select an API key to bill this run": "选择用于本次计费的 API Key",
-  "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one.": "本次运行将使用所选 API Key 计费。请选择有额度的已启用 Key，或使用无限额度 Key。"
+  }
 }

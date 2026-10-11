@@ -23,7 +23,7 @@ func parseListQuery(c *gin.Context) AppListQuery {
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	kind := strings.TrimSpace(c.Query("kind"))
 	keyword := strings.TrimSpace(c.Query("keyword"))
-	sortBy := strings.TrimSpace(c.DefaultQuery("sort_by", "id"))
+	sortBy := strings.TrimSpace(c.DefaultQuery("sort_by", "sort"))
 	sortOrder := strings.TrimSpace(c.DefaultQuery("sort_order", "desc"))
 
 	q := AppListQuery{
@@ -182,6 +182,31 @@ func deleteApp(c *gin.Context) {
 		"name": name,
 	})
 	common.ApiSuccess(c, map[string]any{"deleted": true, "name": name})
+}
+
+// reorderApps (POST /dashboard/zsy/rh/apps/reorder) — persist the drag order.
+//
+// The body carries the apps the admin rearranged, front first (see AppReorder
+// for the slot semantics). The response reports how many rows actually moved,
+// so a no-op drag is distinguishable from one that landed.
+func reorderApps(c *gin.Context) {
+	var payload AppReorderRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		common.ApiError(c, fmt.Errorf("请求体错误: %w", err))
+		return
+	}
+	changed, err := AppReorder(payload.IDs)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	// The id list itself is not audited: it is as long as the list the admin
+	// sees, and the count already records what the request did.
+	recordManageAudit(c, "rh_app.reorder", map[string]any{
+		"requested": len(payload.IDs),
+		"changed":   changed,
+	})
+	common.ApiSuccess(c, map[string]any{"updated": changed})
 }
 
 // =========================================================================

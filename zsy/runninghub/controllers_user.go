@@ -62,8 +62,10 @@ func listPublicApps(c *gin.Context) {
 	adminOnly := false
 	sortBy := strings.ToLower(strings.TrimSpace(c.Query("sort_by")))
 	sortOrder := strings.ToLower(strings.TrimSpace(c.Query("sort_order")))
+	// Default to the order the admin arranged by dragging rows on /rh-apps, so
+	// the app center shows the same sequence (see AppSearch / AppReorder).
 	if sortBy == "" {
-		sortBy = "id"
+		sortBy = "sort"
 	}
 	if sortOrder == "" {
 		sortOrder = "desc"

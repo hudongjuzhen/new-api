@@ -1632,6 +1632,7 @@
     "Download file": "Télécharger le fichier",
     "Draft": "Brouillon",
     "Drag {{group}} to reorder": "Faites glisser {{group}} pour réorganiser",
+    "Drag to reorder": "Glisser pour réordonner",
     "Draw": "Dessin",
     "Drawing": "Dessin",
     "Drawing logs": "Journaux de dessin",
@@ -1650,6 +1651,7 @@
     "Duration Unit": "Unité de durée",
     "Duration Value": "Valeur de durée",
     "Dynamic": "Dynamique",
+    "Dynamic Billing": "Facturation dynamique",
     "Dynamic Pricing": "Tarification dynamique",
     "e.g. ¥ or HK$": "par ex. ¥ ou HK$",
     "e.g. 401, 403, 429, 500-599": "ex. 401, 403, 429, 500-599",
@@ -2740,6 +2742,7 @@
     "Language Preferences": "Préférences de langue",
     "Language preferences sync across your signed-in devices and affect API error messages.": "Les préférences de langue se synchronisent sur vos appareils connectés et affectent les messages d'erreur de l'API.",
     "Language tag is too long (max 16 characters)": "Code de langue trop long (16 caractères maximum)",
+    "Larger values are shown first": "Les valeurs les plus élevées apparaissent en premier",
     "Larger values rank higher in the model square; same values ordered by ID descending.": "Les valeurs plus élevées apparaissent en premier dans la place des modèles ; à valeur égale, tri par identifiant décroissant.",
     "Last 24h usage": "Utilisation 24h",
     "Last 30 days uptime": "Disponibilité 30 derniers jours",
@@ -4866,6 +4869,7 @@
     "Sort Order": "Ordre de tri",
     "Sort order is out of range": "L'ordre de tri est hors limites",
     "Sort order must be a whole number": "L'ordre de tri doit être un nombre entier",
+    "Sort order updated": "Ordre mis à jour",
     "Sort updated successfully": "Tri mis à jour",
     "Source": "Source",
     "Source Endpoint": "Point source",
@@ -6016,12 +6020,5 @@
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom"
-  },
-  "Dynamic Billing": "Dynamic Billing",
-  "Per-Second Billing": "Per-Second Billing",
-  "Quota Per Second": "Quota Per Second",
-  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.",
-  "Billing API Key": "Billing API Key",
-  "Select an API key to bill this run": "Select an API key to bill this run",
-  "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one.": "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one."
+  }
 }

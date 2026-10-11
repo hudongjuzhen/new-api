@@ -1632,6 +1632,7 @@
     "Download file": "ファイルをダウンロード",
     "Draft": "下書き",
     "Drag {{group}} to reorder": "{{group}} をドラッグして並べ替え",
+    "Drag to reorder": "ドラッグして並べ替え",
     "Draw": "描画",
     "Drawing": "画像生成",
     "Drawing logs": "描画ログ",
@@ -1650,6 +1651,7 @@
     "Duration Unit": "期間単位",
     "Duration Value": "期間値",
     "Dynamic": "ダイナミック",
+    "Dynamic Billing": "ダイナミック課金",
     "Dynamic Pricing": "ダイナミック価格設定",
     "e.g. ¥ or HK$": "例: ¥ または HK$",
     "e.g. 401, 403, 429, 500-599": "例：401, 403, 429, 500-599",
@@ -2740,6 +2742,7 @@
     "Language Preferences": "言語設定",
     "Language preferences sync across your signed-in devices and affect API error messages.": "言語設定はログイン中のすべてのデバイスで同期され、API のエラーメッセージ言語にも反映されます。",
     "Language tag is too long (max 16 characters)": "言語タグが長すぎます（最大 16 文字）",
+    "Larger values are shown first": "値が大きいほど前に表示されます",
     "Larger values rank higher in the model square; same values ordered by ID descending.": "値が大きいほどモデル広場で上位に表示されます。同じ値の場合は ID の降順で並びます。",
     "Last 24h usage": "直近24時間の使用量",
     "Last 30 days uptime": "直近 30 日の稼働率",
@@ -4866,6 +4869,7 @@
     "Sort Order": "並び順",
     "Sort order is out of range": "並び順が範囲外です",
     "Sort order must be a whole number": "並び順は整数で入力してください",
+    "Sort order updated": "並び順を更新しました",
     "Sort updated successfully": "並べ替えを更新しました",
     "Source": "ソース",
     "Source Endpoint": "ソースエンドポイント",
@@ -6016,12 +6020,5 @@
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム"
-  },
-  "Dynamic Billing": "Dynamic Billing",
-  "Per-Second Billing": "Per-Second Billing",
-  "Quota Per Second": "Quota Per Second",
-  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.",
-  "Billing API Key": "Billing API Key",
-  "Select an API key to bill this run": "Select an API key to bill this run",
-  "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one.": "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one."
+  }
 }

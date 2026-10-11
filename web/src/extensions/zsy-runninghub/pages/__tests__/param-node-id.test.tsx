@@ -71,6 +71,7 @@ const storedApp: AppView = {
   coverUrl: '',
   published: true,
   adminOnly: false,
+  sort: 7,
   paramSchema: [
     {
       nodeId: '122',

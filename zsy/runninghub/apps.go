@@ -29,7 +29,7 @@ type AppListQuery struct {
 	AdminOnly  *bool  `json:"adminOnly"`
 	Page       int    `json:"page"`
 	PageSize   int    `json:"pageSize"`
-	SortBy     string `json:"sortBy"`    // id | name | createdAt
+	SortBy     string `json:"sortBy"`    // sort | id | name | createdAt
 	SortOrder  string `json:"sortOrder"` // asc | desc
 }
 
@@ -45,20 +45,28 @@ type AppListResult struct {
 	KindCounts map[string]int64 `json:"kindCounts"`
 }
 
+// AppReorderRequest is the body of the drag-order endpoint: the apps the admin
+// moved, front first. See AppReorder for the exact semantics.
+type AppReorderRequest struct {
+	IDs []uint `json:"ids"`
+}
+
 // AppView is the read-side shape of an App, flattening ParamSchema into a
 // slice for the admin UI.
 type AppView struct {
-	ID                 uint                   `json:"id"`
-	CreatedAt          int64                  `json:"createdAt"`
-	UpdatedAt          int64                  `json:"updatedAt"`
-	Name               string                 `json:"name"`
-	Slug               string                 `json:"slug"`
-	Kind               AppKind                `json:"kind"`
-	UpstreamID         string                 `json:"upstreamId"`
-	Description        string                 `json:"description"`
-	CoverURL           string                 `json:"coverUrl"`
-	Published          bool                   `json:"published"`
-	AdminOnly          bool                   `json:"adminOnly"`
+	ID          uint    `json:"id"`
+	CreatedAt   int64   `json:"createdAt"`
+	UpdatedAt   int64   `json:"updatedAt"`
+	Name        string  `json:"name"`
+	Slug        string  `json:"slug"`
+	Kind        AppKind `json:"kind"`
+	UpstreamID  string  `json:"upstreamId"`
+	Description string  `json:"description"`
+	CoverURL    string  `json:"coverUrl"`
+	Published   bool    `json:"published"`
+	AdminOnly   bool    `json:"adminOnly"`
+	// Sort is the drag-arranged display position (larger shows earlier).
+	Sort               int                    `json:"sort"`
 	ParamSchema        []rhparser.SchemaParam `json:"paramSchema"`
 	PerCallBilling     bool                   `json:"perCallBilling"`
 	FixedQuotaPerCall  int64                  `json:"fixedQuotaPerCall"`
@@ -146,26 +154,34 @@ func (q *AppListQuery) normalize() {
 	case "id":
 		q.SortBy = "id"
 	default:
-		q.SortBy = "id"
+		// The drag-arranged position is the default: it is what the admin
+		// arranged on /rh-apps, and a table nobody has reordered yet holds
+		// sort = 0 on every row, which reproduces the previous `id DESC` list.
+		q.SortBy = "sort"
 	}
 }
 
+// orderClauseFor translates the validated SortBy/SortOrder pair into an ORDER
+// BY clause. Every column here is a plain identifier (none of them is a
+// reserved word), so no cross-dialect escaping is required.
 func orderClauseFor(q AppListQuery) string {
-	col := q.SortBy
-	// column whitelist
-	switch col {
-	case "name":
-	case "created_at":
-	case "id":
-	default:
-		col = "id"
-	}
 	dir := "DESC"
 	if q.SortOrder == "asc" {
 		dir = "ASC"
 	}
-	// None of these are reserved words; no cross-DB escaping required.
-	return fmt.Sprintf("%s %s", col, dir)
+	switch q.SortBy {
+	case "name":
+		return "name " + dir
+	case "created_at":
+		return "created_at " + dir
+	case "id":
+		return "id " + dir
+	default:
+		// `id` breaks ties in the same direction. Ties are guaranteed on a
+		// table that predates the sort column (every row is 0), and without
+		// the tie-break the list order would be unspecified there.
+		return fmt.Sprintf("sort %s, id %s", dir, dir)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +319,13 @@ func AppInsert(dto *AppCreateDTO) (*AppView, error) {
 	if err := validateApp(app); err != nil {
 		return nil, err
 	}
+	// A new app opens at the top of the list, which is where the default
+	// `sort DESC, id DESC` order puts a fresh row: one position above the
+	// highest one in use.
+	app.Sort, err = nextAppSort()
+	if err != nil {
+		return nil, err
+	}
 	if err := db().Create(app).Error; err != nil {
 		if isUniqueViolation(err, "name") {
 			return nil, fmt.Errorf("应用名称 %q 已存在", app.Name)
@@ -311,6 +334,116 @@ func AppInsert(dto *AppCreateDTO) (*AppView, error) {
 	}
 	syncAppBillingPrice(nil, app)
 	return appToView(app)
+}
+
+// nextAppSort returns the display position a newly created app takes: one above
+// the current maximum. Deleted rows are excluded (GORM's soft-delete scope), so
+// a long-lived table cannot drift its new apps out of the visible range.
+func nextAppSort() (int, error) {
+	var row struct{ MaxSort int }
+	err := db().Model(&App{}).Select("COALESCE(MAX(sort), 0) AS max_sort").Scan(&row).Error
+	if err != nil {
+		return 0, fmt.Errorf("runninghub app max sort: %w", err)
+	}
+	return row.MaxSort + 1, nil
+}
+
+// appReorderMaxIDs bounds how many positions one reorder request may carry.
+// The endpoint is admin-only, but the id list is caller-supplied and the store
+// walks it, so it is capped like every other caller-controlled quantity.
+const appReorderMaxIDs = 2000
+
+// AppReorder rewrites the display order of the app list. ids lists the apps the
+// admin moved, front first — a client sends the order of the rows it just
+// rearranged, not the whole table.
+//
+// Only the slots those apps already occupied are rewritten, so a reorder sent
+// from a filtered or paginated view rearranges exactly the rows the admin saw
+// and leaves every other app where it was. Positions live in App.Sort, where a
+// larger value shows earlier; the whole table is then renumbered from len(apps)
+// down to 1, so the values stay dense (no drifting apart over months of
+// dragging) and `ORDER BY sort DESC, id DESC` reproduces the submitted order
+// exactly.
+//
+// It returns how many rows actually changed. An unknown id is an error and
+// writes nothing, which is what makes a stale view — another admin deleted an
+// app meanwhile — fail loudly instead of silently reordering different rows
+// than the admin arranged.
+func AppReorder(ids []uint) (int, error) {
+	if len(ids) == 0 {
+		return 0, fmt.Errorf("排序列表不能为空")
+	}
+	if len(ids) > appReorderMaxIDs {
+		return 0, fmt.Errorf("单次排序最多支持 %d 个应用", appReorderMaxIDs)
+	}
+
+	var rows []App
+	if err := db().Select("id", "sort").Order("sort DESC, id DESC").Find(&rows).Error; err != nil {
+		return 0, fmt.Errorf("runninghub apps list for reorder: %w", err)
+	}
+	if len(rows) == 0 {
+		return 0, fmt.Errorf("应用不存在")
+	}
+
+	// current maps every app onto its display slot, so a submitted order can be
+	// validated and folded back into the slots it belongs to.
+	current := make([]uint, len(rows))
+	sortOf := make(map[uint]int, len(rows))
+	slotOf := make(map[uint]int, len(rows))
+	for i := range rows {
+		current[i] = rows[i].ID
+		sortOf[rows[i].ID] = rows[i].Sort
+		slotOf[rows[i].ID] = i
+	}
+
+	// Validate the submitted order before anything is written: a request naming
+	// an app that no longer exists must not half-apply. Duplicates collapse, so
+	// a client repeating an id cannot shift the rows below it.
+	moved := make([]uint, 0, len(ids))
+	seen := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		if _, ok := slotOf[id]; !ok {
+			return 0, fmt.Errorf("应用不存在: %d", id)
+		}
+		seen[id] = true
+		moved = append(moved, id)
+	}
+
+	// Fill the slots the moved apps occupy (ascending) with the submitted
+	// order, leaving every other row in place.
+	reordered := make([]uint, len(current))
+	copy(reordered, current)
+	next := 0
+	for slot, id := range current {
+		if !seen[id] {
+			continue
+		}
+		reordered[slot] = moved[next]
+		next++
+	}
+
+	changed := 0
+	err := db().Transaction(func(tx *gorm.DB) error {
+		for slot, id := range reordered {
+			// The front of the list holds the largest value.
+			value := len(reordered) - slot
+			if sortOf[id] == value {
+				continue
+			}
+			if err := tx.Model(&App{}).Where("id = ?", id).Update("sort", value).Error; err != nil {
+				return fmt.Errorf("update runninghub app sort: %w", err)
+			}
+			changed++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return changed, nil
 }
 
 // AppUpdate applies dto to the existing app at id. Returns ErrAppNotFound
@@ -598,6 +731,7 @@ func appToView(a *App) (*AppView, error) {
 		CoverURL:           a.CoverURL,
 		Published:          a.Published,
 		AdminOnly:          a.AdminOnly,
+		Sort:               a.Sort,
 		ParamSchema:        parserSchema,
 		PerCallBilling:     a.PerCallBilling,
 		FixedQuotaPerCall:  a.FixedQuotaPerCall,

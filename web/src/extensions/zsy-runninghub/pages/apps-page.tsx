@@ -20,8 +20,9 @@ import {
   Loader2,
   X,
   FolderOpen,
+  GripVertical,
 } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { useState, type DragEvent, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -70,18 +71,21 @@ import {
   parseQuotaFromDollars,
   quotaUnitsToEditableAmount,
 } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 import {
   listApps,
   createApp,
   updateApp,
   deleteApp,
+  reorderApps,
   parseCurlRequest,
   listCategories,
   createCategory,
   updateCategory,
   deleteCategory,
   type AppCategory,
+  type AppListResult,
   type CategoryInput,
   type AppView,
   type AppCreateDTO,
@@ -789,78 +793,154 @@ function billingBadge(app: AppView, t: (key: string) => string) {
   return <Badge variant='outline'>{t('Dynamic')}</Badge>
 }
 
-function renderTableBody(
-  isLoading: boolean,
-  data: { items?: AppView[] } | undefined,
-  t: (key: string) => string,
-  onEdit: (app: AppView) => void,
-  onCopy: (app: AppView) => void,
+/** Which side of the hovered row the dragged app would land on. */
+type DropPosition = 'before' | 'after'
+
+/** The list's in-flight drag, owned by the page so the body stays presentational. */
+type RowDragState = {
+  draggedId: number | null
+  dropTargetId: number | null
+  dropPosition: DropPosition
+}
+
+const IDLE_DRAG: RowDragState = {
+  draggedId: null,
+  dropTargetId: null,
+  dropPosition: 'before',
+}
+
+/** Table width the loading/empty rows have to span. */
+const APP_TABLE_COLUMNS = 10
+
+/**
+ * Apps table body. Every row is draggable and reordering is delegated to the
+ * page; the drop side is drawn on the row the app would land next to. The
+ * handle also carries the keyboard equivalent (ArrowUp/ArrowDown), because a
+ * drag is not reachable without a pointer.
+ */
+function AppsTableBody(props: {
+  isLoading: boolean
+  data: AppListResult | undefined
+  drag: RowDragState
+  onEdit: (app: AppView) => void
+  onCopy: (app: AppView) => void
   onDelete: (id: number) => void
-) {
-  if (isLoading) {
+  onDragStart: (event: DragEvent<HTMLTableRowElement>, id: number) => void
+  onDragOver: (event: DragEvent<HTMLTableRowElement>, id: number) => void
+  onDrop: (event: DragEvent<HTMLTableRowElement>, id: number) => void
+  onDragEnd: () => void
+  onMove: (id: number, direction: -1 | 1) => void
+}) {
+  const { t } = useTranslation()
+
+  if (props.isLoading) {
     return (
       <TableRow>
-        <TableCell colSpan={8} className='text-center'>
+        <TableCell colSpan={APP_TABLE_COLUMNS} className='text-center'>
           {t('Loading...')}
         </TableCell>
       </TableRow>
     )
   }
-  if (!data?.items?.length) {
+  const items = props.data?.items ?? []
+  if (items.length === 0) {
     return (
       <TableRow>
-        <TableCell colSpan={8} className='text-center'>
+        <TableCell colSpan={APP_TABLE_COLUMNS} className='text-center'>
           {t('No data')}
         </TableCell>
       </TableRow>
     )
   }
-  return data.items.map((app) => (
-    <TableRow key={app.id}>
-      <TableCell>{app.id}</TableCell>
-      <TableCell className='font-medium'>{app.name}</TableCell>
-      <TableCell>
-        {app.categoryName ? (
-          <Badge variant='outline'>{app.categoryName}</Badge>
-        ) : (
-          <span className='text-muted-foreground/60 text-xs'>-</span>
+
+  return items.map((app) => {
+    const isDragging = props.drag.draggedId === app.id
+    const isDropTarget =
+      props.drag.dropTargetId === app.id && props.drag.draggedId !== app.id
+    return (
+      <TableRow
+        key={app.id}
+        draggable
+        onDragStart={(event) => props.onDragStart(event, app.id)}
+        onDragOver={(event) => props.onDragOver(event, app.id)}
+        onDrop={(event) => props.onDrop(event, app.id)}
+        onDragEnd={props.onDragEnd}
+        className={cn(
+          'transition-opacity',
+          isDragging && 'opacity-50',
+          isDropTarget &&
+            props.drag.dropPosition === 'before' &&
+            'border-t-primary border-t-2',
+          isDropTarget &&
+            props.drag.dropPosition === 'after' &&
+            'border-b-primary border-b-2'
         )}
-      </TableCell>
-      <TableCell>{app.kind}</TableCell>
-      <TableCell className='font-mono text-xs'>{app.upstreamId}</TableCell>
-      <TableCell className='text-xs'>{siteLabel(app.site)}</TableCell>
-      <TableCell>{billingBadge(app, t)}</TableCell>
-      <TableCell className='text-right'>
-        <Button
-          variant='ghost'
-          size='icon-sm'
-          onClick={() => onEdit(app)}
-          title={t('Edit')}
-          aria-label={t('Edit')}
-        >
-          <Pencil className='size-3.5' />
-        </Button>
-        <Button
-          variant='ghost'
-          size='icon-sm'
-          onClick={() => onCopy(app)}
-          title={t('Copy App')}
-          aria-label={t('Copy App')}
-        >
-          <Copy className='size-3.5' />
-        </Button>
-        <Button
-          variant='ghost'
-          size='icon-sm'
-          onClick={() => onDelete(app.id)}
-          title={t('Delete')}
-          aria-label={t('Delete')}
-        >
-          <Trash2 className='size-3.5' />
-        </Button>
-      </TableCell>
-    </TableRow>
-  ))
+      >
+        <TableCell className='w-10 pr-0'>
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon-sm'
+            className='cursor-grab active:cursor-grabbing'
+            title={t('Drag to reorder')}
+            // The label names the app, so a screen reader hears which row the
+            // handle moves instead of the same words on every row.
+            aria-label={t('Drag {{group}} to reorder', { group: app.name })}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+              event.preventDefault()
+              props.onMove(app.id, event.key === 'ArrowUp' ? -1 : 1)
+            }}
+          >
+            <GripVertical className='size-3.5' />
+          </Button>
+        </TableCell>
+        <TableCell>{app.id}</TableCell>
+        <TableCell>{app.sort}</TableCell>
+        <TableCell className='font-medium'>{app.name}</TableCell>
+        <TableCell>
+          {app.categoryName ? (
+            <Badge variant='outline'>{app.categoryName}</Badge>
+          ) : (
+            <span className='text-muted-foreground/60 text-xs'>-</span>
+          )}
+        </TableCell>
+        <TableCell>{app.kind}</TableCell>
+        <TableCell className='font-mono text-xs'>{app.upstreamId}</TableCell>
+        <TableCell className='text-xs'>{siteLabel(app.site)}</TableCell>
+        <TableCell>{billingBadge(app, t)}</TableCell>
+        <TableCell className='text-right'>
+          <Button
+            variant='ghost'
+            size='icon-sm'
+            onClick={() => props.onEdit(app)}
+            title={t('Edit')}
+            aria-label={t('Edit')}
+          >
+            <Pencil className='size-3.5' />
+          </Button>
+          <Button
+            variant='ghost'
+            size='icon-sm'
+            onClick={() => props.onCopy(app)}
+            title={t('Copy App')}
+            aria-label={t('Copy App')}
+          >
+            <Copy className='size-3.5' />
+          </Button>
+          <Button
+            variant='ghost'
+            size='icon-sm'
+            onClick={() => props.onDelete(app.id)}
+            title={t('Delete')}
+            aria-label={t('Delete')}
+          >
+            <Trash2 className='size-3.5' />
+          </Button>
+        </TableCell>
+      </TableRow>
+    )
+  })
 }
 
 export function CategoryManageDialog({
@@ -1045,6 +1125,7 @@ export function RhAppsPage() {
   const [copySource, setCopySource] = useState<AppView | null>(null)
   const [deleteId, setDeleteId] = useState<number | null>(null)
   const [catManageOpen, setCatManageOpen] = useState(false)
+  const [drag, setDrag] = useState<RowDragState>(IDLE_DRAG)
 
   const { data, isLoading } = useQuery({
     queryKey: ['rh-apps'],
@@ -1089,6 +1170,106 @@ export function RhAppsPage() {
       toast.error(String((e as Error)?.message ?? e))
     },
   })
+
+  const reorderMutation = useMutation({
+    mutationFn: (ids: number[]) => reorderApps(ids),
+    onSuccess: () => toast.success(t('Sort order updated')),
+    onError: (e: unknown) => {
+      toast.error(String((e as Error)?.message ?? e))
+    },
+    onSettled: () => {
+      // The server owns the final order — it renumbers every position — so the
+      // list is refetched either way: on success to pick up the new sort values,
+      // on failure to drop the optimistic order again.
+      queryClient.invalidateQueries({ queryKey: ['rh-apps'] })
+    },
+  })
+
+  /**
+   * Show `ids` as the list order right away, then persist it. A drag that ends
+   * where it started changes nothing and is skipped, so the round trip — and its
+   * "updated" toast — belongs to real moves only.
+   */
+  const applyOrder = (ids: number[]) => {
+    if (
+      ids.length === apps.length &&
+      ids.every((id, index) => id === apps[index].id)
+    ) {
+      return
+    }
+    const byId = new Map(apps.map((app) => [app.id, app]))
+    const items: AppView[] = []
+    for (const id of ids) {
+      const app = byId.get(id)
+      if (app) items.push(app)
+    }
+    queryClient.setQueryData<AppListResult>(['rh-apps'], (prev) =>
+      prev ? { ...prev, items } : prev
+    )
+    reorderMutation.mutate(ids)
+  }
+
+  const resetDrag = () => setDrag(IDLE_DRAG)
+
+  const handleDragStart = (
+    event: DragEvent<HTMLTableRowElement>,
+    id: number
+  ) => {
+    setDrag({ draggedId: id, dropTargetId: null, dropPosition: 'before' })
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(id))
+  }
+
+  const handleDragOver = (
+    event: DragEvent<HTMLTableRowElement>,
+    id: number
+  ) => {
+    event.preventDefault()
+    if (drag.draggedId === null || drag.draggedId === id) return
+    // The half of the row the pointer is in decides which side the app lands on.
+    const rect = event.currentTarget.getBoundingClientRect()
+    const dropPosition: DropPosition =
+      event.clientY - rect.top > rect.height / 2 ? 'after' : 'before'
+    setDrag((prev) =>
+      prev.dropTargetId === id && prev.dropPosition === dropPosition
+        ? prev
+        : { ...prev, dropTargetId: id, dropPosition }
+    )
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleDrop = (
+    event: DragEvent<HTMLTableRowElement>,
+    targetId: number
+  ) => {
+    event.preventDefault()
+    const sourceId = drag.draggedId
+    // A drop can land on a row dragover never reported (a fast release), so the
+    // recorded side only counts when it belongs to this row.
+    const position =
+      drag.dropTargetId === targetId ? drag.dropPosition : 'before'
+    resetDrag()
+    if (sourceId === null || sourceId === targetId) return
+    const ids = apps.map((app) => app.id)
+    if (!ids.includes(sourceId) || !ids.includes(targetId)) return
+    const next = ids.filter((id) => id !== sourceId)
+    next.splice(
+      next.indexOf(targetId) + (position === 'after' ? 1 : 0),
+      0,
+      sourceId
+    )
+    applyOrder(next)
+  }
+
+  /** Move one app one position towards the front (up) or the back (down). */
+  const handleMove = (id: number, direction: -1 | 1) => {
+    const ids = apps.map((app) => app.id)
+    const from = ids.indexOf(id)
+    const to = from + direction
+    if (from < 0 || to < 0 || to >= ids.length) return
+    ids.splice(to, 0, ...ids.splice(from, 1))
+    applyOrder(ids)
+  }
 
   const openCreate = () => {
     setEditing(null)
@@ -1155,7 +1336,13 @@ export function RhAppsPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                {/* Drag handle column: the header carries no label, the handle
+                    itself is labelled per row. */}
+                <TableHead className='w-10' />
                 <TableHead>ID</TableHead>
+                <TableHead title={t('Larger values are shown first')}>
+                  {t('Sort')}
+                </TableHead>
                 <TableHead>{t('App Name')}</TableHead>
                 <TableHead>{t('Category')}</TableHead>
                 <TableHead>{t('Kind')}</TableHead>
@@ -1166,14 +1353,19 @@ export function RhAppsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {renderTableBody(
-                isLoading,
-                data,
-                t,
-                openEdit,
-                openCopy,
-                setDeleteId
-              )}
+              <AppsTableBody
+                isLoading={isLoading}
+                data={data}
+                drag={drag}
+                onEdit={openEdit}
+                onCopy={openCopy}
+                onDelete={setDeleteId}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                onDragEnd={resetDrag}
+                onMove={handleMove}
+              />
             </TableBody>
           </Table>
         </SectionPageLayout.Content>

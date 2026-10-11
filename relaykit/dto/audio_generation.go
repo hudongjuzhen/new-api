@@ -30,8 +30,21 @@ type AudioGenerationRequest struct {
 }
 
 // AudioGenerationReference 是一条参考资源。上游要求每个元素只设置其中一个字段，
-// 且音频参考（audio_url / audio_data）与图片参考（image_url / image_data）不能混用。
+// 且音频参考（speaker / audio_url / audio_data）与图片参考（image_url / image_data）
+// 不能混用。
+//
+// Speaker 是「用哪一条音色」——上游文档写明 speaker / audio_data / audio_url
+// 三格互斥、只传其中一个，而 speaker 收的是豆包语音合成 2.0 或声音复刻的音色 ID。
+// 它比传一段参考音频更准（不受"单条 ≤ 30 秒 / ≤ 10 MB"限制），客户端在有音色 ID
+// 时走的就是这一格。
+//
+// ⚠ 这一格曾经漏掉，而漏掉的后果是**静默的**：encoding/json 会忽略认不出的键，
+// 于是 {"speaker":"zh_male_xxx"} 解出来是一条四个字段全空的条目，紧接着被
+// normalizeReferences 当空条目丢掉 —— 上游收到"没有参考"，就用自己的默认嗓子
+// 出声，而回包 200、照常计费，两边都不报错。（客户端那边能看到的就是
+// "勾了参考音色、出来的声音却不是那个人"。）
 type AudioGenerationReference struct {
+	Speaker   string `json:"speaker,omitempty"`
 	AudioURL  string `json:"audio_url,omitempty"`
 	AudioData string `json:"audio_data,omitempty"`
 	ImageURL  string `json:"image_url,omitempty"`

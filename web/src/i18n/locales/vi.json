@@ -1632,6 +1632,7 @@
     "Download file": "Tải tệp xuống",
     "Draft": "Bản nháp",
     "Drag {{group}} to reorder": "Kéo {{group}} để sắp xếp lại",
+    "Drag to reorder": "Kéo để sắp xếp lại",
     "Draw": "Vẽ",
     "Drawing": "Vẽ",
     "Drawing logs": "Nhật ký vẽ",
@@ -1650,6 +1651,7 @@
     "Duration Unit": "Đơn vị thời lượng",
     "Duration Value": "Giá trị thời lượng",
     "Dynamic": "Động",
+    "Dynamic Billing": "Thanh toán động",
     "Dynamic Pricing": "Giá linh hoạt",
     "e.g. ¥ or HK$": "ví dụ ¥ hoặc HK$",
     "e.g. 401, 403, 429, 500-599": "vd. 401, 403, 429, 500-599",
@@ -2740,6 +2742,7 @@
     "Language Preferences": "Tùy chọn ngôn ngữ",
     "Language preferences sync across your signed-in devices and affect API error messages.": "Tùy chọn ngôn ngữ sẽ đồng bộ trên các thiết bị đã đăng nhập và ảnh hưởng đến ngôn ngữ thông báo lỗi API.",
     "Language tag is too long (max 16 characters)": "Thẻ ngôn ngữ quá dài (tối đa 16 ký tự)",
+    "Larger values are shown first": "Giá trị càng lớn càng hiển thị trước",
     "Larger values rank higher in the model square; same values ordered by ID descending.": "Giá trị càng lớn càng đứng trước trong sảnh mô hình; giá trị bằng nhau thì sắp theo ID giảm dần.",
     "Last 24h usage": "Sử dụng 24h qua",
     "Last 30 days uptime": "Uptime 30 ngày qua",
@@ -4866,6 +4869,7 @@
     "Sort Order": "Thứ tự sắp xếp",
     "Sort order is out of range": "Thứ tự sắp xếp ngoài phạm vi",
     "Sort order must be a whole number": "Thứ tự sắp xếp phải là số nguyên",
+    "Sort order updated": "Đã cập nhật thứ tự",
     "Sort updated successfully": "Đã cập nhật thứ hạng",
     "Source": "Nguồn",
     "Source Endpoint": "Điểm nguồn",
@@ -6016,12 +6020,5 @@
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom"
-  },
-  "Dynamic Billing": "Dynamic Billing",
-  "Per-Second Billing": "Per-Second Billing",
-  "Quota Per Second": "Quota Per Second",
-  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.",
-  "Billing API Key": "Billing API Key",
-  "Select an API key to bill this run": "Select an API key to bill this run",
-  "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one.": "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one."
+  }
 }

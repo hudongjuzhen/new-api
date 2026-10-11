@@ -52,7 +52,8 @@ await i18n.use(initReactI18next).init({
       translation: {
         'Per-Character Billing': 'Per-Character Billing',
         'Per-Second Billing': 'Per-Second Billing',
-        'Quota Per Character ({{currency}})': 'Quota Per Character ({{currency}})',
+        'Quota Per Character ({{currency}})':
+          'Quota Per Character ({{currency}})',
         'Quota Per Second ({{currency}})': 'Quota Per Second ({{currency}})',
         'Character Field': 'Character Field',
         'Seconds Field': 'Seconds Field',
@@ -75,6 +76,7 @@ function storedApp(overrides: Partial<AppView> = {}): AppView {
     coverUrl: '',
     published: true,
     adminOnly: false,
+    sort: 7,
     paramSchema: [
       {
         nodeId: '122',
@@ -189,15 +191,9 @@ describe('RunningHub per-character billing mode', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Create App' }))
     await user.type(screen.getByLabelText('App Name'), 'Copy Rewriter')
-    await user.type(
-      screen.getByLabelText('Upstream ID'),
-      '2051268528824700930'
-    )
+    await user.type(screen.getByLabelText('Upstream ID'), '2051268528824700930')
     await chooseBillingMode(user, 'Per-Character Billing')
-    await user.type(
-      screen.getByLabelText('Quota Per Character (USD)'),
-      '0.002'
-    )
+    await user.type(screen.getByLabelText('Quota Per Character (USD)'), '0.002')
     await user.type(screen.getByLabelText('Character Field'), 'len(122)')
     await user.click(screen.getByRole('button', { name: 'Save' }))
 

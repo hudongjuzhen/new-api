@@ -1632,6 +1632,7 @@
     "Download file": "Download file",
     "Draft": "Draft",
     "Drag {{group}} to reorder": "Drag {{group}} to reorder",
+    "Drag to reorder": "Drag to reorder",
     "Draw": "Draw",
     "Drawing": "Drawing",
     "Drawing logs": "Drawing logs",
@@ -1650,6 +1651,7 @@
     "Duration Unit": "Duration Unit",
     "Duration Value": "Duration Value",
     "Dynamic": "Dynamic",
+    "Dynamic Billing": "Dynamic Billing",
     "Dynamic Pricing": "Dynamic Pricing",
     "e.g. ¥ or HK$": "e.g. ¥ or HK$",
     "e.g. 401, 403, 429, 500-599": "e.g. 401, 403, 429, 500-599",
@@ -2740,6 +2742,7 @@
     "Language Preferences": "Language Preferences",
     "Language preferences sync across your signed-in devices and affect API error messages.": "Language preferences sync across your signed-in devices and affect API error messages.",
     "Language tag is too long (max 16 characters)": "Language tag is too long (max 16 characters)",
+    "Larger values are shown first": "Larger values are shown first",
     "Larger values rank higher in the model square; same values ordered by ID descending.": "Larger values rank higher in the model square; same values ordered by ID descending.",
     "Last 24h usage": "Last 24h usage",
     "Last 30 days uptime": "Last 30 days uptime",
@@ -4866,6 +4869,7 @@
     "Sort Order": "Sort Order",
     "Sort order is out of range": "Sort order is out of range",
     "Sort order must be a whole number": "Sort order must be a whole number",
+    "Sort order updated": "Sort order updated",
     "Sort updated successfully": "Sort updated successfully",
     "Source": "Source",
     "Source Endpoint": "Source Endpoint",
@@ -6016,12 +6020,5 @@
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom"
-  },
-  "Dynamic Billing": "Dynamic Billing",
-  "Per-Second Billing": "Per-Second Billing",
-  "Quota Per Second": "Quota Per Second",
-  "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.": "Per-second apps charge by the seconds/duration parameter value; per-call apps charge a flat quota per run.",
-  "Billing API Key": "Billing API Key",
-  "Select an API key to bill this run": "Select an API key to bill this run",
-  "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one.": "This run is charged against the selected API key. Choose an enabled key with quota, or an unlimited one."
+  }
 }
