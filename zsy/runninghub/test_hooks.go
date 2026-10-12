@@ -2,8 +2,10 @@ package runninghub
 
 import (
 	"context"
+	"io"
 
 	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/zsy/runninghub/rhparser"
 	"github.com/gin-gonic/gin"
 )
@@ -115,6 +117,20 @@ func TestHookMarkControllerResponds(c *gin.Context) { c.Set(contextKeyController
 // pass-through convention and the error messages.
 func TestHookResolveUpstreamIDForModel(model string) (string, error) {
 	return resolveUpstreamIDForModel(model)
+}
+
+// TestHookBuildSubmitBody runs the adaptor's request body construction for a
+// raw relay submission: the caller supplies the context values a relay handler
+// would (the parsed task_request, and "rh_app" only on the plugin's own path)
+// and receives the JSON body that would be POSTed upstream. It exists so the
+// app-derived submit fields — instanceType above all — can be pinned without
+// standing up the whole relay controller.
+func TestHookBuildSubmitBody(c *gin.Context, info *relaycommon.RelayInfo) ([]byte, error) {
+	reader, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(reader)
 }
 
 // TestHookValidateRunPayload runs the in-memory validation path used by

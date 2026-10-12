@@ -12,10 +12,11 @@
 curl -s 'https://<你的网关域名>/api/zsy/rh/app-catalog'
 
 # 2) 按参数定义填值提交一次运行（需要凭据，见 §4）
+#    算力实例由应用配置决定（§8.1.1），无需（也不应）在这里传 instanceType
 curl -X POST 'https://<你的网关域名>/api/zsy/rh/apps/42/run' \
   -H 'Authorization: Bearer sk-xxxxxxxx' \
   -H 'Content-Type: application/json' \
-  -d '{"values":{"122.prompt":"一只小城堡"},"instanceType":"default"}'
+  -d '{"values":{"122.prompt":"一只小城堡"}}'
 
 # 3) 轮询任务（需要凭据）
 curl -s 'https://<你的网关域名>/api/zsy/rh/apps/task/task_xxxxxxxxxxxxxxxx' \
@@ -177,6 +178,7 @@ GET /api/zsy/rh/app-catalog
             "quotaPerChar": 0,
             "charCountExpr": "",
             "modelBaseRateRatio": 1,
+            "instanceType": "default",
             "site": "cn",
             "categoryId": 10,
             "categoryName": "图像"
@@ -239,6 +241,7 @@ GET /api/zsy/rh/app-catalog
 | `quotaPerChar` | int64 | 按字符计费时每字符额度 |
 | `charCountExpr` | string | 按字符计费时，计费文本取自哪里（`"len(122)"`、`"len(122) + len(123)"`） |
 | `modelBaseRateRatio` | float64 | 动态计费时的价格倍率（1.0 = 1× 基础价） |
+| `instanceType` | string | 应用配置的算力实例：`default`（24GB）/ `plus`（48GB）/ `ultra`（80GB）。**提交时按它决定跑在哪种实例上**（详见 §8.1.1） |
 | `site` | string | `cn`（国内站）/ `intl`（国际站）/ `""`（legacy，按模型→渠道选择）。**提交时路由按它决定走哪个站点渠道池** |
 | `categoryId` | uint | 分类 ID，`0` 表示未分类（与所属分组 `id` 一致） |
 | `categoryName` | string | 分类名，已就地 join 好（无分类时为空字符串） |
@@ -343,9 +346,27 @@ GET /api/zsy/rh/app-catalog
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `values` | 是 | 键同 §7 |
-| `instanceType` | 否 | `default`（24GB）/ `plus`（48GB），默认 `default` |
+| `instanceType` | 否 | **已废弃、会被忽略**：算力实例是应用级配置，由管理员在 `应用管理 → 编辑` 设置，调用方不能按次覆盖。为了兼容旧客户端仍然接受该字段，但提交时一律使用应用配置的值 |
 | `webhookUrl` | 否 | RH 完成回调地址（透传给上游） |
 | `tokenId` | 否 | 面板调用时可指定由哪个 Key 计费；**API Key 调用时只能等于自己**，否则 400 |
+
+#### 8.1.1 算力实例（instanceType）
+
+`instanceType` 是**应用级配置**，由管理员在 `应用管理 → 编辑` 里为每个应用选一个值，调用方**不能**按次覆盖：
+
+| 值 | 说明 |
+| --- | --- |
+| `default` | 默认值，24GB 显存 |
+| `plus` | 48GB 显存 |
+| `ultra` | 80GB 显存 |
+
+取值规则（`zsy/runninghub` 内实现）：
+
+1. **应用的配置值就是唯一来源** —— 提交时按下应用（`/apps/:id/run` 走 URL 里的 id；标准中继端点按模型名 `rh-app-<应用行号>` 回读该行）读取并提交；
+2. 请求体里的 `instanceType` 只被接受、不被使用，避免旧客户端（曾在前端写死 `default`）把应用配置顶掉；
+3. 只有「既没有应用行、又显式带了 `metadata.rh.instanceType`」的直连中继调用才使用该显式值，仍不认识的值一律回落到 `default`。
+
+`AppView.instanceType` 会随列表 / 详情接口返回，可直接读到该应用实际使用的实例；应用中心提交时**不需要**带这个字段。
 
 响应 `data`：
 

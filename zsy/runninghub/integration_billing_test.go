@@ -363,8 +363,14 @@ func (e *rhITestEnv) createPerCharApp(name, upstreamID string, quotaPerChar int6
 // (taskId / status / upstreamTaskId).
 func (e *rhITestEnv) submitApp(appID uint) (int, *apiEnvelope, map[string]any) {
 	e.t.Helper()
-	w, raw := doJSON(e.t, e.router, http.MethodPost, fmt.Sprintf("/api/zsy/rh/apps/%d/run", appID),
-		map[string]any{"values": map[string]any{"122.prompt": "a tiny castle"}})
+	return e.submitAppWithPayload(appID, map[string]any{"values": map[string]any{"122.prompt": "a tiny castle"}})
+}
+
+// submitAppWithPayload is submitApp with an explicit request body, for tests that
+// exercise the optional submit fields (instanceType, tokenId, …).
+func (e *rhITestEnv) submitAppWithPayload(appID uint, payload map[string]any) (int, *apiEnvelope, map[string]any) {
+	e.t.Helper()
+	w, raw := doJSON(e.t, e.router, http.MethodPost, fmt.Sprintf("/api/zsy/rh/apps/%d/run", appID), payload)
 	env := parseAPIEnvelope(e.t, raw)
 	data, _ := env.Data.(map[string]any)
 	if data == nil {

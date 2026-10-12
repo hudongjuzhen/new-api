@@ -77,9 +77,12 @@ type AppView struct {
 	QuotaPerChar       int64                  `json:"quotaPerChar"`
 	CharCountExpr      string                 `json:"charCountExpr"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
-	Site               string                 `json:"site"`
-	CategoryID         uint                   `json:"categoryId"`
-	CategoryName       string                 `json:"categoryName"`
+	// InstanceType is the compute instance every run of this app is submitted
+	// on (default / plus / ultra).
+	InstanceType string `json:"instanceType"`
+	Site         string `json:"site"`
+	CategoryID   uint   `json:"categoryId"`
+	CategoryName string `json:"categoryName"`
 }
 
 // AppCreateDTO / AppUpdateDTO are the write shapes accepted by the admin
@@ -105,8 +108,11 @@ type AppCreateDTO struct {
 	QuotaPerChar       int64                  `json:"quotaPerChar"`
 	CharCountExpr      string                 `json:"charCountExpr"`
 	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
-	Site               string                 `json:"site"`
-	CategoryID         uint                   `json:"categoryId"`
+	// InstanceType optionally selects the compute instance for this app's runs
+	// (default / plus / ultra). Empty means "default".
+	InstanceType string `json:"instanceType"`
+	Site         string `json:"site"`
+	CategoryID   uint   `json:"categoryId"`
 }
 
 type AppUpdateDTO = AppCreateDTO // field set identical; alias keeps symmetry
@@ -637,6 +643,9 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 	target.PerCharBilling = dto.PerCharBilling
 	target.QuotaPerChar = dto.QuotaPerChar
 	target.CharCountExpr = strings.TrimSpace(dto.CharCountExpr)
+	// An omitted instance type means the default one, so an older admin form (or
+	// a plain API call) cannot blank out the column the submit path reads.
+	target.InstanceType = normalizeInstanceType(dto.InstanceType)
 	target.Site = normalizeSite(strings.TrimSpace(dto.Site))
 	target.CategoryID = dto.CategoryID
 	if dto.ModelBaseRateRatio == 0 {
@@ -742,6 +751,7 @@ func appToView(a *App) (*AppView, error) {
 		QuotaPerChar:       a.QuotaPerChar,
 		CharCountExpr:      a.CharCountExpr,
 		ModelBaseRateRatio: a.ModelBaseRateRatio,
+		InstanceType:       normalizeInstanceType(a.InstanceType),
 		Site:               a.Site,
 		CategoryID:         a.CategoryID,
 	}, nil
@@ -824,6 +834,13 @@ func validateApp(a *App) error {
 	}
 	if a.Slug != "" && len(a.Slug) > 191 {
 		return fmt.Errorf("slug 过长 (上限 191 字符)")
+	}
+	// The instance type is not free text: it selects an upstream machine class,
+	// so an unrecognised value is refused rather than forwarded. An empty value
+	// reads as the default instance (see normalizeInstanceType).
+	if !isKnownInstanceType(normalizeInstanceType(a.InstanceType)) {
+		return fmt.Errorf("非法 instanceType: %q（应为 %s / %s / %s）",
+			a.InstanceType, InstanceDefault, InstancePlus, InstanceUltra)
 	}
 	if err := validateCoverURL(a.CoverURL); err != nil {
 		return err

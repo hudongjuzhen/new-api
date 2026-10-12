@@ -67,6 +67,12 @@ export interface AppView {
    */
   charCountExpr: string
   modelBaseRateRatio: number
+  /**
+   * Compute instance this app's runs are submitted on. The three values are
+   * RunningHub's own API tokens; `default` (24GB) is what an app without a
+   * setting uses.
+   */
+  instanceType: string
   site: string
   categoryId: number | null
   categoryName: string | null
@@ -100,6 +106,8 @@ export interface AppCreateDTO {
   quotaPerChar: number
   charCountExpr: string
   modelBaseRateRatio: number
+  /** Compute instance for this app's runs: default / plus / ultra. */
+  instanceType: string
   site: string
   categoryId: number | null
 }
@@ -332,17 +340,23 @@ export async function getPublicAppDetail(id: number): Promise<AppView> {
   return res.data.data
 }
 
-/** Submit an app run. `values` are keyed by `nodeId.fieldName` per schema. */
+/**
+ * Submit an app run. `values` are keyed by `nodeId.fieldName` per schema.
+ *
+ * The request deliberately carries no `instanceType`: the compute instance is
+ * an app-level setting an administrator configures on /rh-apps, and omitting
+ * the field is what tells the backend to submit the run on it. Sending a value
+ * here would override that setting for this run.
+ */
 export async function runApp(
   id: number,
   values: Record<string, unknown>,
-  opts: { instanceType?: string; tokenId?: number } = {}
+  opts: { tokenId?: number } = {}
 ): Promise<RunAppResult> {
   const res = await api.post<{ success: boolean; data: RunAppResult }>(
     `/api/zsy/rh/apps/${id}/run`,
     {
       values,
-      instanceType: opts.instanceType ?? 'default',
       tokenId: opts.tokenId,
     }
   )

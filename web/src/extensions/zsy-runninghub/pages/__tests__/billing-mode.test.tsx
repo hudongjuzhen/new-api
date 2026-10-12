@@ -95,6 +95,7 @@ function storedApp(overrides: Partial<AppView> = {}): AppView {
     quotaPerChar: 1000,
     charCountExpr: 'len(122)',
     modelBaseRateRatio: 1.0,
+    instanceType: 'default',
     site: 'cn',
     categoryId: null,
     categoryName: null,

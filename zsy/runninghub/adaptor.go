@@ -196,26 +196,85 @@ const RhAppModelPrefix = "rh-app-"
 // fallback would submit a request upstream cannot resolve, and the resulting
 // error would point at the wrong place.
 func resolveUpstreamIDForModel(model string) (string, error) {
-	model = strings.TrimSpace(model)
-	rawID, ok := strings.CutPrefix(model, RhAppModelPrefix)
-	if !ok {
-		return model, nil
-	}
-	if rawID == "" {
-		return "", fmt.Errorf("模型名 %q 缺少应用 ID（应为 %s<应用行号>）", model, RhAppModelPrefix)
-	}
-	appID, convErr := strconv.ParseUint(rawID, 10, 32)
-	if convErr != nil {
-		return "", fmt.Errorf("模型名 %q 里的应用 ID 不是数字", model)
-	}
-	app, err := AppGetByID(uint(appID))
+	app, err := appForModel(model)
 	if err != nil {
-		return "", fmt.Errorf("模型 %q 指向的应用不存在或不合法: %w", model, err)
+		return "", err
+	}
+	if app == nil {
+		// Not the `rh-app-<id>` form: the historical convention (the bare
+		// upstream id is the model name) keeps working, as do hand-written
+		// channel entries.
+		return strings.TrimSpace(model), nil
 	}
 	if strings.TrimSpace(app.UpstreamID) == "" {
 		return "", fmt.Errorf("应用 %s 没有配置上游应用 ID，无法提交", model)
 	}
 	return app.UpstreamID, nil
+}
+
+// appForModel resolves the RunningHub app a submit request addresses, or nil
+// when the model name does not use the `rh-app-<id>` form.
+//
+// Only that form names an app row: a bare upstream id (the historical model-name
+// convention, and what hand-written channel entries carry) is not a lookup key
+// in the app table.
+func appForModel(model string) (*AppView, error) {
+	model = strings.TrimSpace(model)
+	rawID, ok := strings.CutPrefix(model, RhAppModelPrefix)
+	if !ok {
+		return nil, nil
+	}
+	if rawID == "" {
+		return nil, fmt.Errorf("模型名 %q 缺少应用 ID（应为 %s<应用行号>）", model, RhAppModelPrefix)
+	}
+	appID, convErr := strconv.ParseUint(rawID, 10, 32)
+	if convErr != nil {
+		return nil, fmt.Errorf("模型名 %q 里的应用 ID 不是数字", model)
+	}
+	app, err := AppGetByID(uint(appID))
+	if err != nil {
+		return nil, fmt.Errorf("模型 %q 指向的应用不存在或不合法: %w", model, err)
+	}
+	return app, nil
+}
+
+// appInstanceTypeFor returns the instance type a submit request runs on.
+//
+// The application's own setting is the rule: an administrator chose the machine
+// class per app on /rh-apps, and no request may override it. Precedence:
+//
+//  1. the app this request names — the row in context on the plugin's own submit
+//     path, or resolved from the `rh-app-<id>` model name on the standard relay
+//     endpoints. Every client that names an app gets that app's configuration.
+//  2. metadata.rh.instanceType, for a submission that names no app at all (the
+//     historical bare-upstream-id model name): there is no app row to read, so
+//     the explicit value, when it is a known instance type, is honoured.
+//  3. the default instance.
+func appInstanceTypeFor(c *gin.Context, model string) string {
+	if c != nil {
+		if v, ok := c.Get("rh_app"); ok {
+			if app, ok := v.(*AppView); ok && app != nil && strings.TrimSpace(app.InstanceType) != "" {
+				return normalizeInstanceType(app.InstanceType)
+			}
+		}
+	}
+	// The standard relay endpoints (/v1/video/generations, …) address an app by
+	// its model name instead, so the setting is read back from the row.
+	if app, err := appForModel(model); err != nil {
+		common.SysError("runninghub: resolve app for instance type failed: " + err.Error())
+	} else if app != nil {
+		return normalizeInstanceType(app.InstanceType)
+	}
+	if c != nil {
+		if v, exists := c.Get("task_request"); exists {
+			if req, ok := v.(relaycommon.TaskSubmitReq); ok {
+				if explicit := strings.TrimSpace(extractInstanceTypeFromMetadata(req.Metadata)); explicit != "" {
+					return normalizeInstanceType(explicit)
+				}
+			}
+		}
+	}
+	return InstanceDefault
 }
 
 // BuildRequestURL composes the submit URL using info.Action to decide which
@@ -290,6 +349,9 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 // → default image node. Anything richer is pulled through metadata.rh.nodes
 // (array of {nodeId, fieldName, fieldValue} entries), in which case the
 // explicit list takes precedence.
+//
+// instanceType comes from the app's own setting (see resolveAppInstanceType),
+// so a run is placed on the machine class the administrator configured for it.
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
 	v, exists := c.Get("task_request")
 	if !exists {
@@ -300,7 +362,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, fmt.Errorf("runninghub: task_request wrong type")
 	}
 	body := SubmitBody{
-		InstanceType:   pickInstanceType(extractInstanceTypeFromMetadata(req.Metadata)),
+		InstanceType:   pickInstanceType(appInstanceTypeFor(c, info.OriginModelName)),
 		NodeInfoList:   buildNodeInfoList(req, info.Action),
 		WebhookURL:     extractWebhookFromMetadata(req.Metadata),
 		AccessPassword: extractAccessPasswordFromMetadata(req.Metadata),

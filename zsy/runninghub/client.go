@@ -320,9 +320,13 @@ func (c *Client) Query(taskID string) (*QueryResp, error) {
 // Transport helpers
 // ---------------------------------------------------------------------------
 
+// pickInstanceType resolves the instance type sent upstream. An unrecognised or
+// empty value (an app row that predates the column, or a caller that bypassed
+// the submit controller) falls back to the default instance instead of sending
+// a value RH would reject.
 func pickInstanceType(s string) string {
-	if s == InstanceDefault || s == InstancePlus {
-		return s
+	if normalized := normalizeInstanceType(s); isKnownInstanceType(normalized) {
+		return normalized
 	}
 	return InstanceDefault
 }

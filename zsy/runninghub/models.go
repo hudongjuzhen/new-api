@@ -148,6 +148,14 @@ type App struct {
 	// See seconds_expr.go.
 	CharCountExpr string `gorm:"type:varchar(191)"                          json:"charCountExpr"`
 
+	// InstanceType is the compute instance every run of this app is submitted
+	// on (default / plus / ultra). It is an app-level setting because RH
+	// machines differ in VRAM and price: the admin decides per app which one
+	// its workflow needs, and every submit path sends that value upstream.
+	// Rows written before this column existed carry "default" (see
+	// normalizeInstanceType).
+	InstanceType string `gorm:"type:varchar(16);not null;default:'default'" json:"instanceType"`
+
 	// ModelBaseRateRatio is the multiplier applied against the *channel's*
 	// base model price when PerCallBilling is off. 1.0 means "1× standard
 	// base rate". Any non-positive ratio is rejected by the validator so the

@@ -45,6 +45,9 @@ export function appToCreateDTO(app: AppView): AppCreateDTO {
     quotaPerChar: app.quotaPerChar,
     charCountExpr: app.charCountExpr ?? '',
     modelBaseRateRatio: app.modelBaseRateRatio,
+    // A row saved before the field existed reads back empty; it runs on the
+    // default instance, so that is what the form has to open with.
+    instanceType: app.instanceType || 'default',
     site: app.site ?? '',
     categoryId: app.categoryId ?? null,
   }

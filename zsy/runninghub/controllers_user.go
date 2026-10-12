@@ -117,7 +117,11 @@ func getPublicAppDetail(c *gin.Context) {
 type AppRunPayload struct {
 	// Values is the flattened form state keyed by the field's identifier.
 	Values map[string]any `json:"values"`
-	// InstanceType overrides the app default (default / plus) when set.
+	// InstanceType is accepted for backward compatibility and IGNORED on the
+	// run endpoints: the compute instance is an application setting the
+	// administrator owns (see the app's instanceType field on /rh-apps), and a
+	// run may not override it. A non-empty value that is not one of the known
+	// instance types is still rejected as a typo.
 	InstanceType string `json:"instanceType"`
 	// WebhookURL optionally receives RH completion hooks.
 	WebhookURL string `json:"webhookUrl"`
@@ -164,22 +168,38 @@ func submitAppRun(c *gin.Context) {
 		return
 	}
 
-	instanceType := strings.TrimSpace(payload.InstanceType)
-	if instanceType == "" {
-		instanceType = InstanceDefault
-	}
-	switch instanceType {
-	case InstanceDefault, InstancePlus:
-	default:
-		common.ApiErrorMsg(c, fmt.Sprintf("非法 instanceType: %q (可选 %s / %s)", instanceType, InstanceDefault, InstancePlus))
+	// The application's own instance type is the ONLY source for this run: the
+	// admin sets it on /rh-apps, and a request may not override it. An older
+	// app-center bundle sent `instanceType: "default"` on every run (the default
+	// was hardcoded client-side), which silently pinned every run to the default
+	// instance — so the field is accepted and ignored, never honoured.
+	instanceType := normalizeInstanceType(app.InstanceType)
+	if !isKnownInstanceType(instanceType) {
+		common.ApiErrorMsg(c, fmt.Sprintf("应用 %s 的 instanceType 非法: %q (应为 %s / %s / %s)",
+			app.Name, app.InstanceType, InstanceDefault, InstancePlus, InstanceUltra))
 		return
 	}
+	if override := strings.TrimSpace(payload.InstanceType); override != "" && normalizeInstanceType(override) != instanceType {
+		common.SysLog(fmt.Sprintf(
+			"runninghub: app %d (%s) ignoring the request's instanceType %q; the app is configured for %s",
+			app.ID, app.Name, override, instanceType,
+		))
+	}
+	// Records which instance this run is placed on: an instance-type mix-up is
+	// otherwise invisible (the upstream logs the task, not the machine class it
+	// was asked for).
+	common.SysLog(fmt.Sprintf(
+		"runninghub: app %d (%s) run submitted on instance %s (app setting %s)",
+		app.ID, app.Name, instanceType, normalizeInstanceType(app.InstanceType),
+	))
 
 	metadata := map[string]any{
 		"rh": map[string]any{
-			"kind":         string(app.Kind),
-			"upstreamId":   app.UpstreamID,
-			"nodes":        nodeInfos,
+			"kind":       string(app.Kind),
+			"upstreamId": app.UpstreamID,
+			"nodes":      nodeInfos,
+			// The instance type this run was validated against, so the adaptor
+			// submits exactly that instead of re-deciding.
 			"instanceType": instanceType,
 		},
 	}

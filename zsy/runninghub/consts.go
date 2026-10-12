@@ -1,5 +1,7 @@
 package runninghub
 
+import "strings"
+
 // RunningHub upstream API path & field constants.
 //
 // All values here come from the empirical probe run in §3.9 of the dev plan
@@ -138,11 +140,37 @@ const (
 	QueryFieldTaskID = "taskId"
 )
 
-// Instance type strings recognised by RH upstream.
+// Instance type strings recognised by RH upstream. The value is an app-level
+// setting the admin picks on /rh-apps, not a per-request parameter: every submit
+// path reads it back from the app row (see resolveRequestInstanceType in the
+// submit controller and appInstanceTypeFor in the adaptor), so a run is placed
+// on the machine the app was configured for.
 const (
 	InstanceDefault = "default" // 24GB
 	InstancePlus    = "plus"    // 48GB
+	InstanceUltra   = "ultra"   // 80GB
 )
+
+// normalizeInstanceType canonicalises a caller-supplied instance type. An empty
+// value — an app row written before the column existed, or a payload that omits
+// the field — reads as the default instance; anything unrecognised is returned
+// unchanged so validation rejects it instead of silently downgrading a run.
+func normalizeInstanceType(s string) string {
+	canonical := strings.ToLower(strings.TrimSpace(s))
+	if canonical == "" {
+		return InstanceDefault
+	}
+	return canonical
+}
+
+// isKnownInstanceType reports whether s is one of the instance types RH accepts.
+func isKnownInstanceType(s string) bool {
+	switch s {
+	case InstanceDefault, InstancePlus, InstanceUltra:
+		return true
+	}
+	return false
+}
 
 // DefaultBaseURL mirrors constant.ChannelBaseURLs[RunningHub] and is used as a
 // fallback when the channel's base URL is empty.

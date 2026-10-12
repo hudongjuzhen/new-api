@@ -116,6 +116,14 @@ const NUMERIC_TYPES = new Set([
   'seconds',
 ])
 
+/** RunningHub's compute instances. The values are the exact tokens the RH
+ * submit body carries, so they are never translated or re-spelled; kept in sync
+ * with the instance types validateApp accepts. */
+const INSTANCE_TYPE_CHOICES = ['default', 'plus', 'ultra']
+
+/** Instance an app without a setting runs on. */
+const INSTANCE_TYPE_DEFAULT = 'default'
+
 /** Optional numeric bound: an empty input clears the bound. */
 function parseBound(raw: string): number | undefined {
   const trimmed = raw.trim()
@@ -143,6 +151,7 @@ const emptyDTO: AppCreateDTO = {
   quotaPerChar: 0,
   charCountExpr: '',
   modelBaseRateRatio: 1.0,
+  instanceType: INSTANCE_TYPE_DEFAULT,
   site: '',
   categoryId: null,
 }
@@ -357,6 +366,31 @@ function AppForm({
             </Select>
             <p className='text-muted-foreground text-xs'>
               {t('Which site handles this app')}
+            </p>
+          </div>
+          <div className='space-y-1.5'>
+            <Label htmlFor='rh-app-instance-type'>{t('Instance Type')}</Label>
+            <Select
+              value={dto.instanceType || INSTANCE_TYPE_DEFAULT}
+              onValueChange={(v) => {
+                if (v != null) set('instanceType', v)
+              }}
+            >
+              <SelectTrigger id='rh-app-instance-type'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {INSTANCE_TYPE_CHOICES.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'The RH compute instance this app runs on (default 24GB / plus 48GB / ultra 80GB VRAM)'
+              )}
             </p>
           </div>
           <div className='space-y-1.5'>
@@ -810,7 +844,7 @@ const IDLE_DRAG: RowDragState = {
 }
 
 /** Table width the loading/empty rows have to span. */
-const APP_TABLE_COLUMNS = 10
+const APP_TABLE_COLUMNS = 11
 
 /**
  * Apps table body. Every row is draggable and reordering is delegated to the
@@ -908,6 +942,11 @@ function AppsTableBody(props: {
         <TableCell>{app.kind}</TableCell>
         <TableCell className='font-mono text-xs'>{app.upstreamId}</TableCell>
         <TableCell className='text-xs'>{siteLabel(app.site)}</TableCell>
+        {/* The upstream token (default / plus / ultra) is shown as-is: it is
+            what the RH request body carries, not a localized label. */}
+        <TableCell className='font-mono text-xs'>
+          {app.instanceType || INSTANCE_TYPE_DEFAULT}
+        </TableCell>
         <TableCell>{billingBadge(app, t)}</TableCell>
         <TableCell className='text-right'>
           <Button
@@ -1348,6 +1387,7 @@ export function RhAppsPage() {
                 <TableHead>{t('Kind')}</TableHead>
                 <TableHead>{t('Upstream ID')}</TableHead>
                 <TableHead>{t('Site')}</TableHead>
+                <TableHead>{t('Instance Type')}</TableHead>
                 <TableHead>{t('Per-Call Billing')}</TableHead>
                 <TableHead className='text-right'>{t('Actions')}</TableHead>
               </TableRow>

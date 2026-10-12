@@ -60,6 +60,7 @@ function sourceApp(overrides: Partial<AppView> = {}): AppView {
     quotaPerChar: 600,
     charCountExpr: 'len(122) + len(123)',
     modelBaseRateRatio: 1.5,
+    instanceType: 'ultra',
     site: 'cn',
     categoryId: 3,
     categoryName: 'Retouch',
@@ -103,9 +104,16 @@ describe('RunningHub app drafts', () => {
       quotaPerChar: 600,
       charCountExpr: 'len(122) + len(123)',
       modelBaseRateRatio: 1.5,
+      instanceType: 'ultra',
       site: 'cn',
       categoryId: 3,
     })
+  })
+
+  test('an app saved before the instance type existed opens on the default one', () => {
+    expect(appToCreateDTO(sourceApp({ instanceType: '' })).instanceType).toBe(
+      'default'
+    )
   })
 
   test('an unassigned category stays unassigned in the draft', () => {

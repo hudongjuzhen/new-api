@@ -90,6 +90,7 @@ const storedApp: AppView = {
   quotaPerChar: 0,
   charCountExpr: '',
   modelBaseRateRatio: 1.0,
+  instanceType: 'default',
   site: 'cn',
   categoryId: null,
   categoryName: null,

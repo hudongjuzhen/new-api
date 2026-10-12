@@ -92,6 +92,7 @@ const sourceApp: AppView = {
   quotaPerChar: 600,
   charCountExpr: 'len(122)',
   modelBaseRateRatio: 1.5,
+  instanceType: 'ultra',
   site: 'cn',
   categoryId: 3,
   categoryName: 'Retouch',
