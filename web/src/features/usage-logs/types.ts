@@ -305,6 +305,9 @@ export interface TaskLog {
   other?: string
   created_at?: number
   updated_at?: number
+  // Caller-supplied note for this run ("生成 30 秒视频"). Optional: only tasks
+  // submitted with a remark carry one (see Properties.Remark on the backend).
+  remark?: string
   // Task pre-charge / settled quota (per-call apps store the fixed per-call
   // amount here; diff settlement may adjust it later). Absent on legacy rows.
   quota?: number

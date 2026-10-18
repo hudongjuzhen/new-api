@@ -18,7 +18,6 @@ import {
   Trash2,
   Wand2,
   Loader2,
-  X,
   FolderOpen,
   GripVertical,
 } from 'lucide-react'
@@ -80,6 +79,7 @@ import {
   deleteApp,
   reorderApps,
   parseCurlRequest,
+  listSites,
   listCategories,
   createCategory,
   updateCategory,
@@ -89,32 +89,13 @@ import {
   type CategoryInput,
   type AppView,
   type AppCreateDTO,
-  type SchemaParam,
+  type SiteSpec,
+  type SiteUpstream,
+  type SiteUpstreamMap,
 } from '../api'
 import { CoverImageField } from '../components/cover-image-field'
+import { ParamSchemaEditor } from '../components/param-schema-editor'
 import { appCopyDraft, appToCreateDTO } from '../lib/app-copy'
-
-const TYPE_CHOICES = [
-  'text',
-  'textarea',
-  'number',
-  'image',
-  'audio',
-  'video',
-  'select',
-  'switch',
-]
-
-/** Types the submit validator treats as numbers, i.e. the ones that honour
- * min/max bounds. Kept in sync with coerceValueByType in controllers_user.go. */
-const NUMERIC_TYPES = new Set([
-  'number',
-  'int',
-  'integer',
-  'float',
-  'duration',
-  'seconds',
-])
 
 /** RunningHub's compute instances. The values are the exact tokens the RH
  * submit body carries, so they are never translated or re-spelled; kept in sync
@@ -124,12 +105,39 @@ const INSTANCE_TYPE_CHOICES = ['default', 'plus', 'ultra']
 /** Instance an app without a setting runs on. */
 const INSTANCE_TYPE_DEFAULT = 'default'
 
-/** Optional numeric bound: an empty input clears the bound. */
-function parseBound(raw: string): number | undefined {
-  const trimmed = raw.trim()
-  if (trimmed === '') return undefined
-  const n = Number(trimmed)
-  return Number.isFinite(n) ? n : undefined
+/**
+ * One identifier input pair to render. `label` is already translated: the site
+ * label doubles as an i18n key, and the pair legend/fields are composed from it.
+ */
+type SiteBlock = { key: string; label: string }
+
+/**
+ * The blocks the form offers: every site the backend registry knows, plus any
+ * site a stored app already carries an identifier for.
+ *
+ * The second half matters when the registry cannot be read (an older backend,
+ * a failed request): the app's own values must stay editable even then, so a
+ * save never silently drops an upstream id it could not render.
+ */
+function siteBlocksFrom(
+  sites: SiteSpec[],
+  stored: SiteUpstreamMap
+): SiteBlock[] {
+  const blocks: SiteBlock[] = sites.map((site) => ({
+    key: site.key,
+    label: site.label,
+  }))
+  for (const key of Object.keys(stored)) {
+    if (!blocks.some((block) => block.key === key)) {
+      blocks.push({ key, label: key })
+    }
+  }
+  return blocks
+}
+
+/** The app's identifier on the site it runs on, falling back to the primary. */
+function upstreamIdOf(app: AppView): string {
+  return app.siteUpstreams?.[app.site]?.upstreamId || app.upstreamId
 }
 
 const emptyDTO: AppCreateDTO = {
@@ -137,6 +145,7 @@ const emptyDTO: AppCreateDTO = {
   slug: '',
   kind: 'ai_app',
   upstreamId: '',
+  siteUpstreams: {},
   description: '',
   coverUrl: '',
   published: true,
@@ -221,20 +230,6 @@ const CURL_EXAMPLE = `curl --location --request POST 'https://www.runninghub.cn/
   "usePersonalQueue": "false"
 }'`
 
-function parseOptions(raw: string): SchemaParam['options'] {
-  try {
-    const arr = JSON.parse(raw)
-    if (!Array.isArray(arr)) return []
-    return arr.map((o) =>
-      typeof o === 'string'
-        ? { label: o, value: o }
-        : { label: o?.label ?? o?.value, value: o?.value ?? o?.label }
-    )
-  } catch {
-    return []
-  }
-}
-
 function AppForm({
   initial,
   onSubmit,
@@ -249,11 +244,16 @@ function AppForm({
   const [curlInput, setCurlInput] = useState('')
   const [fetching, setFetching] = useState(false)
 
+  const { data: sites = [] } = useQuery({
+    queryKey: ['rh-sites'],
+    queryFn: () => listSites(),
+  })
   const { data: categories = [] } = useQuery({
     queryKey: ['rh-app-categories'],
     queryFn: () => listCategories(),
   })
   const catId = dto.categoryId ?? null
+  const siteBlocks = siteBlocksFrom(sites, dto.siteUpstreams)
 
   // Editable billing fields are shown in the host's configured currency (USD /
   // CNY / custom) or tokens. The stored value stays in quota units — inputs
@@ -268,28 +268,25 @@ function AppForm({
   const set = <K extends keyof AppCreateDTO>(k: K, v: AppCreateDTO[K]) =>
     setDto((prev) => ({ ...prev, [k]: v }))
 
-  const setParam = (i: number, patch: Partial<SchemaParam>) =>
+  /** Write one field of one site's identifier pair, keeping the other field. */
+  const setSiteUpstream = (
+    key: string,
+    field: keyof SiteUpstream,
+    value: string
+  ) =>
     setDto((prev) => {
-      const next = prev.paramSchema.map((p, idx) =>
-        idx === i ? { ...p, ...patch } : p
-      )
-      return { ...prev, paramSchema: next }
+      const current: SiteUpstream = prev.siteUpstreams[key] ?? {
+        upstreamId: '',
+        slug: '',
+      }
+      return {
+        ...prev,
+        siteUpstreams: {
+          ...prev.siteUpstreams,
+          [key]: { ...current, [field]: value },
+        },
+      }
     })
-
-  const removeParam = (i: number) =>
-    setDto((prev) => ({
-      ...prev,
-      paramSchema: prev.paramSchema.filter((_, idx) => idx !== i),
-    }))
-
-  const addParam = () =>
-    setDto((prev) => ({
-      ...prev,
-      paramSchema: [
-        ...prev.paramSchema,
-        { nodeId: '', fieldName: '', label: '', type: 'text', required: true },
-      ],
-    }))
 
   const handleFetch = async () => {
     if (!curlInput.trim()) {
@@ -306,15 +303,35 @@ function AppForm({
       }
       const schema = data.schema ?? []
       const errors = data.schemaErrors ?? []
-      setDto((prev) => ({
-        ...prev,
-        kind: data.kind || prev.kind,
-        upstreamId: data.upstreamId || prev.upstreamId,
-        // The upstream id goes into the slug (标识) so names stay human-chosen
-        // and unique; a curl cannot know the human-readable app name.
-        slug: prev.slug.trim() || data.slug || '',
-        paramSchema: schema,
-      }))
+      setDto((prev) => {
+        // The imported request belongs to the site its host belongs to, so its
+        // id is filed under that site's block. Without a recognised host the
+        // id goes to the site the form already has selected (or the first one),
+        // because an identifier stored under the wrong site would be submitted
+        // to that site's endpoint.
+        const target = data.site || prev.site || siteBlocks[0]?.key || ''
+        const next: AppCreateDTO = {
+          ...prev,
+          kind: data.kind || prev.kind,
+          // An import also selects the site it came from, so a curl pasted into
+          // a fresh form fills in everything the run needs.
+          site: prev.site || data.site || '',
+          paramSchema: schema,
+        }
+        if (target) {
+          const stored = prev.siteUpstreams[target]
+          next.siteUpstreams = {
+            ...prev.siteUpstreams,
+            [target]: {
+              upstreamId: data.upstreamId || stored?.upstreamId || '',
+              // The upstream id goes into the identifier (标识符) so names stay
+              // human-chosen and unique; a curl cannot know the app name.
+              slug: stored?.slug?.trim() || data.slug || '',
+            },
+          }
+        }
+        return next
+      })
       if (errors.length > 0) {
         toast.warning(t('Request example parsed, but some fields were skipped'))
       } else {
@@ -360,12 +377,17 @@ function AppForm({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value=''>{t('Auto')}</SelectItem>
-                <SelectItem value='cn'>{t('RunningHub')}</SelectItem>
-                <SelectItem value='intl'>{t('RunningHub Intl')}</SelectItem>
+                {sites.map((site) => (
+                  <SelectItem key={site.key} value={site.key}>
+                    {t(site.label)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <p className='text-muted-foreground text-xs'>
-              {t('Which site handles this app')}
+              {t(
+                'Which site handles this app. The run submits on that site with the upstream ID configured for it below.'
+              )}
             </p>
           </div>
           <div className='space-y-1.5'>
@@ -417,34 +439,70 @@ function AppForm({
               {t('Select a category for this app')}
             </p>
           </div>
-          <div className='grid grid-cols-2 gap-4'>
-            <div className='space-y-1.5'>
-              <Label htmlFor='rh-app-kind'>{t('Kind')}</Label>
-              <Select
-                value={dto.kind}
-                onValueChange={(v) => {
-                  if (v != null) set('kind', v)
-                }}
-              >
-                <SelectTrigger id='rh-app-kind'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value='ai_app'>{t('AIC App')}</SelectItem>
-                  <SelectItem value='workflow'>{t('Workflow')}</SelectItem>
-                  <SelectItem value='model'>{t('Model')}</SelectItem>
-                </SelectContent>
-              </Select>
+          <div className='space-y-1.5'>
+            <Label htmlFor='rh-app-kind'>{t('Kind')}</Label>
+            <Select
+              value={dto.kind}
+              onValueChange={(v) => {
+                if (v != null) set('kind', v)
+              }}
+            >
+              <SelectTrigger id='rh-app-kind'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='ai_app'>{t('AIC App')}</SelectItem>
+                <SelectItem value='workflow'>{t('Workflow')}</SelectItem>
+                <SelectItem value='model'>{t('Model')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {/* One upstream id / identifier pair per site: the same workflow has a
+              different id on each RunningHub deployment, and the run uses the
+              pair of the site it runs on. */}
+          <div className='space-y-2'>
+            <div className='text-sm font-medium'>
+              {t('Upstream IDs by site')}
             </div>
-            <div className='space-y-1.5'>
-              <Label htmlFor='rh-app-upstream'>{t('Upstream ID')}</Label>
-              <Input
-                id='rh-app-upstream'
-                value={dto.upstreamId}
-                onChange={(e) => set('upstreamId', e.target.value)}
-                required
-              />
-            </div>
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Each site answers to its own upstream app ID. A run uses the identifiers of the site it runs on (see Site above).'
+              )}
+            </p>
+            {siteBlocks.map((site) => (
+              <div key={site.key} className='space-y-2 rounded-md border p-3'>
+                <div className='grid grid-cols-2 gap-4'>
+                  <div className='space-y-1.5'>
+                    <Label htmlFor={`rh-app-upstream-${site.key}`}>
+                      {t('{{site}} Upstream ID', { site: t(site.label) })}
+                    </Label>
+                    <Input
+                      id={`rh-app-upstream-${site.key}`}
+                      value={dto.siteUpstreams[site.key]?.upstreamId ?? ''}
+                      onChange={(e) =>
+                        setSiteUpstream(site.key, 'upstreamId', e.target.value)
+                      }
+                      // Only the site this app runs on must carry an id; the
+                      // others are optional, because an app rarely exists on
+                      // every site.
+                      required={dto.site === site.key}
+                    />
+                  </div>
+                  <div className='space-y-1.5'>
+                    <Label htmlFor={`rh-app-identifier-${site.key}`}>
+                      {t('{{site}} Identifier', { site: t(site.label) })}
+                    </Label>
+                    <Input
+                      id={`rh-app-identifier-${site.key}`}
+                      value={dto.siteUpstreams[site.key]?.slug ?? ''}
+                      onChange={(e) =>
+                        setSiteUpstream(site.key, 'slug', e.target.value)
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
           <div className='space-y-1.5'>
             <Label htmlFor='rh-app-billing-mode'>{t('Billing Mode')}</Label>
@@ -595,14 +653,6 @@ function AppForm({
             </div>
           )}
           <div className='space-y-1.5'>
-            <Label htmlFor='rh-app-slug'>{t('Slug')}</Label>
-            <Input
-              id='rh-app-slug'
-              value={dto.slug}
-              onChange={(e) => set('slug', e.target.value)}
-            />
-          </div>
-          <div className='space-y-1.5'>
             <Label htmlFor='rh-app-desc'>{t('Description')}</Label>
             <Input
               id='rh-app-desc'
@@ -672,125 +722,10 @@ function AppForm({
           <div className='flex items-center justify-between'>
             <div className='text-sm font-medium'>{t('Parameter Template')}</div>
           </div>
-          {dto.paramSchema.length === 0 ? (
-            <p className='text-muted-foreground text-sm'>
-              {t(
-                'No parameters yet. Paste a request example above and click "Fetch Template", or add manually.'
-              )}
-            </p>
-          ) : (
-            dto.paramSchema.map((p, i) => {
-              // Identity is the row position, never the (nodeId, fieldName) it
-              // holds: those are edited in place, and a value-derived key would
-              // remount — and blur — the input after every keystroke.
-              const key = `rh-app-param-${i}`
-              return (
-                <div key={key} className='space-y-2 rounded-md border p-2'>
-                  <div className='grid grid-cols-[1fr_140px] gap-2'>
-                    <Input
-                      value={p.label}
-                      placeholder={t('Label')}
-                      onChange={(e) => setParam(i, { label: e.target.value })}
-                    />
-                    <Select
-                      value={p.type}
-                      onValueChange={(v) => {
-                        if (v != null) setParam(i, { type: v })
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TYPE_CHOICES.map((c) => (
-                          <SelectItem key={c} value={c}>
-                            {c}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className='grid grid-cols-2 gap-2'>
-                    <Input
-                      value={p.nodeId ?? ''}
-                      placeholder={t('Node ID')}
-                      aria-label={t('Node ID')}
-                      onChange={(e) => setParam(i, { nodeId: e.target.value })}
-                    />
-                    <Input
-                      value={p.fieldName}
-                      placeholder={t('Field name')}
-                      aria-label={t('Field name')}
-                      onChange={(e) =>
-                        setParam(i, { fieldName: e.target.value })
-                      }
-                    />
-                  </div>
-                  {NUMERIC_TYPES.has(p.type) && (
-                    <div className='grid grid-cols-2 gap-2'>
-                      <Input
-                        type='number'
-                        value={p.min ?? ''}
-                        placeholder={t('Min')}
-                        aria-label={t('Min')}
-                        onChange={(e) =>
-                          setParam(i, { min: parseBound(e.target.value) })
-                        }
-                      />
-                      <Input
-                        type='number'
-                        value={p.max ?? ''}
-                        placeholder={t('Max')}
-                        aria-label={t('Max')}
-                        onChange={(e) =>
-                          setParam(i, { max: parseBound(e.target.value) })
-                        }
-                      />
-                    </div>
-                  )}
-                  {p.type === 'select' && (
-                    <textarea
-                      className='min-h-16 w-full rounded-md border bg-transparent px-2 py-1 font-mono text-xs'
-                      placeholder={t(
-                        'Options as JSON, e.g. [{"label":"1:1","value":"1:1"}]'
-                      )}
-                      value={JSON.stringify(p.options ?? [])}
-                      onChange={(e) =>
-                        setParam(i, { options: parseOptions(e.target.value) })
-                      }
-                    />
-                  )}
-                  <div className='flex items-center justify-between'>
-                    <label className='flex items-center gap-2'>
-                      <Switch
-                        checked={!!p.required}
-                        onCheckedChange={(v) => setParam(i, { required: !!v })}
-                      />
-                      <span className='text-xs'>{t('Required')}</span>
-                    </label>
-                    <Button
-                      type='button'
-                      variant='ghost'
-                      size='icon-sm'
-                      onClick={() => removeParam(i)}
-                    >
-                      <X className='size-3.5' />
-                    </Button>
-                  </div>
-                </div>
-              )
-            })
-          )}
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            onClick={addParam}
-            className='w-full'
-          >
-            <Plus className='size-4' />
-            {t('Add Parameter')}
-          </Button>
+          <ParamSchemaEditor
+            params={dto.paramSchema}
+            onChange={(paramSchema) => set('paramSchema', paramSchema)}
+          />
         </div>
       </div>
 
@@ -804,10 +739,10 @@ function AppForm({
   )
 }
 
-function siteLabel(site: string): string {
-  if (site === 'cn') return 'RunningHub'
-  if (site === 'intl') return 'RunningHub Intl'
-  return '—'
+function siteLabel(site: string, sites: SiteSpec[]): string {
+  const known = sites.find((spec) => spec.key === site)
+  if (known) return known.label
+  return site || '—'
 }
 
 function CategoryBadge({ name }: { name: string }) {
@@ -855,6 +790,7 @@ const APP_TABLE_COLUMNS = 11
 function AppsTableBody(props: {
   isLoading: boolean
   data: AppListResult | undefined
+  sites: SiteSpec[]
   drag: RowDragState
   onEdit: (app: AppView) => void
   onCopy: (app: AppView) => void
@@ -940,8 +876,10 @@ function AppsTableBody(props: {
           )}
         </TableCell>
         <TableCell>{app.kind}</TableCell>
-        <TableCell className='font-mono text-xs'>{app.upstreamId}</TableCell>
-        <TableCell className='text-xs'>{siteLabel(app.site)}</TableCell>
+        <TableCell className='font-mono text-xs'>{upstreamIdOf(app)}</TableCell>
+        <TableCell className='text-xs'>
+          {t(siteLabel(app.site, props.sites))}
+        </TableCell>
         {/* The upstream token (default / plus / ultra) is shown as-is: it is
             what the RH request body carries, not a localized label. */}
         <TableCell className='font-mono text-xs'>
@@ -1170,6 +1108,13 @@ export function RhAppsPage() {
     queryKey: ['rh-apps'],
     queryFn: () => listApps({ page: 1, pageSize: 100 }),
   })
+  // The registry labels the site each row runs on (and the app form renders one
+  // identifier block per entry), so an operator's site list comes from the
+  // backend instead of the bundle.
+  const { data: sites = [] } = useQuery({
+    queryKey: ['rh-sites'],
+    queryFn: () => listSites(),
+  })
 
   const apps = data?.items ?? []
 
@@ -1396,6 +1341,7 @@ export function RhAppsPage() {
               <AppsTableBody
                 isLoading={isLoading}
                 data={data}
+                sites={sites}
                 drag={drag}
                 onEdit={openEdit}
                 onCopy={openCopy}

@@ -567,6 +567,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		FinishTime:     task.FinishTime,
 		Progress:       task.Progress,
 		Properties:     task.Properties,
+		Remark:         task.Properties.Remark,
 		Username:       task.Username,
 		Data:           task.Data,
 		BillingSource:  task.PrivateData.BillingSource,

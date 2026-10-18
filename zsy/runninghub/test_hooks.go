@@ -114,9 +114,10 @@ func TestHookMarkControllerResponds(c *gin.Context) { c.Set(contextKeyController
 
 // TestHookResolveUpstreamIDForModel exposes the `rh-app-<id>` model-name resolver
 // (see RhAppModelPrefix) so the external test package can pin both the
-// pass-through convention and the error messages.
-func TestHookResolveUpstreamIDForModel(model string) (string, error) {
-	return resolveUpstreamIDForModel(model)
+// pass-through convention and the error messages. channelType scopes the answer
+// to one site (see sites.go); 0 means "no site context".
+func TestHookResolveUpstreamIDForModel(model string, channelType int) (string, error) {
+	return resolveUpstreamIDForModel(model, channelType)
 }
 
 // TestHookBuildSubmitBody runs the adaptor's request body construction for a

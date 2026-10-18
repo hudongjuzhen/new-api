@@ -58,6 +58,9 @@ func mountRoutes(router *gin.Engine) {
 		// admin page needs unpublished apps too, so it lists via /apps, but this
 		// lets an operator preview exactly what third parties will see.
 		admin.GET("/app-catalog", listAppCatalog)
+		// Site registry (cn / intl / …): the app form renders one upstream-id /
+		// identifier block per entry, so the list lives in the backend.
+		admin.GET("/sites", listSites)
 		admin.GET("/app-categories", listCategories)
 		admin.POST("/app-categories", createCategory)
 		admin.PUT("/app-categories/:id", updateCategory)

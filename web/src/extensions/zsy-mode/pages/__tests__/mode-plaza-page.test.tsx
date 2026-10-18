@@ -60,6 +60,8 @@ const modeApi = vi.hoisted(() => ({
   saveModeContent: vi.fn(),
   listModeAiKeys: vi.fn(),
   createMode: vi.fn(),
+  /* ★★ 删掉一档（用户 2026-…："可以删除某个模式"） */
+  deleteMode: vi.fn(),
 }))
 
 vi.mock('../../api', async (importOriginal) => ({
@@ -70,6 +72,15 @@ vi.mock('../../api', async (importOriginal) => ({
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { ModePlazaPage } = await import('../mode-plaza-page')
+
+/**
+ * 删档确认框里那句话（英文原文即 i18n key）。
+ *
+ * ⚠ 它非有不可：删的是磁盘上的文件、没有撤销，而用户机器上那份**不会**跟着没、
+ * 授权行也**不会**被清 —— 三件事都必须说出来（见 `ModePlazaPage` 那段注释）。
+ */
+const DELETE_NOTE =
+  'Deleting “{{name}}” removes {{source}} from the mode directory, so the mode leaves the plaza for every account. A copy a user already downloaded stays on that machine, and the accounts opened for it keep their grants — putting a file with the same name back restores the mode.'
 
 /* 断言查的是组件传给 t() 的**英文原文**，所以把它们登记成恒等翻译 */
 const identity: Record<string, string> = {}
@@ -172,6 +183,12 @@ for (const key of [
   'Video',
   'Audio',
   'Text',
+  /* ★★ 「删掉一档模式」那几张（用户 2026-…："可以删除某个模式"） */
+  'Delete',
+  'Delete {{mode}}',
+  'Delete this mode?',
+  'Could not delete this mode',
+  DELETE_NOTE,
 ]) {
   identity[key] = key
 }
@@ -182,6 +199,12 @@ const i18n = createInstance()
 await i18n.use(initReactI18next).init({
   lng: 'en',
   resources: { en: { translation: identity } },
+  /*
+   * ⚠ 与 `src/i18n/config.ts` 对齐：React 自己会转义，所以关掉 i18next 的转义。
+   * 不开的话**含 `/` 的那句话**会被插成 `&#x2F;`（删档确认框里那个文件路径就是）
+   * —— 而在真站上它是关掉的，测试跟着关才测的是同一件事。
+   */
+  interpolation: { escapeValue: false },
 })
 
 function renderPage() {
@@ -254,9 +277,19 @@ const MODE_CONTENT = {
   label: '有声书',
   medium: 'audio',
   workScale: 'single',
-  words: { audio: '导入音频', text: '字幕', planSelfCheck: { musicName: '音频' } },
+  words: {
+    audio: '导入音频',
+    text: '字幕',
+    planSelfCheck: { musicName: '音频' },
+  },
   requires: { audio: true, lyrics: false, refs: false, segments: true },
-  libraries: [{ id: 'works', label: '作品库', fields: [{ key: 'name', label: '名称', type: 'text' }] }],
+  libraries: [
+    {
+      id: 'works',
+      label: '作品库',
+      fields: [{ key: 'name', label: '名称', type: 'text' }],
+    },
+  ],
   planDialog: {
     label: 'AI 全稿规划',
     instruction: { skeleton: '（骨架）' },
@@ -290,7 +323,9 @@ function rowOf(modeId: string): HTMLElement {
  */
 function actionOf(modeId: string): HTMLElement {
   const row = rowOf(modeId)
-  const name = row.querySelector('button[aria-label]')?.getAttribute('aria-label')
+  const name = row
+    .querySelector('button[aria-label]')
+    ?.getAttribute('aria-label')
   return within(row).getByRole('button', { name: name as string })
 }
 
@@ -300,7 +335,10 @@ function actionOf(modeId: string): HTMLElement {
  * ⚠★ 它**只在左边那一格空着时**出现 —— 填了 ID 之后同一个位置放的是
  * 「开通 / 取消开通」（运营那时关心的是"这个人"，不是"谁还有这一档"）。
  */
-async function openHolders(user: ReturnType<typeof userEvent.setup>, modeId: string) {
+async function openHolders(
+  user: ReturnType<typeof userEvent.setup>,
+  modeId: string
+) {
   await user.click(screen.getByTestId(`mode-holders-${modeId}`))
 }
 
@@ -316,12 +354,27 @@ beforeEach(() => {
   modeApi.saveModeContent.mockResolvedValue({ ...MODES.items[0] })
   modeApi.listModeAiKeys.mockResolvedValue({
     items: [
-      { id: 3, name: '运维密钥', keyPrefix: 'sk-abcd…', status: 1, usable: true, problem: '' },
-      { id: 4, name: '停用的', keyPrefix: 'sk-efgh…', status: 2, usable: false, problem: '这个密钥被禁用了（在「令牌」页里把它开启）' },
+      {
+        id: 3,
+        name: '运维密钥',
+        keyPrefix: 'sk-abcd…',
+        status: 1,
+        usable: true,
+        problem: '',
+      },
+      {
+        id: 4,
+        name: '停用的',
+        keyPrefix: 'sk-efgh…',
+        status: 2,
+        usable: false,
+        problem: '这个密钥被禁用了（在「令牌」页里把它开启）',
+      },
     ],
     model: 'glm-5.3-flash',
   })
   modeApi.createMode.mockResolvedValue({ ...MODES.items[0] })
+  modeApi.deleteMode.mockResolvedValue(undefined)
 })
 
 describe('模式管理', () => {
@@ -373,7 +426,9 @@ describe('模式管理', () => {
 
     /* ② 填了 ID：已开通那一行反色，未开通那一行**仍然原样** */
     await user.type(screen.getByLabelText('Account ID'), '7')
-    await waitFor(() => expect(rowOf('mv')).toHaveAttribute('data-tone', 'inverted'))
+    await waitFor(() =>
+      expect(rowOf('mv')).toHaveAttribute('data-tone', 'inverted')
+    )
 
     expect(rowOf('mv').className).toContain('bg-foreground')
     expect(rowOf('mv').className).toContain('text-background')
@@ -385,11 +440,13 @@ describe('模式管理', () => {
      * 压在深色底上几乎看不见 —— 而它**不会报错**，只是有一个字读不出来。
      */
     const inverted = rowOf('mv')
-    expect(within(inverted).getByTestId('mode-state-mv').className).toContain('text-background')
-    /* ⚠ 而"未开通"那一行的状态签**不许**跟着换（它是原来的样子） */
-    expect(within(rowOf('audiobook')).getByTestId('mode-state-audiobook').className).not.toContain(
+    expect(within(inverted).getByTestId('mode-state-mv').className).toContain(
       'text-background'
     )
+    /* ⚠ 而"未开通"那一行的状态签**不许**跟着换（它是原来的样子） */
+    expect(
+      within(rowOf('audiobook')).getByTestId('mode-state-audiobook').className
+    ).not.toContain('text-background')
   })
 
   test('★★ 状态读不到时也反色（"未知"不许画成"没有"）', async () => {
@@ -400,15 +457,21 @@ describe('模式管理', () => {
      */
     const user = userEvent.setup()
     modeApi.listEntitlementsByUser.mockRejectedValue({
-      response: { data: { message: '读不到这个账号的模式授权（数据库连接失败）。' } },
+      response: {
+        data: { message: '读不到这个账号的模式授权（数据库连接失败）。' },
+      },
     })
     renderPage()
 
     await user.type(await screen.findByLabelText('Account ID'), '7')
 
-    await waitFor(() => expect(rowOf('mv')).toHaveAttribute('data-tone', 'inverted'))
+    await waitFor(() =>
+      expect(rowOf('mv')).toHaveAttribute('data-tone', 'inverted')
+    )
     expect(rowOf('mv')).toHaveAttribute('data-state', 'unknown')
-    expect(screen.getByTestId('mode-state-mv')).toHaveTextContent('Status unreadable')
+    expect(screen.getByTestId('mode-state-mv')).toHaveTextContent(
+      'Status unreadable'
+    )
   })
 
   test('★★ 「模式库」那一张卡没有了：不再是"下面一块、上面一块"两份名单', async () => {
@@ -497,20 +560,30 @@ describe('模式管理', () => {
      * 空着：每一行是「编辑」**加**「Accounts」（用户 2026-… 要的那颗按钮），
      * 而且它们就在这一行里。
      */
-    await waitFor(() => expect(screen.getByTestId('mode-edit-audiobook')).toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.getByTestId('mode-edit-audiobook')).toBeInTheDocument()
+    )
     expect(screen.getByTestId('mode-holders-audiobook')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /for this account$/ })).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: /for this account$/ })
+    ).toBeNull()
     expect(rowOf('audiobook')).toHaveAttribute('data-state', 'editing')
 
     await user.type(screen.getByLabelText('Account ID'), '7')
 
     /* 填了：编辑与 Accounts 都没了，换成开通（这一档没开通） */
     await waitFor(() =>
-      expect(screen.queryByTestId('mode-edit-audiobook')).not.toBeInTheDocument()
+      expect(
+        screen.queryByTestId('mode-edit-audiobook')
+      ).not.toBeInTheDocument()
     )
-    expect(screen.queryByTestId('mode-holders-audiobook')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('mode-holders-audiobook')
+    ).not.toBeInTheDocument()
     expect(actionOf('audiobook')).toHaveTextContent('Open')
-    await waitFor(() => expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed'))
+    await waitFor(() =>
+      expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed')
+    )
   })
 
   test('★★ 填一次 ID：每一档都带出"已开通 / 未开通"（不必先选模式）', async () => {
@@ -524,10 +597,14 @@ describe('模式管理', () => {
     /*
      * ★★ 这一条就是用户要的那件事：**一次输入，全部模式的状态一起出来**。
      */
-    await waitFor(() => expect(rowOf('mv')).toHaveAttribute('data-state', 'open'))
+    await waitFor(() =>
+      expect(rowOf('mv')).toHaveAttribute('data-state', 'open')
+    )
     expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed')
     expect(screen.getByTestId('mode-state-mv')).toHaveTextContent('Opened')
-    expect(screen.getByTestId('mode-state-audiobook')).toHaveTextContent('Not opened')
+    expect(screen.getByTestId('mode-state-audiobook')).toHaveTextContent(
+      'Not opened'
+    )
 
     /* 已开通那一档给的是「取消」，未开通那一档给的是「开通」 */
     expect(actionOf('mv')).toHaveTextContent('Cancel access')
@@ -543,8 +620,24 @@ describe('模式管理', () => {
     const user = userEvent.setup()
     modeApi.listEntitlementsByMode.mockResolvedValue(
       byMode('audiobook', [
-        { id: 1, userId: 7, modeId: 'audiobook', source: 'admin', createdAt: 1, expiresAt: null, revokedAt: null },
-        { id: 2, userId: 9, modeId: 'audiobook', source: 'admin', createdAt: 1, expiresAt: null, revokedAt: null },
+        {
+          id: 1,
+          userId: 7,
+          modeId: 'audiobook',
+          source: 'admin',
+          createdAt: 1,
+          expiresAt: null,
+          revokedAt: null,
+        },
+        {
+          id: 2,
+          userId: 9,
+          modeId: 'audiobook',
+          source: 'admin',
+          createdAt: 1,
+          expiresAt: null,
+          revokedAt: null,
+        },
       ])
     )
     renderPage()
@@ -598,23 +691,41 @@ describe('模式管理', () => {
     const user = userEvent.setup()
     modeApi.listEntitlementsByMode.mockResolvedValue(
       byMode('audiobook', [
-        { id: 1, userId: 7, modeId: 'audiobook', source: 'admin', createdAt: 1, expiresAt: null, revokedAt: null },
-        { id: 2, userId: 9, modeId: 'audiobook', source: 'admin', createdAt: 1, expiresAt: null, revokedAt: null },
+        {
+          id: 1,
+          userId: 7,
+          modeId: 'audiobook',
+          source: 'admin',
+          createdAt: 1,
+          expiresAt: null,
+          revokedAt: null,
+        },
+        {
+          id: 2,
+          userId: 9,
+          modeId: 'audiobook',
+          source: 'admin',
+          createdAt: 1,
+          expiresAt: null,
+          revokedAt: null,
+        },
       ])
     )
     renderPage()
 
     /* 列表里那份说"还没有给任何账号开通" */
-    expect(await screen.findByTestId('mode-granted-audiobook')).toHaveTextContent(
-      'Private — nobody holds it yet'
-    )
+    expect(
+      await screen.findByTestId('mode-granted-audiobook')
+    ).toHaveTextContent('Private — nobody holds it yet')
 
     await openHolders(user, 'audiobook')
     await screen.findByTestId('mode-holders-list')
 
     /* ⚠ 要么重读列表、要么用名单那一次的结果回填 —— 两条路都行，**但必须在界面上变** */
     await waitFor(() =>
-      expect(screen.getByTestId('mode-granted-audiobook')).toHaveTextContent('2')
+      expect(screen.getByTestId('mode-granted-audiobook')).toHaveTextContent(
+        '2'
+      )
     )
   })
 
@@ -627,7 +738,9 @@ describe('模式管理', () => {
 
     await waitFor(() =>
       expect(
-        screen.getAllByText((_, el) => /run of digits/.test(el?.textContent ?? '')).length
+        screen.getAllByText((_, el) =>
+          /run of digits/.test(el?.textContent ?? '')
+        ).length
       ).toBeGreaterThan(0)
     )
     /*
@@ -646,7 +759,11 @@ describe('模式管理', () => {
      * 那一刻的状态是**未知** —— 未知不许画成"未开通"（点一下"开通"可能给一个已经有
      * 权限的人再插一行），所以那一格写着"状态读不到"、按钮禁用。
      */
-    let release: (value: { userId: number; items: never[]; active: string[] }) => void = () => {}
+    let release: (value: {
+      userId: number
+      items: never[]
+      active: string[]
+    }) => void = () => {}
     modeApi.listEntitlementsByUser.mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -659,15 +776,21 @@ describe('模式管理', () => {
     await screen.findByTestId('mode-grant-mv')
     await user.type(screen.getByLabelText('Account ID'), '7')
 
-    await waitFor(() => expect(rowOf('audiobook')).toHaveAttribute('data-state', 'unknown'))
-    expect(screen.getByTestId('mode-state-audiobook')).toHaveTextContent('Status unreadable')
+    await waitFor(() =>
+      expect(rowOf('audiobook')).toHaveAttribute('data-state', 'unknown')
+    )
+    expect(screen.getByTestId('mode-state-audiobook')).toHaveTextContent(
+      'Status unreadable'
+    )
     for (const row of [rowOf('mv'), rowOf('audiobook')]) {
       expect(within(row).getByRole('button')).toBeDisabled()
     }
 
     /* 读回来之后**还是那一块**（不换实例），只是状态变成"未开通" */
     release({ userId: 7, items: [], active: [] })
-    await waitFor(() => expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed'))
+    await waitFor(() =>
+      expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed')
+    )
   })
 
   test('★★ 在某一档上点「开通」→ 发出的是 user_id + mode_id + expires_at:0，然后**重新读**', async () => {
@@ -676,7 +799,9 @@ describe('模式管理', () => {
 
     await user.type(await screen.findByLabelText('Account ID'), '7')
     /* 私有那一档（`audiobook`）—— 它才是"要开通才能看见"的那一类 */
-    await waitFor(() => expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed'))
+    await waitFor(() =>
+      expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed')
+    )
 
     const grantCalls = modeApi.listEntitlementsByUser.mock.calls.length
     await user.click(actionOf('audiobook'))
@@ -695,10 +820,14 @@ describe('模式管理', () => {
      * "已开通"、用户那边什么都看不到。
      */
     await waitFor(() =>
-      expect(modeApi.listEntitlementsByUser.mock.calls.length).toBeGreaterThan(grantCalls)
+      expect(modeApi.listEntitlementsByUser.mock.calls.length).toBeGreaterThan(
+        grantCalls
+      )
     )
     /* 每档几个人那个数（模式库上那个）也要重读 */
-    await waitFor(() => expect(modeApi.listModes.mock.calls.length).toBeGreaterThan(1))
+    await waitFor(() =>
+      expect(modeApi.listModes.mock.calls.length).toBeGreaterThan(1)
+    )
   })
 
   test('★★ 已经开通的那一档：给的是「取消」，点它发的是 revoke', async () => {
@@ -708,20 +837,28 @@ describe('模式管理', () => {
 
     await user.type(await screen.findByLabelText('Account ID'), '7')
 
-    await waitFor(() => expect(rowOf('audiobook')).toHaveAttribute('data-state', 'open'))
+    await waitFor(() =>
+      expect(rowOf('audiobook')).toHaveAttribute('data-state', 'open')
+    )
     await user.click(actionOf('audiobook'))
 
-    await waitFor(() => expect(modeApi.revokeMode).toHaveBeenCalledWith(7, 'audiobook'))
+    await waitFor(() =>
+      expect(modeApi.revokeMode).toHaveBeenCalledWith(7, 'audiobook')
+    )
     /* 取消之后也是**重读**（不是把那一行就地改掉） */
     await waitFor(() =>
-      expect(modeApi.listEntitlementsByUser.mock.calls.length).toBeGreaterThan(1)
+      expect(modeApi.listEntitlementsByUser.mock.calls.length).toBeGreaterThan(
+        1
+      )
     )
   })
 
   test('★★ 读不到账号的授权时：说读不到，而不是画成"未开通"', async () => {
     const user = userEvent.setup()
     modeApi.listEntitlementsByUser.mockRejectedValue({
-      response: { data: { message: '读不到这个账号的模式授权（数据库连接失败）。' } },
+      response: {
+        data: { message: '读不到这个账号的模式授权（数据库连接失败）。' },
+      },
     })
     renderPage()
 
@@ -734,7 +871,9 @@ describe('模式管理', () => {
      */
     await screen.findByTestId('mode-entitlements-error')
     expect(screen.getByText(/数据库连接失败/)).toBeInTheDocument()
-    expect(screen.getByTestId('mode-state-mv')).toHaveTextContent('Status unreadable')
+    expect(screen.getByTestId('mode-state-mv')).toHaveTextContent(
+      'Status unreadable'
+    )
     /* ★ 每一档都在，而每一档的按钮都点不动（不是"那一块不见了"） */
     expect(rowOf('mv')).toHaveAttribute('data-state', 'unknown')
     for (const row of [rowOf('mv'), rowOf('audiobook')]) {
@@ -747,14 +886,17 @@ describe('模式管理', () => {
     modeApi.grantMode.mockRejectedValue({
       response: {
         data: {
-          message: 'mode: 模式库里没有 "ghost" 这一档，所以现在给它授权不会生效。',
+          message:
+            'mode: 模式库里没有 "ghost" 这一档，所以现在给它授权不会生效。',
         },
       },
     })
     renderPage()
 
     await user.type(await screen.findByLabelText('Account ID'), '7')
-    await waitFor(() => expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed'))
+    await waitFor(() =>
+      expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed')
+    )
     await user.click(actionOf('audiobook'))
 
     expect(await screen.findByTestId('mode-action-error')).toBeInTheDocument()
@@ -774,18 +916,29 @@ describe('模式管理', () => {
     renderPage()
 
     await user.type(await screen.findByLabelText('Account ID'), '7')
-    await waitFor(() => expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed'))
+    await waitFor(() =>
+      expect(rowOf('audiobook')).toHaveAttribute('data-state', 'closed')
+    )
     await user.click(actionOf('audiobook'))
 
-    expect(await screen.findByTestId('mode-action-error')).toHaveTextContent('账号 7 不存在。')
+    expect(await screen.findByTestId('mode-action-error')).toHaveTextContent(
+      '账号 7 不存在。'
+    )
   })
 
   test('★ 服务端没说目录时那一屏照样画得出来（不崩、不留白屏）', async () => {
-    modeApi.listModes.mockResolvedValue({ items: [], directory: '', knownMediums: [], note: '' })
+    modeApi.listModes.mockResolvedValue({
+      items: [],
+      directory: '',
+      knownMediums: [],
+      note: '',
+    })
     renderPage()
 
     /* 一档都没有时给一句能照做的话，而不是一个空框 */
-    expect(await screen.findByText(/holds no usable mode yet/)).toBeInTheDocument()
+    expect(
+      await screen.findByText(/holds no usable mode yet/)
+    ).toBeInTheDocument()
   })
 })
 
@@ -803,7 +956,9 @@ describe('★★ 编辑一档的分发策略（公开 / 私有）', () => {
     await user.click(await screen.findByTestId('mode-edit-audiobook'))
 
     /* 弹窗里那两格 */
-    expect(await screen.findByTestId('mode-meta-visibility')).toBeInTheDocument()
+    expect(
+      await screen.findByTestId('mode-meta-visibility')
+    ).toBeInTheDocument()
     /*
      * ⚠ 初值必须是**那一档自己的**（`audiobook` 是私有 + "音频那一档"）——
      * 拿第一档（`mv`）的值灌进去的话，运营一打开就看到错的可见性，
@@ -815,9 +970,9 @@ describe('★★ 编辑一档的分发策略（公开 / 私有）', () => {
     expect(screen.getByLabelText('Who can open it')).toHaveTextContent(
       'Private mode — opened per account'
     )
-    expect((screen.getByLabelText('One-line summary') as HTMLInputElement).value).toBe(
-      '音频那一档'
-    )
+    expect(
+      (screen.getByLabelText('One-line summary') as HTMLInputElement).value
+    ).toBe('音频那一档')
   })
 
   test('★★ 选「公开」+ 填说明 → 保存：发出的是那两格，而且**重读列表**', async () => {
@@ -837,10 +992,14 @@ describe('★★ 编辑一档的分发策略（公开 / 私有）', () => {
      */
     await user.click(screen.getByLabelText('Who can open it'))
     await user.click(
-      await screen.findByRole('option', { name: 'Public mode — anyone can open it' })
+      await screen.findByRole('option', {
+        name: 'Public mode — anyone can open it',
+      })
     )
 
-    const summary = screen.getByLabelText('One-line summary') as HTMLInputElement
+    const summary = screen.getByLabelText(
+      'One-line summary'
+    ) as HTMLInputElement
     await user.clear(summary)
     await user.type(summary, '有声书那一档（公开版）')
 
@@ -856,7 +1015,9 @@ describe('★★ 编辑一档的分发策略（公开 / 私有）', () => {
       expect(modeApi.listModes.mock.calls.length).toBeGreaterThan(loadCalls)
     )
     /* ★ 成功之后弹窗关掉（不关的话运营会对着一个已经存过的表单再点一次） */
-    await waitFor(() => expect(screen.queryByTestId('mode-meta-save')).toBeNull())
+    await waitFor(() =>
+      expect(screen.queryByTestId('mode-meta-save')).toBeNull()
+    )
   })
 
   test('★ 只改可见性时，说明**带着原值**一起发出去（不是空串）', async () => {
@@ -885,7 +1046,8 @@ describe('★★ 编辑一档的分发策略（公开 / 私有）', () => {
     modeApi.updateModeMeta.mockRejectedValue({
       response: {
         data: {
-          message: 'mode: 可见性只能写 public / private（收到的是 "publik"）—— 它决定这一档是「任何账号都能一键开通」还是「后台给了权限才显示」。',
+          message:
+            'mode: 可见性只能写 public / private（收到的是 "publik"）—— 它决定这一档是「任何账号都能一键开通」还是「后台给了权限才显示」。',
         },
       },
     })
@@ -950,7 +1112,10 @@ describe('★★ 添加模式（AI 一键生成）', () => {
 
     await user.type(screen.getByTestId('mode-create-label'), '美食探店')
     await user.type(screen.getByTestId('mode-create-summary'), '一分钟讲一家店')
-    await user.type(screen.getByTestId('mode-create-request'), '我要做美食探店类的短视频')
+    await user.type(
+      screen.getByTestId('mode-create-request'),
+      '我要做美食探店类的短视频'
+    )
 
     const loadCalls = modeApi.listModes.mock.calls.length
     await user.click(screen.getByTestId('mode-create-generate'))
@@ -970,9 +1135,13 @@ describe('★★ 添加模式（AI 一键生成）', () => {
     })
 
     /* ★★ 新那一档就在磁盘上了 —— 界面得跟着出现它 */
-    await waitFor(() => expect(modeApi.listModes.mock.calls.length).toBeGreaterThan(loadCalls))
+    await waitFor(() =>
+      expect(modeApi.listModes.mock.calls.length).toBeGreaterThan(loadCalls)
+    )
     /* ★ 成功之后弹窗关掉（不关的话运营会对着一个已经生成过的表单再点一次） */
-    await waitFor(() => expect(screen.queryByTestId('mode-create-generate')).toBeNull())
+    await waitFor(() =>
+      expect(screen.queryByTestId('mode-create-generate')).toBeNull()
+    )
   })
 
   test('★★ 生成失败时把服务端那句话**原样**摆出来（不做二次解释）', async () => {
@@ -1010,6 +1179,119 @@ describe('★★ 添加模式（AI 一键生成）', () => {
 
     await user.click(await screen.findByTestId('mode-create-open'))
 
-    expect(await screen.findByTestId('mode-keys-error')).toHaveTextContent('数据库连接失败')
+    expect(await screen.findByTestId('mode-keys-error')).toHaveTextContent(
+      '数据库连接失败'
+    )
+  })
+})
+
+/**
+ * ★★ 删掉一档模式（用户 2026-…："模式广场里面增加一个删除功能，可以删除某个模式"）。
+ *
+ * 这一组守四件事，每一件都是一种具体的坏法：
+ *
+ * | 守什么 | 坏了会怎样 |
+ * |---|---|
+ * | ★ **先确认再删** | 手滑点一下就把运营手写的模式文件删了（删的是文件，没有撤销） |
+ * | ★ **删完重读列表** | 界面上它不见了、而磁盘上还在（或者反过来） |
+ * | ★ **坏文件也能删** | 一份笔误的文件只能靠进服务器 `rm`，而运营进不去 |
+ * | ★ 删档按钮只在**空着 ID** 时出现 | 同一行上同时放"删这一档"与"开通给这个人"，点错的代价完全不同 |
+ */
+describe('删掉一档模式', () => {
+  test('★★ 空着 ID 时每一行有删除；填了 ID 之后它让位给「开通 / 取消开通」', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    /* ① 空着 ID：这一行管的是"这一档模式本身"—— 编辑 + 删除 */
+    await screen.findByTestId('mode-delete-mv')
+    expect(screen.getByTestId('mode-edit-mv')).toBeInTheDocument()
+
+    /* ② 填了 ID：同一个位置换成"这个人有没有权限"，删除跟着消失 */
+    await user.type(screen.getByLabelText('Account ID'), '7')
+    await waitFor(() =>
+      expect(screen.queryByTestId('mode-delete-mv')).toBeNull()
+    )
+    expect(screen.queryByTestId('mode-edit-mv')).toBeNull()
+  })
+
+  test('★★ 点删除先弹确认框；确认之前一次请求都不发', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(await screen.findByTestId('mode-delete-mv'))
+
+    /*
+     * ⚠★ 判据落在**确认框里那句话**上：它要说清删的是哪个文件，以及两件
+     * "不会发生"的事（用户机器上那份、授权行）—— 运营不问也会自己猜。
+     */
+    expect(await screen.findByText('Delete this mode?')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        DELETE_NOTE.replace('{{name}}', 'MV').replace(
+          '{{source}}',
+          `${DIR}/mv.json`
+        )
+      )
+    ).toBeInTheDocument()
+    expect(modeApi.deleteMode).not.toHaveBeenCalled()
+  })
+
+  test('★★ 确认之后删的是这一档，并**重读列表**（不在本地把那一行抹掉）', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(await screen.findByTestId('mode-delete-mv'))
+    const loadCalls = modeApi.listModes.mock.calls.length
+    await user.click(await screen.findByTestId('mode-delete-confirm'))
+
+    await waitFor(() => expect(modeApi.deleteMode).toHaveBeenCalledWith('mv'))
+    /* ★★ "删完还剩哪些"的答案在磁盘上 —— 所以是重读，不是本地删行 */
+    await waitFor(() =>
+      expect(modeApi.listModes.mock.calls.length).toBeGreaterThan(loadCalls)
+    )
+  })
+
+  test('★★ 坏文件也能删（它是"发不出去、干脆别要了"的那一份）', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    /* 坏文件那一块在下面那张卡里，而不在右栏（右栏只列能用的） */
+    await user.click(await screen.findByTestId('mode-delete-bad'))
+    await user.click(await screen.findByTestId('mode-delete-confirm'))
+
+    await waitFor(() => expect(modeApi.deleteMode).toHaveBeenCalledWith('bad'))
+  })
+
+  test('★ 取消之后什么都不会发生', async () => {
+    const user = userEvent.setup()
+    renderPage()
+
+    await user.click(await screen.findByTestId('mode-delete-mv'))
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() =>
+      expect(screen.queryByText('Delete this mode?')).toBeNull()
+    )
+    expect(modeApi.deleteMode).not.toHaveBeenCalled()
+  })
+
+  test('★ 删失败时把服务端那句话原样摆出来（不说"删掉了"）', async () => {
+    const user = userEvent.setup()
+    modeApi.deleteMode.mockRejectedValue({
+      response: {
+        data: {
+          message: 'mode: 删除 /srv/modes/mv.json 失败：permission denied',
+        },
+      },
+    })
+    renderPage()
+
+    await user.click(await screen.findByTestId('mode-delete-mv'))
+    await user.click(await screen.findByTestId('mode-delete-confirm'))
+
+    /* ⚠ 那句话落在列表上方那一格（与开通 / 取消同一个地方）—— 运营刚点的按钮旁边 */
+    expect(await screen.findByTestId('mode-action-error')).toHaveTextContent(
+      'permission denied'
+    )
   })
 })

@@ -65,12 +65,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
 	a.apiKey = info.ApiKey
 	if a.baseURL == "" {
-		switch info.ChannelType {
-		case constant.ChannelTypeRunningHubIntl:
-			a.baseURL = DefaultBaseURLIntl
-		default:
-			a.baseURL = DefaultBaseURL
-		}
+		a.baseURL = baseURLForChannelType(info.ChannelType)
 	}
 	a.userAgent = DefaultUserAgent
 }
@@ -182,20 +177,23 @@ func extractKindFromMetadata(m map[string]any) string {
 // the URL instead and is unaffected.
 const RhAppModelPrefix = "rh-app-"
 
-// resolveUpstreamIDForModel maps a model name to the upstream app id used in the
-// submit URL.
+// resolveUpstreamIDForModel maps a model name to the upstream application id
+// used in the submit URL.
 //
-//   - `rh-app-<id>` → that app row's UpstreamID (and, when the row is missing,
-//     an error so the caller reports a readable cause instead of posting to
-//     `/run/ai-app/rh-app-3`, which upstream answers with a generic 901).
+//   - `rh-app-<id>` → that app row's identifier for the site of the channel the
+//     request runs through (see appUpstreamIDFor); when the row is missing, an
+//     error, so the caller reports a readable cause instead of posting to
+//     `/run/ai-app/rh-app-3`, which upstream answers with a generic 901.
 //   - anything else → returned unchanged: the historical convention (the bare
 //     upstream id is the model name) keeps working, as do hand-written channel
 //     entries.
 //
+// channelType scopes the answer to one site. 0 means "no site context": the
+// app's primary identifier is used, which is what an app without a site runs on.
 // A DB failure is reported to the caller rather than silently falling back: a
 // fallback would submit a request upstream cannot resolve, and the resulting
 // error would point at the wrong place.
-func resolveUpstreamIDForModel(model string) (string, error) {
+func resolveUpstreamIDForModel(model string, channelType int) (string, error) {
 	app, err := appForModel(model)
 	if err != nil {
 		return "", err
@@ -206,10 +204,12 @@ func resolveUpstreamIDForModel(model string) (string, error) {
 		// channel entries.
 		return strings.TrimSpace(model), nil
 	}
-	if strings.TrimSpace(app.UpstreamID) == "" {
-		return "", fmt.Errorf("应用 %s 没有配置上游应用 ID，无法提交", model)
+	upstreamID := appUpstreamIDFor(app, siteForChannelType(channelType))
+	if upstreamID == "" {
+		return "", fmt.Errorf("应用 %s 没有配置站点 %q 的上游应用 ID，无法提交",
+			model, siteName(siteForChannelType(channelType)))
 	}
-	return app.UpstreamID, nil
+	return upstreamID, nil
 }
 
 // appForModel resolves the RunningHub app a submit request addresses, or nil
@@ -280,18 +280,19 @@ func appInstanceTypeFor(c *gin.Context, model string) string {
 // BuildRequestURL composes the submit URL using info.Action to decide which
 // RH path to POST to. The app id travels in the model name (see
 // resolveUpstreamIDForModel): either the bare upstream id (historical
-// convention) or the gateway form `rh-app-<row id>`.
+// convention) or the gateway form `rh-app-<row id>`, which is resolved to the
+// id this app uses on the channel's site.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info == nil {
 		return "", fmt.Errorf("nil relay info")
 	}
 	base := a.baseURL
+	channelType := a.ChannelType
+	if info.ChannelType != 0 {
+		channelType = info.ChannelType
+	}
 	if base == "" {
-		if a.ChannelType == constant.ChannelTypeRunningHubIntl {
-			base = DefaultBaseURLIntl
-		} else {
-			base = DefaultBaseURL
-		}
+		base = baseURLForChannelType(channelType)
 	}
 	model := strings.TrimSpace(info.OriginModelName)
 	switch info.Action {
@@ -299,7 +300,7 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 		if model == "" {
 			return "", fmt.Errorf("runninghub: origin model (app id) is empty")
 		}
-		upstreamID, err := resolveUpstreamIDForModel(model)
+		upstreamID, err := resolveUpstreamIDForModel(model, channelType)
 		if err != nil {
 			return "", err
 		}
@@ -308,7 +309,7 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 		if model == "" {
 			return "", fmt.Errorf("runninghub: origin model (workflow id) is empty")
 		}
-		upstreamID, err := resolveUpstreamIDForModel(model)
+		upstreamID, err := resolveUpstreamIDForModel(model, channelType)
 		if err != nil {
 			return "", err
 		}
@@ -554,11 +555,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	// endpoint because it's the same POST regardless of app/workflow kind.
 	_ = body["action"]
 	if baseURL == "" {
-		if a.ChannelType == constant.ChannelTypeRunningHubIntl {
-			baseURL = DefaultBaseURLIntl
-		} else {
-			baseURL = DefaultBaseURL
-		}
+		baseURL = baseURLForChannelType(a.ChannelType)
 	}
 	fullURL := strings.TrimRight(baseURL, "/") + PathQueryTask
 	qbody := QueryBody{TaskID: taskID}

@@ -53,23 +53,39 @@ type ParameterOption struct {
 	Value string `json:"value"`
 }
 
+// AppSiteUpstream holds one site's upstream identifiers for an app: the RH
+// application id the site answers to (Upstream ID) and the admin's own
+// identifier for it (Identifier). Both are per site because the same workflow
+// lives under different ids on the domestic and international deployments.
+type AppSiteUpstream struct {
+	UpstreamID string `json:"upstreamId"`
+	Slug       string `json:"slug"`
+}
+
 // App mirrors the new-api level representation of a RunningHub application.
-// Upstream identifiers live in Kind + UpstreamID; anything the admin edits
-// (display, pricing, parameter schema) is stored here independently.
+// Upstream identifiers live in Kind + SiteUpstreams (one entry per site, see
+// sites.go); anything the admin edits (display, pricing, parameter schema) is
+// stored here independently.
 type App struct {
 	ID        uint           `gorm:"primarykey"                                 json:"id"`
 	CreatedAt time.Time      `json:"createdAt"`
 	UpdatedAt time.Time      `json:"updatedAt"`
 	DeletedAt gorm.DeletedAt `gorm:"index"                                    json:"-"`
 
-	Name        string  `gorm:"type:varchar(191);not null;uniqueIndex"   json:"name"`
-	Slug        string  `gorm:"type:varchar(191);index"                  json:"slug"`
-	Kind        AppKind `gorm:"type:varchar(32);not null;index"          json:"kind"`
-	UpstreamID  string  `gorm:"type:varchar(191);not null;index"         json:"upstreamId"`
-	Description string  `gorm:"type:text"                                json:"description"`
-	CoverURL    string  `gorm:"type:varchar(768)"                        json:"coverUrl"`
-	Published   bool    `gorm:"index"                                     json:"published"`
-	AdminOnly   bool    `gorm:"index"                                     json:"adminOnly"`
+	Name string  `gorm:"type:varchar(191);not null;uniqueIndex"   json:"name"`
+	Slug string  `gorm:"type:varchar(191);index"                  json:"slug"`
+	Kind AppKind `gorm:"type:varchar(32);not null;index"          json:"kind"`
+	// UpstreamID is the app's PRIMARY upstream id: the identifier of the site
+	// the app itself runs on (see App.Site). Everything outside the submit URL
+	// keys off it — it is the model name the run is billed and routed under, the
+	// key of the host model price table, and the name the channel pools list. It
+	// is derived from SiteUpstreamsText on save (see primaryIdentifiers) and is
+	// never edited directly on the form.
+	UpstreamID  string `gorm:"type:varchar(191);not null;index"         json:"upstreamId"`
+	Description string `gorm:"type:text"                                json:"description"`
+	CoverURL    string `gorm:"type:varchar(768)"                        json:"coverUrl"`
+	Published   bool   `gorm:"index"                                     json:"published"`
+	AdminOnly   bool   `gorm:"index"                                     json:"adminOnly"`
 
 	// Sort is the display position the admin arranges by dragging rows on
 	// /rh-apps: a LARGER value shows earlier, and both the admin list and the
@@ -85,11 +101,19 @@ type App struct {
 	// integer reference by design — see AppCategory).
 	CategoryID uint `gorm:"index;default:0" json:"categoryId"`
 
-	// Site scopes the submit path to a RunningHub site (cn / intl). The site is
-	// the authoritative routing input: submit picks an enabled channel from the
-	// site's channel-type pool (RunningHub 61 for cn, RunningHub 国际站 62 for
-	// intl). It pairs with the channel types in the /channels page.
+	// Site scopes the submit path to a RunningHub site (see sites.go). The site
+	// is the authoritative routing input: submit picks an enabled channel from
+	// the site's channel-type pool (RunningHub 61 for cn, RunningHub 国际站 62 for
+	// intl), and the app submits on that site's upstream id (see
+	// SiteUpstreamsText).
 	Site string `gorm:"type:varchar(16);index"                      json:"site"`
+
+	// SiteUpstreamsText stores the per-site upstream identifiers as JSON text,
+	// keyed by site key: {"cn":{"upstreamId":"…","slug":"…"}, …}. TEXT (not a
+	// JSON column) keeps it portable across SQLite / MySQL < 5.7.8 /
+	// PostgreSQL < 9.6 — see AGENTS.md. A row written before this column existed
+	// holds one identifier instead, in UpstreamID/Slug; see appSiteUpstreams.
+	SiteUpstreamsText string `gorm:"type:text;column:site_upstreams"        json:"-"`
 
 	// ParamSchema stores the JSON text of the user-facing parameter list. We
 	// intentionally persist as TEXT (not JSON column) for cross-DB compatibility
@@ -211,5 +235,34 @@ func (a *App) SetParamSchema(schema []FieldParam) error {
 		return err
 	}
 	a.ParamSchemaText = string(data)
+	return nil
+}
+
+// StoredSiteUpstreams returns the per-site upstream identifiers exactly as
+// persisted, without the legacy fallback (see appSiteUpstreams for the resolved
+// view). An app saved before per-site identifiers existed has none stored, so
+// the result is empty.
+func (a *App) StoredSiteUpstreams() (map[string]AppSiteUpstream, error) {
+	if a.SiteUpstreamsText == "" || a.SiteUpstreamsText == "null" {
+		return map[string]AppSiteUpstream{}, nil
+	}
+	out := map[string]AppSiteUpstream{}
+	if err := common.UnmarshalJsonStr(a.SiteUpstreamsText, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetSiteUpstreams persists the per-site upstream identifiers as JSON text.
+func (a *App) SetSiteUpstreams(bySite map[string]AppSiteUpstream) error {
+	if len(bySite) == 0 {
+		a.SiteUpstreamsText = ""
+		return nil
+	}
+	data, err := common.Marshal(bySite)
+	if err != nil {
+		return err
+	}
+	a.SiteUpstreamsText = string(data)
 	return nil
 }

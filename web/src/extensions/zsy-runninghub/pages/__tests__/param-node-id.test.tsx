@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   listApps: vi.fn(),
+  listSites: vi.fn(),
   listCategories: vi.fn(),
   createApp: vi.fn(),
   updateApp: vi.fn(),
@@ -67,6 +68,9 @@ const storedApp: AppView = {
   slug: '2051268528824700930',
   kind: 'ai_app',
   upstreamId: '2051268528824700930',
+  siteUpstreams: {
+    cn: { upstreamId: '2051268528824700930', slug: '2051268528824700930' },
+  },
   description: '',
   coverUrl: '',
   published: true,
@@ -124,6 +128,10 @@ beforeEach(() => {
     totalPages: 1,
     kindCounts: { ai_app: 1 },
   })
+  api.listSites.mockResolvedValue([
+    { key: 'cn', label: 'RunningHub', channelType: 61 },
+    { key: 'intl', label: 'RunningHub Intl', channelType: 62 },
+  ])
   api.listCategories.mockResolvedValue([])
   api.createApp.mockResolvedValue(storedApp)
   api.updateApp.mockResolvedValue(storedApp)
@@ -190,7 +198,10 @@ describe('RunningHub parameter node id editing', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Create App' }))
     await user.type(screen.getByLabelText('App Name'), 'Image Upscaler')
-    await user.type(screen.getByLabelText('Upstream ID'), '2051268528824700930')
+    await user.type(
+      screen.getByLabelText('RunningHub Upstream ID'),
+      '2051268528824700930'
+    )
     await user.click(screen.getByRole('button', { name: 'Add Parameter' }))
 
     await user.type(screen.getByLabelText('Node ID'), '642')

@@ -460,6 +460,47 @@ func nonNilModeIDs(active map[string]bool) []string {
 	return out
 }
 
+// deleteMode (DELETE /dashboard/zsy/mode/:id)
+//
+// ★★ 删掉一档模式（用户 2026-…："模式广场里面增加一个删除功能，可以删除某个模式"）。
+//
+// # ⚠★ 删的是**磁盘上那个文件**，不是数据库里的一行
+//
+// 模式的存量是文件（`catalog.go` 文件头那段取舍），所以这个动作就是"把这一个文件
+// 从模式目录里拿掉" —— 与界面上那句"adding or removing a mode is adding or
+// removing a file"逐字一致。删完**下一次请求立刻生效**：公开面每次都重新读盘，
+// 没有任何缓存要清。
+//
+// ⚠ 授权行**不动**（`DeleteMode` 的注释写了为什么：删错了把同名文件放回去，
+// 权限自己回来）。所以回包里把"这一档原来给了几个账号"一并带上 ——
+// 界面据此说清"那些人手上的权限还在，只是这一档暂时不存在了"。
+func deleteMode(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	/*
+	 * ⚠ 人数在**删之前**读不到也不影响这一次删除：它只用于那句提示。
+	 * `liveGrantCountOf` 读失败时给 -1，界面据此说"人数读不到"而不是"0 个人"。
+	 */
+	granted := liveGrantCountOf(id)
+
+	row, err := DeleteMode(id)
+	if err != nil {
+		/* ⚠ 那几句话已经是**能照做**的（哪一档没有、哪个文件删不动），原样透出去 */
+		common.ApiErrorMsg(c, err.Error())
+		return
+	}
+
+	common.SysLog(fmt.Sprintf(
+		"[zsy-mode] deleted mode=%q label=%q file=%q granted=%d problem=%q by admin",
+		row.ID, row.Label, row.Source, granted, row.Problem))
+	common.ApiSuccess(c, gin.H{
+		"id":      row.ID,
+		"label":   row.Label,
+		"source":  row.Source,
+		"deleted": true,
+		"granted": granted,
+	})
+}
+
 // adminMetaParams is the body of POST …/:id/meta.
 //
 // ⚠ 请求体是**下划线**（宿主 dashboard 那一套），与 `adminGrantParams` 同一条。

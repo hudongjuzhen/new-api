@@ -9,7 +9,12 @@ arrive with a fresh name before it can be saved; everything else is copied as
 is and left to the admin to adjust in the form.
 */
 
-import type { AppCreateDTO, AppView, SchemaParam } from '../api'
+import type {
+  AppCreateDTO,
+  AppView,
+  SchemaParam,
+  SiteUpstreamMap,
+} from '../api'
 
 /** Suffix appended to the source name of a duplicated record. */
 const COPY_NAME_SUFFIX = '_copy'
@@ -24,13 +29,29 @@ function cloneParamSchema(params: SchemaParam[]): SchemaParam[] {
   )
 }
 
+/** Same for the per-site identifiers: the draft must not share entry objects
+ * with the cached row, or a copied record would edit the original's values. */
+function cloneSiteUpstreams(
+  bySite: SiteUpstreamMap | undefined
+): SiteUpstreamMap {
+  const out: SiteUpstreamMap = {}
+  for (const [key, entry] of Object.entries(bySite ?? {})) {
+    out[key] = { ...entry }
+  }
+  return out
+}
+
 /** Faithful draft of a stored app, shaped as the create/update payload. */
 export function appToCreateDTO(app: AppView): AppCreateDTO {
   return {
     name: app.name,
     slug: app.slug,
     kind: app.kind,
+    // The legacy pair is carried along so a row saved before per-site
+    // identifiers existed still round-trips even if the identifier map came
+    // back empty from an older backend.
     upstreamId: app.upstreamId,
+    siteUpstreams: cloneSiteUpstreams(app.siteUpstreams),
     description: app.description,
     coverUrl: app.coverUrl,
     published: app.published,

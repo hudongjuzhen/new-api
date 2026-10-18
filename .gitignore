@@ -47,3 +47,6 @@ go.work
 go.work.sum
 
 uploads/
+
+# 本地脚本的输出（模式同步 / 修复的预览文件）
+_scripts/out/

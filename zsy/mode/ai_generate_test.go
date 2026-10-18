@@ -151,6 +151,195 @@ func TestModeShapeTemplate_KeepsTheContractAndDropsTheProse(t *testing.T) {
 	assert.Equal(t, modeFormat, parsed["format"])
 }
 
+// TestModeShapeTemplate_KeepsTheCellTypes 盯的是"示例里那几格的**类型**"。
+//
+// ★★ 这是 2026-10-14 修的那个真缺陷的守卫：示例原来把 `instruction`（23 格）
+// 与 `audio`（15 格）各压成**一个字符串**，于是模型看到的形状就是
+// "instruction 是一个字符串"，它照着写了 —— 而客户端那一边 `instruction`
+// 必须是对象，读不到那 23 格就**整节回落成内置 mv 的提示词**。
+// 用户那边的表现是：自己那一档的说明明明写着「你是资深短剧编剧…」，
+// 跑起来发出去的却是「请你作为顶级MV导演…」。
+func TestModeShapeTemplate_KeepsTheCellTypes(t *testing.T) {
+	useModeDir(t, map[string]string{"sample.json": aValidModeWithWords("sample", "video")})
+
+	template := modeShapeTemplate()
+	var parsed map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(template, &parsed))
+
+	dialog, ok := parsed["planDialog"].(map[string]any)
+	require.True(t, ok, "示例里应当有 planDialog")
+
+	/* ① instruction 还是**对象**，而且再下一层也是（模型靠这个看见那 23 格） */
+	instruction, ok := dialog["instruction"].(map[string]any)
+	require.True(t, ok, "planDialog.instruction 在示例里必须是对象，不能是一句话")
+	assert.Contains(t, instruction, "skeleton")
+	assert.Contains(t, instruction, "framing")
+	framing, ok := instruction["framing"].(map[string]any)
+	require.True(t, ok, "framing 在示例里也必须是对象（它自己是一层格子）")
+	assert.Contains(t, framing, "specHeading")
+	labels, ok := framing["sectionLabels"].(map[string]any)
+	require.True(t, ok, "再下一层（sectionLabels）同样是对象")
+	assert.Contains(t, labels, "summary")
+	/* ⚠ 数组那一格仍然是数组（类型变了模型就学错形状） */
+	_, isList := instruction["techniquesAiList"].([]any)
+	assert.True(t, isList, "数组那一格在示例里必须还是数组")
+
+	/* ② audio 也必须是对象（同一条理由） */
+	audio, ok := dialog["audio"].(map[string]any)
+	require.True(t, ok, "planDialog.audio 在示例里必须是对象，不能是一句话")
+	assert.Contains(t, audio, "audioScriptLead")
+	_, genIsMap := audio["gen"].(map[string]any)
+	assert.True(t, genIsMap, "audio.gen 也留着形状")
+
+	/* ③ templates 是**字符串数组**：写成对象数组的话客户端会读成 "[object Object]" */
+	templates, ok := dialog["templates"].([]any)
+	require.True(t, ok, "planDialog.templates 必须是数组")
+	require.NotEmpty(t, templates)
+	_, firstIsString := templates[0].(string)
+	assert.True(t, firstIsString, "templates 的每一条都必须是字符串（开场白就在第 0 条）")
+}
+
+// TestBuildModeCreateInstruction_NailsTheContractCells 盯的是提示词**有没有把话说清**。
+//
+// ⚠ 光让示例"形状对"是不够的：模型还得知道**这几格的类型是硬契约**、
+// 以及写错的后果是什么。这一条把那段话钉住 —— 它被删掉时没有任何别的用例会红。
+func TestBuildModeCreateInstruction_NailsTheContractCells(t *testing.T) {
+	useModeDir(t, map[string]string{"sample.json": aValidModeWithWords("sample", "video")})
+
+	prompt := buildModeCreateInstruction("我要做短剧", "短剧", "video", "一集一集地做", "short-drama")
+
+	assert.Contains(t, prompt, "planDialog.instruction 必须是对象", "没告诉模型 instruction 的类型")
+	assert.Contains(t, prompt, "planDialog.templates 必须是字符串数组", "没告诉模型 templates 的类型")
+	assert.Contains(t, prompt, "planDialog.audio 必须是对象", "没告诉模型 audio 的类型")
+	assert.Contains(t, prompt, "videoKind", "没告诉模型视频那一家的 videoKind")
+	assert.Contains(t, prompt, "顶级MV导演", "没把「写错的后果」说清（这一句正是用户看到的那一句）")
+}
+
+// TestGeneratedModeProblem_CatchesWhatTheClientWouldSilentlyFallBackOn 是本轮那条真缺陷的守卫。
+//
+// ★★ 判据的来源是**客户端真的读法**（`core/workModes.js` 的回落链）：
+// 类型写错**不会报错**，而是逐格/整节回落成内置 mv 那一套 —— 于是
+// "模式装上了、看着正常，跑起来却是别人的提示词"。所以这一道闸必须在**落盘之前**。
+func TestGeneratedModeProblem_CatchesWhatTheClientWouldSilentlyFallBackOn(t *testing.T) {
+	cases := []struct {
+		name  string
+		spoil func(m map[string]any)
+		want  string
+	}{
+		{
+			name: "instruction 写成了一个字符串（真踩过的那一次）",
+			spoil: func(m map[string]any) {
+				m["planDialog"].(map[string]any)["instruction"] = "你是资深短剧编剧兼分镜导演…"
+			},
+			want: "instruction 应当是**对象**",
+		},
+		{
+			name: "instruction 整节没了（视频类作品）",
+			spoil: func(m map[string]any) {
+				delete(m["planDialog"].(map[string]any), "instruction")
+			},
+			want: "instruction 应当是**对象**",
+		},
+		{
+			name: "framing 被并成一句话",
+			spoil: func(m map[string]any) {
+				m["planDialog"].(map[string]any)["instruction"].(map[string]any)["framing"] = "（参考那一节）"
+			},
+			want: "framing 应当是**对象**",
+		},
+		{
+			name: "audio 被并成一句话",
+			spoil: func(m map[string]any) {
+				m["planDialog"].(map[string]any)["audio"] = "规划每集的配音与音乐。"
+			},
+			want: "audio 应当是**对象**",
+		},
+		{
+			name: "templates 里混进了对象（开场白会丢成 [object Object]）",
+			spoil: func(m map[string]any) {
+				m["planDialog"].(map[string]any)["templates"] = []any{
+					map[string]any{"label": "逆袭爽剧", "prompt": "节奏快、反转密集"},
+				}
+			},
+			want: "templates 第 0 条不是字符串",
+		},
+		{
+			name: "templates 整格写成了一个字符串",
+			spoil: func(m map[string]any) {
+				m["planDialog"].(map[string]any)["templates"] = "都市逆袭 / 悬疑反转 / 情感甜宠"
+			},
+			want: "templates 应当是**字符串数组**",
+		},
+		{
+			name: "templates 是空的",
+			spoil: func(m map[string]any) {
+				m["planDialog"].(map[string]any)["templates"] = []any{}
+			},
+			want: "至少要有第 0 条",
+		},
+		{
+			name: "words 少了几格",
+			spoil: func(m map[string]any) {
+				delete(m["words"].(map[string]any), "planDialog")
+			},
+			want: "words 少写了",
+		},
+		{
+			name:  "videoKind 是客户端那个兜底值 other",
+			spoil: func(m map[string]any) { m["videoKind"] = "other" },
+			want:  "videoKind 应当是",
+		},
+		{
+			name:  "videoKind 干脆没写",
+			spoil: func(m map[string]any) { delete(m, "videoKind") },
+			want:  "videoKind 应当是",
+		},
+		{
+			name: "形状提示被当成了内容（「（这一格写什么）」）",
+			spoil: func(m map[string]any) {
+				m["planDialog"].(map[string]any)["instruction"].(map[string]any)["skeleton"] = "（这一格写什么）"
+			},
+			want: "形状提示",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			useModeDir(t, map[string]string{"sample.json": aValidModeWithWords("sample", "video")})
+			generated := generatedFrom(t, "food-shop", "美食探店", "video")
+			/* 这一档要当视频类审，所以 videoKind 得先有一份合法的 */
+			generated["videoKind"] = videoKindAudio
+			tc.spoil(generated)
+
+			problem := generatedModeProblem(generated, "video", "food-shop")
+			require.NotEmpty(t, problem, "这一份应当被拦下")
+			assert.Contains(t, problem, tc.want)
+		})
+	}
+}
+
+// TestGeneratedModeProblem_AcceptsWhatTheModelShouldWrite 是上面那一条的反面。
+//
+// ⚠★ 没有这一条的话，把函数写成 `return "不合格"` 也全绿 —— 而"生成一次都成功不了"
+// 比"偶尔放过一份坏的"更坏（用户点一下、等半天、拿到一句"请把需求写得更具体一点再试一次"）。
+func TestGeneratedModeProblem_AcceptsWhatTheModelShouldWrite(t *testing.T) {
+	useModeDir(t, map[string]string{"sample.json": aValidModeWithWords("sample", "video")})
+
+	/* ① 视频那一档：instruction + audio + videoKind 都在 */
+	video := generatedFrom(t, "food-shop", "美食探店", "video")
+	video["videoKind"] = videoKindFrame
+	assert.Empty(t, generatedModeProblem(video, "video", "food-shop"))
+
+	/* ② 音频那一档：**刻意不写** instruction / audio / videoKind（那一节讲的是镜头） */
+	audio := generatedFrom(t, "mypodcast", "我的播客", "audio")
+	delete(audio["planDialog"].(map[string]any), "instruction")
+	delete(audio["planDialog"].(map[string]any), "audio")
+	assert.Empty(t, generatedModeProblem(audio, "audio", "mypodcast"))
+
+	/* ③ 判据跟着**磁盘上那几份**走：words 的键集来自模式库，不是写死的一张表 */
+	require.NotEmpty(t, modeWordKeys(), "先决条件：模式库里得有文件，不然 words 那一节无从判起")
+}
+
 func TestBuildModeCreateInstruction_ListsEveryWordKeyFromTheShippedModes(t *testing.T) {
 	/*
 	 * ★★ 字段清单必须是**从磁盘上真的那几份模式里生成**的：手写一份就会与真实契约
@@ -169,6 +358,11 @@ func TestBuildModeCreateInstruction_ListsEveryWordKeyFromTheShippedModes(t *test
 }
 
 // aValidModeWithWords builds a mode file with a realistic `words` section.
+//
+// ⚠★ `planDialog` 那几格的**类型**是这一份夹具的重点（2026-…）：
+// `instruction` / `audio` 是**对象**、`templates` 是**字符串数组** —— 与真文件同形。
+// 从前这里把 `audio` 写成一个字符串，于是"示例里 instruction 是个字符串"
+// 那类缺陷在这份夹具上一点都看不出来（真实踩过的那一次就是这样溜过去的）。
 func aValidModeWithWords(id, medium string) string {
 	return `{
   "format": "aimv-work-mode",
@@ -185,9 +379,15 @@ func aValidModeWithWords(id, medium string) string {
   "requires": { "audio": true, "lyrics": false, "refs": false, "segments": true },
   "planDialog": {
     "label": "AI 全稿规划",
-    "instruction": { "skeleton": "（六个分节的骨架）", "techniquesAiList": ["一", "二"] },
+    "title": "AI 全稿规划",
+    "instruction": {
+      "skeleton": "（六个分节的骨架）",
+      "ruleCutPoints": "（切点怎么选）",
+      "framing": { "specHeading": "【参考】", "sectionLabels": { "summary": "概述" } },
+      "techniquesAiList": ["一", "二"]
+    },
     "templates": ["这是模板里的第一条"],
-    "audio": "音频提示词"
+    "audio": { "audioScriptLead": "（音频脚本怎么写）", "gen": { "maxSecs": 100 } }
   },
   "libraries": [
     { "id": "characters", "label": "角色库", "dir": "characters", "itemFile": "item.json",
@@ -195,6 +395,23 @@ func aValidModeWithWords(id, medium string) string {
   ],
   "extraButtons": []
 }`
+}
+
+// generatedFrom builds the map `GenerateMode` validates: the model's JSON plus
+// the identity cells we override ourselves.
+//
+// ⚠★ 上面拿它建"合法的那一份"、下面那一条建"要落地的那一份" —— 两处共用同一个形状，
+// 所以"模型回包 → 覆盖身份 → 校验 → 落盘"这条链上**只有一处**定义什么叫合法。
+func generatedFrom(t *testing.T, id, label, medium string) map[string]any {
+	t.Helper()
+	generated := map[string]any{}
+	require.NoError(t, common.UnmarshalJsonStr(aValidModeWithWords(id, medium), &generated))
+	generated["format"] = modeFormat
+	generated["formatVersion"] = modeFormatVersion
+	generated["id"] = id
+	generated["label"] = label
+	generated["medium"] = medium
+	return generated
 }
 
 func TestGeneratedModeIsAcceptedAndStored(t *testing.T) {

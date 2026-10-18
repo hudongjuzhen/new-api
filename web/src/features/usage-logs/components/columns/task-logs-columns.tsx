@@ -250,69 +250,89 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const log = row.original
         const failReason = row.getValue('fail_reason') as string
         const status = log.status
+        // The caller's own note for this run ("生成 30 秒视频"). It is the only
+        // thing on the row that says what was asked for, so it is rendered above
+        // the result / error text — those only say what came out of the run.
+        const remark = (log.remark ?? '').trim()
         const [dialogOpen, setDialogOpen] = useState(false)
 
-        const isSunoSuccess =
-          log.platform === 'suno' && status === TASK_STATUS.SUCCESS
-        if (isSunoSuccess) {
-          const data = parseTaskData(log.data)
-          if (
-            data.some(
-              (c) =>
-                c &&
-                typeof c === 'object' &&
-                (c as Record<string, unknown>).audio_url
-            )
-          ) {
-            return <AudioPreviewCell log={log} />
+        const primary = (() => {
+          const isSunoSuccess =
+            log.platform === 'suno' && status === TASK_STATUS.SUCCESS
+          if (isSunoSuccess) {
+            const data = parseTaskData(log.data)
+            if (
+              data.some(
+                (c) =>
+                  c &&
+                  typeof c === 'object' &&
+                  (c as Record<string, unknown>).audio_url
+              )
+            ) {
+              return <AudioPreviewCell log={log} />
+            }
           }
-        }
 
-        const isVideoTask =
-          log.action === TASK_ACTIONS.GENERATE ||
-          log.action === TASK_ACTIONS.TEXT_GENERATE ||
-          log.action === TASK_ACTIONS.FIRST_TAIL_GENERATE ||
-          log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
-          log.action === TASK_ACTIONS.REMIX_GENERATE
-        const isSuccess = status === TASK_STATUS.SUCCESS
-        const isUrl = failReason?.startsWith('http')
+          const isVideoTask =
+            log.action === TASK_ACTIONS.GENERATE ||
+            log.action === TASK_ACTIONS.TEXT_GENERATE ||
+            log.action === TASK_ACTIONS.FIRST_TAIL_GENERATE ||
+            log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
+            log.action === TASK_ACTIONS.REMIX_GENERATE
+          const isSuccess = status === TASK_STATUS.SUCCESS
+          const isUrl = failReason?.startsWith('http')
 
-        if (isSuccess && isVideoTask && isUrl) {
-          const videoUrl = `/v1/videos/${log.task_id}/content`
+          if (isSuccess && isVideoTask && isUrl) {
+            const videoUrl = `/v1/videos/${log.task_id}/content`
+            return (
+              <a
+                href={videoUrl}
+                target='_blank'
+                rel='noopener noreferrer'
+                className='text-foreground text-xs hover:underline'
+              >
+                {t('Click to preview video')}
+              </a>
+            )
+          }
+
+          if (!failReason) {
+            return <span className='text-muted-foreground/60 text-xs'>-</span>
+          }
+
           return (
-            <a
-              href={videoUrl}
-              target='_blank'
-              rel='noopener noreferrer'
-              className='text-foreground text-xs hover:underline'
-            >
-              {t('Click to preview video')}
-            </a>
+            <>
+              <button
+                type='button'
+                className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
+                onClick={() => setDialogOpen(true)}
+                title={t('Click to view full error message')}
+              >
+                <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
+                  {failReason}
+                </span>
+              </button>
+              <FailReasonDialog
+                failReason={failReason}
+                open={dialogOpen}
+                onOpenChange={setDialogOpen}
+              />
+            </>
           )
-        }
+        })()
 
-        if (!failReason) {
-          return <span className='text-muted-foreground/60 text-xs'>-</span>
-        }
+        if (!remark) return primary
 
         return (
-          <>
-            <button
-              type='button'
-              className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
-              onClick={() => setDialogOpen(true)}
-              title={t('Click to view full error message')}
+          <div className='flex max-w-[200px] flex-col gap-0.5'>
+            <span
+              className='text-foreground/90 truncate text-xs leading-snug'
+              title={remark}
             >
-              <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
-                {failReason}
-              </span>
-            </button>
-            <FailReasonDialog
-              failReason={failReason}
-              open={dialogOpen}
-              onOpenChange={setDialogOpen}
-            />
-          </>
+              {remark}
+            </span>
+            {primary}
+          </div>
         )
       },
       size: 200,

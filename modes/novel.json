@@ -7,6 +7,7 @@
   "label": "小说",
   "medium": "text",
   "workScale": "serial",
+  "videoKind": "other",
   "words": {
     "audio": "导入音频",
     "audioNone": "",
@@ -46,13 +47,6 @@
     "audioScriptName": "音频脚本",
     "audioGenerateHint": "这一屏要发出去的音频提示词（音色表 + 音频脚本）。"
   },
-  "appRows": {
-    "sd": "5",
-    "hd": "10",
-    "upscale": "9",
-    "faceswap": "12",
-    "edit": "11"
-  },
   "lipSync": {
     "when": "byScenario",
     "text": "人物开口时，嘴唇与下颌要随音频逐音节精准开合，只在真正出声的音节上开闭，绝不脱离音频独立动作。（这一档交付的是文字，没有画面。）"
@@ -71,6 +65,7 @@
   "planDialog": {
     "label": "AI 本章规划",
     "title": "AI 本章规划",
+    "impl": "song",
     "templates": [
       "请你作为小说家，接着这一章已有的正文，按下面的写法把这一章写下去：",
       "请你作为小说家，接着这一章已有的正文，按下面的写法把这一章写下去：\n贴着人物写：只写这个人物能感知到的东西（他看见、听见、想到的），不写他不知道的事。",

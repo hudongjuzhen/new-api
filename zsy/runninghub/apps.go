@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/zsy/runninghub/rhparser"
@@ -65,6 +64,10 @@ type AppView struct {
 	CoverURL    string  `json:"coverUrl"`
 	Published   bool    `json:"published"`
 	AdminOnly   bool    `json:"adminOnly"`
+	// SiteUpstreams is the per-site upstream id / identifier map the admin
+	// edits, keyed by site key (see sites.go). Every registered site has an
+	// entry, so the form can render one block per site without guessing.
+	SiteUpstreams map[string]AppSiteUpstream `json:"siteUpstreams"`
 	// Sort is the drag-arranged display position (larger shows earlier).
 	Sort               int                    `json:"sort"`
 	ParamSchema        []rhparser.SchemaParam `json:"paramSchema"`
@@ -90,24 +93,30 @@ type AppView struct {
 // ParamSchema (slice) round-tripping explicit and to prevent callers from
 // setting ID/CreatedAt directly.
 type AppCreateDTO struct {
-	Name               string                 `json:"name"`
-	Slug               string                 `json:"slug"`
-	Kind               AppKind                `json:"kind"`
-	UpstreamID         string                 `json:"upstreamId"`
-	Description        string                 `json:"description"`
-	CoverURL           string                 `json:"coverUrl"`
-	Published          bool                   `json:"published"`
-	AdminOnly          bool                   `json:"adminOnly"`
-	ParamSchema        []rhparser.SchemaParam `json:"paramSchema"`
-	PerCallBilling     bool                   `json:"perCallBilling"`
-	FixedQuotaPerCall  int64                  `json:"fixedQuotaPerCall"`
-	PerSecondBilling   bool                   `json:"perSecondBilling"`
-	QuotaPerSecond     int64                  `json:"quotaPerSecond"`
-	SecondsExpr        string                 `json:"secondsExpr"`
-	PerCharBilling     bool                   `json:"perCharBilling"`
-	QuotaPerChar       int64                  `json:"quotaPerChar"`
-	CharCountExpr      string                 `json:"charCountExpr"`
-	ModelBaseRateRatio float64                `json:"modelBaseRateRatio"`
+	Name string  `json:"name"`
+	Slug string  `json:"slug"`
+	Kind AppKind `json:"kind"`
+	// UpstreamID is the legacy single-identifier input. It is still accepted so
+	// an existing API client (or a plain POST without SiteUpstreams) keeps
+	// working: the value is filed under the app's own site. SiteUpstreams, when
+	// present, wins.
+	UpstreamID string `json:"upstreamId"`
+	// SiteUpstreams carries one upstream id / identifier pair per site key.
+	SiteUpstreams      map[string]AppSiteUpstream `json:"siteUpstreams"`
+	Description        string                     `json:"description"`
+	CoverURL           string                     `json:"coverUrl"`
+	Published          bool                       `json:"published"`
+	AdminOnly          bool                       `json:"adminOnly"`
+	ParamSchema        []rhparser.SchemaParam     `json:"paramSchema"`
+	PerCallBilling     bool                       `json:"perCallBilling"`
+	FixedQuotaPerCall  int64                      `json:"fixedQuotaPerCall"`
+	PerSecondBilling   bool                       `json:"perSecondBilling"`
+	QuotaPerSecond     int64                      `json:"quotaPerSecond"`
+	SecondsExpr        string                     `json:"secondsExpr"`
+	PerCharBilling     bool                       `json:"perCharBilling"`
+	QuotaPerChar       int64                      `json:"quotaPerChar"`
+	CharCountExpr      string                     `json:"charCountExpr"`
+	ModelBaseRateRatio float64                    `json:"modelBaseRateRatio"`
 	// InstanceType optionally selects the compute instance for this app's runs
 	// (default / plus / ultra). Empty means "default".
 	InstanceType string `json:"instanceType"`
@@ -126,6 +135,10 @@ type ParseCurlResponse struct {
 	NodeInfoList []rhparser.NodeInfo        `json:"nodeInfoList"`
 	Schema       []rhparser.SchemaParam     `json:"schema"`
 	Errors       []rhparser.ErrSchemaReport `json:"schemaErrors,omitempty"`
+	// Site is the site the imported request came from, derived from its base
+	// URL, so the form files the upstream id under the right identifier block.
+	// Empty when the host is not a registered site.
+	Site string `json:"site,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -546,6 +559,9 @@ func appMetersBilling(a *App) bool {
 //   - PerCharBilling=true    → upsert price = QuotaPerChar / QuotaPerUnit
 //   - switch to dynamic      → drop the entry only while it still equals the
 //     previously synced value (an admin-edited price is left untouched)
+//   - switching the app's site re-keys the model name (the primary upstream id
+//     follows the site), so the entry under the model name it is leaving is
+//     dropped the same way
 //
 // All mutations persist the whole model-price table through
 // model.UpdateOption("ModelPrice", …) so the entry survives a restart
@@ -562,6 +578,15 @@ func syncAppBillingPrice(old *App, updated *App) {
 	}
 	prices := ratio_setting.GetModelPriceCopy()
 	changed := false
+
+	// The model name the app used to be billed under no longer belongs to it:
+	// drop the price entry this plugin wrote for it (never an admin's own).
+	if old != nil && old.UpstreamID != "" && old.UpstreamID != updated.UpstreamID && appMetersBilling(old) {
+		if cur, ok := prices[old.UpstreamID]; ok && cur == appSyncedModelPrice(old) {
+			delete(prices, old.UpstreamID)
+			changed = true
+		}
+	}
 
 	syncing := updated.PerCallBilling || updated.PerSecondBilling || updated.PerCharBilling
 	want := appSyncedModelPrice(updated)
@@ -628,9 +653,7 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 		target = *onto
 	}
 	target.Name = strings.TrimSpace(dto.Name)
-	target.Slug = strings.TrimSpace(dto.Slug)
 	target.Kind = AppKind(strings.ToLower(strings.TrimSpace(string(dto.Kind))))
-	target.UpstreamID = strings.TrimSpace(dto.UpstreamID)
 	target.Description = dto.Description
 	target.CoverURL = strings.TrimSpace(dto.CoverURL)
 	target.Published = dto.Published
@@ -646,7 +669,10 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 	// An omitted instance type means the default one, so an older admin form (or
 	// a plain API call) cannot blank out the column the submit path reads.
 	target.InstanceType = normalizeInstanceType(dto.InstanceType)
-	target.Site = normalizeSite(strings.TrimSpace(dto.Site))
+	target.Site = normalizeSite(dto.Site)
+	if trimmed := strings.TrimSpace(dto.Site); trimmed != "" && target.Site == "" {
+		return nil, fmt.Errorf("非法的站点选择: %q", trimmed)
+	}
 	target.CategoryID = dto.CategoryID
 	if dto.ModelBaseRateRatio == 0 {
 		// Treat explicit zero same as unset: back to 1.0 default so billing
@@ -658,7 +684,141 @@ func applyDto(dto *AppCreateDTO, onto *App) (*App, error) {
 	if err := target.SetParamSchema(schemaParamsToField(dto.ParamSchema)); err != nil {
 		return nil, fmt.Errorf("encode param_schema: %w", err)
 	}
+	// The identifiers the row already carries, so a caller that says nothing
+	// about them (or only knows the historical single-identifier field) cannot
+	// wipe the per-site configuration the admin made.
+	existing, err := target.StoredSiteUpstreams()
+	if err != nil {
+		return nil, fmt.Errorf("decode site_upstreams: %w", err)
+	}
+	bySite, err := siteUpstreamsFromDto(dto, &target, existing)
+	if err != nil {
+		return nil, err
+	}
+	if err := target.SetSiteUpstreams(bySite); err != nil {
+		return nil, fmt.Errorf("encode site_upstreams: %w", err)
+	}
+	target.UpstreamID, target.Slug = primaryIdentifiers(bySite, target.Site, target.UpstreamID, target.Slug)
 	return &target, nil
+}
+
+// siteUpstreamsFromDto folds the DTO's per-site identifiers into the map that
+// gets persisted. Keys are canonicalised through the site registry, so an
+// alias ("runninghub", "国际站") and its key ("cn", "intl") land in the same
+// entry instead of creating a second one. Entries with neither an upstream id
+// nor a slug are dropped, which is what makes an emptied form field clear the
+// value.
+//
+// An explicit per-site map is authoritative — that is how the admin form sets
+// and clears values. A DTO without one comes from a caller that only knows the
+// historical single-identifier field, so that value is merged under the app's
+// own site and every other site's identifiers are left as they are; a DTO that
+// says nothing at all about identifiers (a partial update of a legacy client)
+// keeps the row's current map untouched.
+func siteUpstreamsFromDto(dto *AppCreateDTO, target *App, existing map[string]AppSiteUpstream) (map[string]AppSiteUpstream, error) {
+	if len(dto.SiteUpstreams) > 0 {
+		bySite := make(map[string]AppSiteUpstream, len(dto.SiteUpstreams))
+		for rawKey, entry := range dto.SiteUpstreams {
+			spec, ok := lookupSite(rawKey)
+			if !ok {
+				return nil, fmt.Errorf("非法的站点 %q：没有对应的上游ID字段", strings.TrimSpace(rawKey))
+			}
+			entry.UpstreamID = strings.TrimSpace(entry.UpstreamID)
+			entry.Slug = strings.TrimSpace(entry.Slug)
+			if entry.UpstreamID == "" && entry.Slug == "" {
+				continue
+			}
+			bySite[spec.Key] = entry
+		}
+		return bySite, nil
+	}
+	legacyID := strings.TrimSpace(dto.UpstreamID)
+	legacySlug := strings.TrimSpace(dto.Slug)
+	if legacyID == "" && legacySlug == "" {
+		return existing, nil
+	}
+	bySite := make(map[string]AppSiteUpstream, len(existing)+1)
+	for key, entry := range existing {
+		bySite[key] = entry
+	}
+	bySite[siteOfApp(target)] = AppSiteUpstream{UpstreamID: legacyID, Slug: legacySlug}
+	return bySite, nil
+}
+
+// primaryIdentifiers derives the app's PRIMARY upstream id / slug (App.UpstreamID
+// / App.Slug) from the per-site map. Everything outside the submit URL keys off
+// that pair — the model name a run is billed under, the price-table entry, the
+// channel model lists — so it must always be the identifier of the site the app
+// itself runs on. Precedence:
+//
+//  1. the app's own site,
+//  2. the default site (intl), for an app with no site of its own,
+//  3. the first site in registry order that carries an id,
+//  4. the pair the row already had, so a row can never end up with an empty
+//     "not null" identifier.
+func primaryIdentifiers(bySite map[string]AppSiteUpstream, appSite, currentID, currentSlug string) (string, string) {
+	for _, site := range []string{appSite, defaultSiteKey} {
+		if entry, ok := bySite[site]; ok && entry.UpstreamID != "" {
+			return entry.UpstreamID, entry.Slug
+		}
+	}
+	for _, spec := range siteRegistry {
+		if entry, ok := bySite[spec.Key]; ok && entry.UpstreamID != "" {
+			return entry.UpstreamID, entry.Slug
+		}
+	}
+	return currentID, currentSlug
+}
+
+// siteOfApp returns the site an app's own identifiers belong to: its configured
+// site, or the default site when it has none.
+func siteOfApp(a *App) string {
+	if site := normalizeSite(a.Site); site != "" {
+		return site
+	}
+	return defaultSiteKey
+}
+
+// appSiteUpstreams resolves the app's per-site identifiers with every registered
+// site present, so callers never have to distinguish "not stored" from "stored
+// empty".
+//
+// A row saved before per-site identifiers existed has none stored; its single
+// identifier is reported under the site the row itself runs on (see siteOfApp),
+// because that is the only site it could have been submitted to.
+func appSiteUpstreams(a *App) (map[string]AppSiteUpstream, error) {
+	stored, err := a.StoredSiteUpstreams()
+	if err != nil {
+		return nil, err
+	}
+	if len(stored) > 0 {
+		return stored, nil
+	}
+	legacy := AppSiteUpstream{
+		UpstreamID: strings.TrimSpace(a.UpstreamID),
+		Slug:       strings.TrimSpace(a.Slug),
+	}
+	if legacy.UpstreamID == "" && legacy.Slug == "" {
+		return stored, nil
+	}
+	return map[string]AppSiteUpstream{siteOfApp(a): legacy}, nil
+}
+
+// appUpstreamIDFor returns the upstream application id to submit for one site,
+// as resolved on an AppView (whose SiteUpstreams already carry the legacy
+// fallback). A site with no id of its own falls back to the app's primary
+// identifier: an app without a site runs on whatever channel its model name
+// reaches, so it must keep submitting under the id it has.
+func appUpstreamIDFor(app *AppView, site string) string {
+	if app == nil {
+		return ""
+	}
+	if entry, ok := app.SiteUpstreams[normalizeSite(site)]; ok {
+		if upstreamID := strings.TrimSpace(entry.UpstreamID); upstreamID != "" {
+			return upstreamID
+		}
+	}
+	return strings.TrimSpace(app.UpstreamID)
 }
 
 // schemaParamsToField converts parser-level schema params to the plugin's
@@ -709,6 +869,10 @@ func appToView(a *App) (*AppView, error) {
 	if err != nil {
 		return nil, err
 	}
+	bySite, err := appSiteUpstreams(a)
+	if err != nil {
+		return nil, fmt.Errorf("decode site_upstreams: %w", err)
+	}
 	parserSchema := make([]rhparser.SchemaParam, 0, len(schema))
 	for _, f := range schema {
 		ps := rhparser.SchemaParam{
@@ -740,6 +904,7 @@ func appToView(a *App) (*AppView, error) {
 		CoverURL:           a.CoverURL,
 		Published:          a.Published,
 		AdminOnly:          a.AdminOnly,
+		SiteUpstreams:      bySite,
 		Sort:               a.Sort,
 		ParamSchema:        parserSchema,
 		PerCallBilling:     a.PerCallBilling,
@@ -771,46 +936,6 @@ func categoryNameMap() (map[uint]string, error) {
 	return out, nil
 }
 
-// normalizeSite canonicalises the app's site selector to a stable value. It
-// accepts the user-facing labels used on the /channels page (RunningHub,
-// RunningHub Intl) as well as the internal tokens (cn/intl) and maps them to
-// the values this plugin understands. Anything unrecognised collapses to "".
-func normalizeSite(s string) string {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "cn", "runninghub", "runninghub.cn", "runninghub_cn":
-		return "cn"
-	case "intl", "zh-tw", "runninghub.intl", "runninghubintl", "runninghub.ai", "runninghub-ai", "runninghub_intl", "国际":
-		return "intl"
-	case "liblib", "liblibai":
-		return "intl"
-	}
-	return ""
-}
-
-// siteToChannelType maps an app's site value to the channel type used on the
-// /channels page. The 0 value means the legacy model->channel selection stays
-// untouched.
-func siteToChannelType(site string) int {
-	switch site {
-	case "cn":
-		return constant.ChannelTypeRunningHub
-	case "intl":
-		return constant.ChannelTypeRunningHubIntl
-	}
-	return 0
-}
-
-// siteName returns the display name used in the apps table for a site value.
-func siteName(site string) string {
-	switch site {
-	case "cn":
-		return "RunningHub"
-	case "intl":
-		return "RunningHub Intl"
-	}
-	return ""
-}
-
 // validateApp enforces the non-null / invariants. Anything that could cause
 // the billing path to produce a non-positive multiplier is rejected here so
 // the chain stays safe later on.
@@ -827,13 +952,16 @@ func validateApp(a *App) error {
 		return fmt.Errorf("非法应用 kind: %q（应为 ai_app / workflow / model）", a.Kind)
 	}
 	if strings.TrimSpace(a.UpstreamID) == "" {
-		return fmt.Errorf("upstreamId 不能为空")
+		return fmt.Errorf("upstreamId 不能为空（至少一个站点的上游ID）")
 	}
 	if len(a.UpstreamID) > 191 {
 		return fmt.Errorf("upstreamId 过长 (上限 191 字符)")
 	}
 	if a.Slug != "" && len(a.Slug) > 191 {
 		return fmt.Errorf("slug 过长 (上限 191 字符)")
+	}
+	if err := validateSiteUpstreams(a); err != nil {
+		return err
 	}
 	// The instance type is not free text: it selects an upstream machine class,
 	// so an unrecognised value is refused rather than forwarded. An empty value
@@ -887,6 +1015,41 @@ func validateApp(a *App) error {
 		}
 		if err := validateCharCountExpr(a.CharCountExpr); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateSiteUpstreams checks the per-site identifier map: every key must be a
+// registered site, every value must fit its column, and — the important part —
+// the site the app itself runs on must carry an upstream id.
+//
+// That last rule is what keeps a mis-configured app from being submitted to the
+// wrong upstream: an app whose site is the domestic site but whose only
+// identifier belongs to the international site would otherwise post the intl id
+// to the cn endpoint and fail there with an upstream error that names neither
+// the app nor the site.
+func validateSiteUpstreams(a *App) error {
+	bySite, err := a.StoredSiteUpstreams()
+	if err != nil {
+		return fmt.Errorf("site_upstreams 解析失败: %w", err)
+	}
+	for key, entry := range bySite {
+		spec, ok := lookupSite(key)
+		if !ok {
+			return fmt.Errorf("非法站点 %q：没有对应的上游ID字段", key)
+		}
+		if len(entry.UpstreamID) > 191 {
+			return fmt.Errorf("%s 上游ID过长 (上限 191 字符)", spec.Label)
+		}
+		if len(entry.Slug) > 191 {
+			return fmt.Errorf("%s 标识符过长 (上限 191 字符)", spec.Label)
+		}
+	}
+	if site := normalizeSite(a.Site); site != "" {
+		entry := bySite[site]
+		if strings.TrimSpace(entry.UpstreamID) == "" {
+			return fmt.Errorf("站点已选择 %s，必须填写该站点的上游ID", siteName(site))
 		}
 	}
 	return nil

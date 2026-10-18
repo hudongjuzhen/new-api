@@ -17,7 +17,7 @@ func TestResolveUpstreamIDForModel_PlainModelPassesThrough(t *testing.T) {
 	// 历史约定：裸的上游应用 ID 就是模型名（线上渠道的模型表里现在就是它）。
 	// 它必须原样透传 —— 否则已配好的渠道会在升级后立刻失效。
 	for _, model := range []string{"2085006876680503297", "some-workflow-id"} {
-		got, err := runninghub.TestHookResolveUpstreamIDForModel(model)
+		got, err := runninghub.TestHookResolveUpstreamIDForModel(model, 0)
 		require.NoError(t, err)
 		assert.Equal(t, model, got)
 	}
@@ -33,7 +33,7 @@ func TestResolveUpstreamIDForModel_MalformedAppNamesAreRejected(t *testing.T) {
 		{"rh-app-abc", "不是数字"},
 		{"rh-app-3x", "不是数字"},
 	} {
-		_, err := runninghub.TestHookResolveUpstreamIDForModel(tc.model)
+		_, err := runninghub.TestHookResolveUpstreamIDForModel(tc.model, 0)
 		require.Error(t, err, "模型名 %q 应当被拒绝", tc.model)
 		assert.Contains(t, err.Error(), tc.hint)
 	}
@@ -45,7 +45,8 @@ func TestResolveUpstreamIDForModel_ResolvesGatewayAppRow(t *testing.T) {
 	appID := env.createApp("rh-app-model", upstreamID, true, 1000, 1.0)
 
 	got, err := runninghub.TestHookResolveUpstreamIDForModel(
-		runninghub.RhAppModelPrefix + strconv.FormatUint(uint64(appID), 10),
+		runninghub.RhAppModelPrefix+strconv.FormatUint(uint64(appID), 10),
+		0,
 	)
 
 	require.NoError(t, err)
@@ -55,7 +56,7 @@ func TestResolveUpstreamIDForModel_ResolvesGatewayAppRow(t *testing.T) {
 func TestResolveUpstreamIDForModel_MissingAppSaysWhichOne(t *testing.T) {
 	_ = newRHITestEnv(t, "9402-rh-app-missing")
 
-	_, err := runninghub.TestHookResolveUpstreamIDForModel("rh-app-424242")
+	_, err := runninghub.TestHookResolveUpstreamIDForModel("rh-app-424242", 0)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rh-app-424242", "报错要点名是哪个模型名")

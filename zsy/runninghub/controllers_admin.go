@@ -262,6 +262,10 @@ func parseCurlEndpoint(c *gin.Context) {
 		NodeInfoList: parsed.NodeInfoList,
 		Schema:       summary.Params,
 		Errors:       summary.Errors,
+		// The request came from one of the registered sites, so the form can
+		// file the imported id under that site's identifier block instead of
+		// guessing.
+		Site: siteForBaseURL(parsed.BaseURL),
 	}
 	recordManageAudit(c, "rh_app.parse_curl", map[string]any{
 		"kind":       out.Kind,
@@ -301,6 +305,20 @@ func syncAppsFromChannel(c *gin.Context) {
 		"channelModelsUpdated": result.ChannelModelsUpdated,
 	})
 	common.ApiSuccess(c, result)
+}
+
+// =========================================================================
+// Site registry
+// =========================================================================
+
+// listSites (GET /dashboard/zsy/rh/sites) — the RunningHub site registry.
+//
+// The admin form renders one upstream-id / identifier block per site and the
+// apps table labels the site a row runs on, so both read this list instead of
+// hard-coding site tokens in the bundle. Adding a site to sites.go therefore
+// gives every app a field pair for it without a frontend change.
+func listSites(c *gin.Context) {
+	common.ApiSuccess(c, SiteSpecList())
 }
 
 // =========================================================================

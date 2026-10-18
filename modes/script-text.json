@@ -7,6 +7,7 @@
   "label": "剧本",
   "medium": "text",
   "workScale": "serial",
+  "videoKind": "other",
   "words": {
     "audio": "导入音频",
     "audioNone": "",
@@ -46,13 +47,6 @@
     "audioScriptName": "音频脚本",
     "audioGenerateHint": "这一屏要发出去的音频提示词（音色表 + 音频脚本）。"
   },
-  "appRows": {
-    "sd": "5",
-    "hd": "10",
-    "upscale": "9",
-    "faceswap": "12",
-    "edit": "11"
-  },
   "lipSync": {
     "when": "byScenario",
     "text": "人物开口时，嘴唇与下颌要随音频逐音节精准开合，只在真正出声的音节上开闭，绝不脱离音频独立动作。（这一档交付的是文字，没有画面。）"
@@ -71,6 +65,7 @@
   "planDialog": {
     "label": "AI 全集规划",
     "title": "AI 全集规划",
+    "impl": "song",
     "templates": [
       "请你作为编剧，结合这一集的梗概与人物设定，来规划这一集的场次与节奏：",
       "请你作为编剧，结合这一集的梗概与人物设定，来规划这一集的场次与节奏：\n三幕搭法：第一场把人物推进一个他躲不开的处境，中段让处境变坏，最后一场他必须做一个选择。",

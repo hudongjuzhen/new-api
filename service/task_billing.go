@@ -141,6 +141,12 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = props.UpstreamModelName
 	}
+	// 调用方自带的备注跟着这一任务的每一条计费记录走（退款 / 差额结算）。
+	// 这些记录只以日志行的形式存在，日志上没有备注就只剩一句"退还额度"，
+	// 用户无法对应到自己那次生成。
+	if props.Remark != "" {
+		other["remark"] = props.Remark
+	}
 	return other
 }
 

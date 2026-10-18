@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   listApps: vi.fn(),
+  listSites: vi.fn(),
   listCategories: vi.fn(),
   createApp: vi.fn(),
   updateApp: vi.fn(),
@@ -68,6 +69,9 @@ function storedApp(overrides: Partial<AppView> = {}): AppView {
     slug: '2051268528824700930',
     kind: 'ai_app',
     upstreamId: '2051268528824700930',
+    siteUpstreams: {
+      cn: { upstreamId: '2051268528824700930', slug: '2051268528824700930' },
+    },
     description: '',
     coverUrl: '',
     published: true,
@@ -122,6 +126,10 @@ beforeEach(() => {
     totalPages: 1,
     kindCounts: { ai_app: 1 },
   })
+  api.listSites.mockResolvedValue([
+    { key: 'cn', label: 'RunningHub', channelType: 61 },
+    { key: 'intl', label: 'RunningHub Intl', channelType: 62 },
+  ])
   api.listCategories.mockResolvedValue([])
   api.createApp.mockResolvedValue(storedApp({ id: 8 }))
   api.updateApp.mockResolvedValue(storedApp())
@@ -208,7 +216,10 @@ describe('RunningHub app instance type', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Create App' }))
     await user.type(screen.getByLabelText('App Name'), 'Fresh App')
-    await user.type(screen.getByLabelText('Upstream ID'), '2051268528824700001')
+    await user.type(
+      screen.getByLabelText('RunningHub Upstream ID'),
+      '2051268528824700001'
+    )
     await user.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(api.createApp).toHaveBeenCalledTimes(1))

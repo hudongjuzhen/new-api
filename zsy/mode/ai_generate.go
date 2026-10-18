@@ -421,6 +421,22 @@ func GenerateMode(userID int, in ModeGenerateInput) (*ModeFile, string, error) {
 		return nil, "", fmt.Errorf("mode: 模型生成的这一份不合法：%s —— "+
 			"请把需求写得更具体一点再试一次。", problem)
 	}
+	/*
+	 * ⑥★ 再走一道**契约**检查（`generatedModeProblem`，只有这一条路用）。
+	 *
+	 * ⚠★ 为什么在读盘那道闸之外还要一道：那几个格子的类型（`instruction` / `audio`
+	 * 是不是对象、`templates` 是不是字符串数组、`words` 齐不齐、`videoKind` 合不合法）
+	 * **都不影响服务端读它**，但决定客户端**读不读得出来** —— 写错的表现是
+	 * "模式装上了、看着正常，跑起来却整节回落成内置 mv 的提示词"
+	 * （用户看到的是「请你作为顶级MV导演…」，而文件里明明是自己那一档的说明）。
+	 *
+	 * 所以它只守"生成"这一条路：模式库里手放的文件不该因为类型被判坏
+	 * （客户端对它们本来是逐格回落的，那种红是假警报，见 `generatedModeProblem` 的说明）。
+	 */
+	if problem := generatedModeProblem(generated, medium, id); problem != "" {
+		return nil, "", fmt.Errorf("mode: 模型生成的这一份不合法：%s —— "+
+			"请把需求写得更具体一点再试一次。", problem)
+	}
 
 	/* ⑦ 落盘 */
 	if _, err := writeNewMode(id, generated); err != nil {

@@ -13,6 +13,7 @@ import (
 //	/api/zsy/mode/list                      ★ 有哪些可以开通（认账号，但不要求登录）
 //	/api/zsy/mode/:id/file                  ★「开通」下的就是它（同上）
 //	/dashboard/zsy/mode/list                (admin auth) 全部模式 + 每档几个人有权限
+//	/dashboard/zsy/mode/:id                 (admin auth) ★ 删掉一档（删的是那个文件）
 //	/dashboard/zsy/mode/:id/meta            (admin auth) ★ 改一档的公开 / 私有 + 说明
 //	/dashboard/zsy/mode/entitlements        (admin auth) 谁被授权了哪几档
 //	/dashboard/zsy/mode/entitlements/grant  (admin auth) ★ 后台给权限
@@ -53,6 +54,9 @@ func mountRoutes(router *gin.Engine) {
 	admin.Use(middleware.DisableCache())
 	{
 		admin.GET("/list", listAdminModes)
+		// ★★ 删掉一档模式：删的就是模式目录里那个文件（`catalog.go` 的 `DeleteMode`）。
+		// 它排在 `/:id/meta` 之前只是因为读起来顺 —— 方法不同，不会互相当成对方。
+		admin.DELETE("/:id", deleteMode)
 		admin.POST("/:id/meta", updateModeMeta)
 		// ★★ 模式**正文**的读与写（编辑弹窗那一屏）：与 `/:id/meta` 那两格
 		// 分发策略是两件事 —— 这一对动的是模式本身。
@@ -67,6 +71,6 @@ func mountRoutes(router *gin.Engine) {
 	}
 
 	common.SysLog("zsy-mode: mounted /api/zsy/mode/{list,:id/file} and " +
-		"/dashboard/zsy/mode/{list,:id/meta,:id/content,ai/keys,create," +
+		"/dashboard/zsy/mode/{list,:id,:id/meta,:id/content,ai/keys,create," +
 		"entitlements,entitlements/grant,entitlements/revoke}")
 }

@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
 import type { TFunction } from 'i18next'
 import {
   Layers,
@@ -26,11 +25,29 @@ import {
   RefreshCw,
   ShieldCheck,
   ShieldOff,
+  Trash2,
   Users,
 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { SectionPageLayout } from '@/components/layout'
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -42,12 +59,9 @@ import {
 } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { SectionPageLayout } from '@/components/layout'
 
-import { ModeCreateDialog } from '../components/mode-create-dialog'
-import { ModeEditDialog } from '../components/mode-edit-dialog'
-import { ModeHoldersDialog } from '../components/mode-holders-dialog'
 import {
+  deleteMode,
   grantMode,
   listEntitlementsByUser,
   listModes,
@@ -56,6 +70,9 @@ import {
   type ModeList,
   type ModeView,
 } from '../api'
+import { ModeCreateDialog } from '../components/mode-create-dialog'
+import { ModeEditDialog } from '../components/mode-edit-dialog'
+import { ModeHoldersDialog } from '../components/mode-holders-dialog'
 import {
   accountModeState,
   accountModeStateLabel,
@@ -172,6 +189,19 @@ export function ModePlazaPage() {
   const [grantedCounts, setGrantedCounts] = useState<Record<string, number>>({})
 
   /**
+   * ★★ **删掉一档模式**（用户 2026-…："模式广场里面增加一个删除功能，可以删除某个模式"）。
+   *
+   * ⚠ `deleteId` 存的是 **id**，不是那一行对象（与 `editingId` / `holdersId` 同一条
+   * 理由：重读之后手上那份行对象就过期了）。
+   *
+   * ⚠ 删掉的是**磁盘上那个文件**，而且**没有撤销**（服务端 `DeleteMode` 的注释里
+   * 写了为什么删就是删、不搬去回收站）—— 所以它不是"点一下就删"，而是先弹一个把
+   * 后果说完的确认框。`deleting` 只是那一下的防重入。
+   */
+  const [deleteId, setDeleteId] = useState('')
+  const [deleting, setDeleting] = useState(false)
+
+  /**
    * 判定"已取消 / 已过期"要用的"现在"。
    *
    * ⚠★ 它**不能**在渲染里 `Date.now()`：那是**渲染期读时钟**，同一份数据两次
@@ -189,6 +219,15 @@ export function ModePlazaPage() {
   const buckets = bucketModes(modes?.items || [])
   /** ★ 正在看名单的那一档（弹窗要它的 label 与可见性）。 */
   const holdersMode = buckets.usable.find((row) => row.id === holdersId) || null
+  /**
+   * ★ 正在确认删除的那一档。
+   *
+   * ⚠ 两个堆都找：坏文件那一段也能删（一份笔误的文件运营最想做的就是拿掉它），
+   * 而它不在 `usable` 里。找不到（列表刚被别处重读、这一档没了）= null。
+   */
+  const deleteTarget =
+    [...buckets.usable, ...buckets.broken].find((row) => row.id === deleteId) ||
+    null
 
   /**
    * ★ 手上那份数据属于谁 —— 一个键。
@@ -283,7 +322,9 @@ export function ModePlazaPage() {
       setNowSeconds(Math.floor(Date.now() / 1000))
     } catch (err) {
       setByUser(null)
-      setByUserError(readError(err, t('Could not read this account’s mode opens')))
+      setByUserError(
+        readError(err, t('Could not read this account’s mode opens'))
+      )
       setByUserOf(key)
     }
   }
@@ -342,9 +383,38 @@ export function ModePlazaPage() {
        */
       await Promise.all([refreshUser(targetUserId), loadAll()])
     } catch (err) {
-      setActionError(readError(err, active ? t('Could not cancel') : t('Could not open')))
+      setActionError(
+        readError(err, active ? t('Could not cancel') : t('Could not open'))
+      )
     } finally {
       setBusyModeId('')
+    }
+  }
+
+  /**
+   * ★★ 删掉**某一档**（确认框点「删除」之后才走到这里）。
+   *
+   * ⚠★ 删完**重读列表**（不把那一行从本地抹掉）：模式库是磁盘上的目录，
+   * "删掉之后还剩哪些"这个问题的答案在磁盘上 —— 而本地抹一行只是把界面改成一个
+   * 与服务端可能分叉的样子（例如文件其实没删掉、而界面里它已经不见了）。
+   *
+   * ⚠ 错误写进 `actionError` 那一格（与开通 / 取消同一处）：它在列表上方，
+   * 是运营刚点的那颗按钮旁边唯一会说话的地方。
+   */
+  async function confirmDelete() {
+    if (!deleteTarget || deleting) return
+    const id = deleteTarget.id
+    setDeleting(true)
+    setActionError('')
+    try {
+      await deleteMode(id)
+      setDeleteId('')
+      await loadAll()
+    } catch (err) {
+      setActionError(readError(err, t('Could not delete this mode')))
+      setDeleteId('')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -370,7 +440,11 @@ export function ModePlazaPage() {
           ⚠ 它排在「重新读取」**左边**：这一屏的主语是"这一档模式"，
           而重读是维护动作（与"在列表里选一个人"同一类，不是这一屏的目的）。
         */}
-        <Button size='sm' onClick={() => setCreating(true)} data-testid='mode-create-open'>
+        <Button
+          size='sm'
+          onClick={() => setCreating(true)}
+          data-testid='mode-create-open'
+        >
           <Plus className='mr-1 h-4 w-4' />
           {t('Add a mode')}
         </Button>
@@ -393,12 +467,14 @@ export function ModePlazaPage() {
         而"取消"**不会**删掉用户机器上那一份。两件都与运营的直觉相反，
         所以它不是提示气泡而是常驻的 Alert。
       */}
-      <Alert data-testid='mode-private-note'>
-        <AlertTitle>{t('Private modes are hidden, not greyed out')}</AlertTitle>
-        <AlertDescription>{privateModesNote(t)}</AlertDescription>
-      </Alert>
+          <Alert data-testid='mode-private-note'>
+            <AlertTitle>
+              {t('Private modes are hidden, not greyed out')}
+            </AlertTitle>
+            <AlertDescription>{privateModesNote(t)}</AlertDescription>
+          </Alert>
 
-      {/*
+          {/*
         ────────────────────── 一、给某个账号开通（真的那一步） ──────────────────────
 
         ★★ 这一张卡是**这一版的形状**（用户 2026-…）：
@@ -406,17 +482,17 @@ export function ModePlazaPage() {
         ⚠ 模式库那一张卡（下面）仍然在：它是"磁盘上有哪几档"的账，
         而这一张是"这个人的权限"的账 —— 两件事，两个方向。
       */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('Open modes for an account')}</CardTitle>
-          <CardDescription>
-            {t(
-              'Enter the account ID first, then this account’s every mode is listed at once — open it, or cancel it, right here. Decided here, and re-checked on every request: a cancel takes effect the next time that account refreshes the plaza, with no need to log in again.'
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className='flex flex-col gap-4'>
-          {/*
+          <Card>
+            <CardHeader>
+              <CardTitle>{t('Open modes for an account')}</CardTitle>
+              <CardDescription>
+                {t(
+                  'Enter the account ID first, then this account’s every mode is listed at once — open it, or cancel it, right here. Decided here, and re-checked on every request: a cancel takes effect the next time that account refreshes the plaza, with no need to log in again.'
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className='flex flex-col gap-4'>
+              {/*
             ★★ 左 ID / 右列表。窄屏（`md` 以下）自动叠成一列 —— 那时候把 ID 挤在
             左边会让右边只剩一条缝，而"一行放好几个"正是这一版要的。
 
@@ -424,157 +500,192 @@ export function ModePlazaPage() {
             一行说明，它不需要 640px 那么宽 —— 早点并排，右边就能早点多出一列
             （实测：用 `lg` 时右边在常见笔记本上只有一列，看起来像"没变化"）。
           */}
-          <div className='flex flex-col gap-4 md:flex-row md:items-start'>
-            <div className='flex shrink-0 flex-col gap-2 md:w-56'>
-              <Label htmlFor='mode-user-id'>{t('Account ID')}</Label>
-              <Input
-                id='mode-user-id'
-                value={userIdText}
-                onChange={(e) => setUserIdText(e.target.value)}
-                placeholder={t('e.g. 7')}
-                className='w-full'
-              />
-              {/* 填错时**当场**说，而不是点下去之后由服务端说一句"需要 user_id" */}
-              {userIdText && isBlockedById ? (
-                <p className='text-destructive text-xs'>{parsedId.problem}</p>
-              ) : (
-                <p className='text-muted-foreground text-xs' data-testid='mode-open-hint'>
-                  {t(
-                    'Leave it empty to edit how each mode is handed out; fill it in to open or cancel that account’s modes.'
+              <div className='flex flex-col gap-4 md:flex-row md:items-start'>
+                <div className='flex shrink-0 flex-col gap-2 md:w-56'>
+                  <Label htmlFor='mode-user-id'>{t('Account ID')}</Label>
+                  <Input
+                    id='mode-user-id'
+                    value={userIdText}
+                    onChange={(e) => setUserIdText(e.target.value)}
+                    placeholder={t('e.g. 7')}
+                    className='w-full'
+                  />
+                  {/* 填错时**当场**说，而不是点下去之后由服务端说一句"需要 user_id" */}
+                  {userIdText && isBlockedById ? (
+                    <p className='text-destructive text-xs'>
+                      {parsedId.problem}
+                    </p>
+                  ) : (
+                    <p
+                      className='text-muted-foreground text-xs'
+                      data-testid='mode-open-hint'
+                    >
+                      {t(
+                        'Leave it empty to edit how each mode is handed out; fill it in to open or cancel that account’s modes.'
+                      )}
+                    </p>
                   )}
-                </p>
-              )}
-            </div>
+                </div>
 
-            <div className='flex min-w-0 flex-1 flex-col gap-3'>
-              {actionError ? (
-                <Alert variant='destructive' data-testid='mode-action-error'>
-                  <AlertDescription>{actionError}</AlertDescription>
-                </Alert>
-              ) : null}
+                <div className='flex min-w-0 flex-1 flex-col gap-3'>
+                  {actionError ? (
+                    <Alert
+                      variant='destructive'
+                      data-testid='mode-action-error'
+                    >
+                      <AlertDescription>{actionError}</AlertDescription>
+                    </Alert>
+                  ) : null}
 
-              {/*
+                  {/*
                 ★★ 读不到账号的授权时：**列表照样画**（用户看得见有哪几档），
                 而每一行那一格写着"状态读不到"、按钮全禁用，服务端那句话原样摆在上面。
 
                 ⚠★ 关键在于"点不动"而不是"不画"：此刻"他有没有这一档"是**未知** ——
                 未知不许画成"未开通"（点一下"开通"可能给一个已经有权限的人再插一行）。
               */}
-              {hasUserIdText && currentByUserError ? (
-                <Alert variant='destructive' data-testid='mode-entitlements-error'>
-                  <AlertDescription>
-                    {currentByUserError}{' '}
-                    {t('Modes cannot be opened or cancelled until this is read.')}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
+                  {hasUserIdText && currentByUserError ? (
+                    <Alert
+                      variant='destructive'
+                      data-testid='mode-entitlements-error'
+                    >
+                      <AlertDescription>
+                        {currentByUserError}{' '}
+                        {t(
+                          'Modes cannot be opened or cancelled until this is read.'
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  ) : null}
 
-              {/*
+                  {/*
                 ★★ **这一块的挂载判据只有 `showsModeRows`**（见上面那段说明）：
                 还没读到 / 读失败都**不换掉它**。状态由每一行自己说。
               */}
-              {showsModeRows ? (
-                /*
-                 * ★★ **一行放好几个**（用户 2026-…："不要每个模式或者每个插件单独占一行，
-                 * 太浪费空间了"）。每一行只有一行字那么高，所以一屏能看十几档。
-                 *
-                 * ⚠★★ 列数是**按实际可用宽度算**的（`auto-fill` + 最小列宽），
-                 * **不用 `sm:` / `xl:` 那种断点** —— 这一条是实测改的：
-                 * 断点看的是**视口**宽度，而这一屏的内容区被侧边栏与内边距吃掉一截，
-                 * 于是 `xl:grid-cols-2`（Tailwind 4 里 = 1280px）在这块屏幕上**从来没生效**，
-                 * 表现就是"一行一个、跟没改一样"（用户 2026-… 报的原话）。
-                 * `minmax(18rem, 1fr)` 里的 **18rem 是唯一要调的那个数**：
-                 * 它决定"内容区至少多宽才排得下两列"。⚠★ 第一版给的 22rem 偏大 ——
-                 * 内容区要 736px 才两列，而带侧边栏时那大约要 **1472px 视口**，
-                 * 于是常见笔记本上仍然是一列、看起来"跟没改一样"（用户 2026-… 第二次报的话）。
-                 * 18rem 让两列在约 1248px 视口就出现；宽屏会给到三列。
-                 */
-                <div
-                  data-testid='mode-account-grid'
-                  className='grid gap-1.5'
-                  style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(18rem, 1fr))' }}
-                >
-                  {buckets.usable.map((row) => (
-                    <ModeRow
-                      key={row.id}
-                      t={t}
-                      row={row}
-                      /* ★ 这一档现在几个人（名单弹窗读完回填的那一份补丁优先） */
-                      granted={grantedCounts[row.id] ?? row.granted}
-                      hasUserIdText={hasUserIdText}
-                      state={accountModeState({
-                        readable: hasFreshUser,
-                        active: currentByUser?.active || [],
-                        modeId: row.id,
-                      })}
-                      busy={busyModeId === row.id}
-                      disabled={busyModeId === row.id || isBlockedById || !hasFreshUser}
-                      onEdit={() => setEditingId(row.id)}
-                      onViewHolders={() => setHoldersId(row.id)}
-                      onToggle={(open) => void toggle(row.id, open)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <p className='text-muted-foreground text-sm' data-testid='mode-account-empty'>
-                  {emptyModesHint(t, modes?.directory || '', modes?.knownMediums || [])}
-                </p>
-              )}
+                  {showsModeRows ? (
+                    /*
+                     * ★★ **一行放好几个**（用户 2026-…："不要每个模式或者每个插件单独占一行，
+                     * 太浪费空间了"）。每一行只有一行字那么高，所以一屏能看十几档。
+                     *
+                     * ⚠★★ 列数是**按实际可用宽度算**的（`auto-fill` + 最小列宽），
+                     * **不用 `sm:` / `xl:` 那种断点** —— 这一条是实测改的：
+                     * 断点看的是**视口**宽度，而这一屏的内容区被侧边栏与内边距吃掉一截，
+                     * 于是 `xl:grid-cols-2`（Tailwind 4 里 = 1280px）在这块屏幕上**从来没生效**，
+                     * 表现就是"一行一个、跟没改一样"（用户 2026-… 报的原话）。
+                     * `minmax(18rem, 1fr)` 里的 **18rem 是唯一要调的那个数**：
+                     * 它决定"内容区至少多宽才排得下两列"。⚠★ 第一版给的 22rem 偏大 ——
+                     * 内容区要 736px 才两列，而带侧边栏时那大约要 **1472px 视口**，
+                     * 于是常见笔记本上仍然是一列、看起来"跟没改一样"（用户 2026-… 第二次报的话）。
+                     * 18rem 让两列在约 1248px 视口就出现；宽屏会给到三列。
+                     */
+                    <div
+                      data-testid='mode-account-grid'
+                      className='grid gap-1.5'
+                      style={{
+                        gridTemplateColumns:
+                          'repeat(auto-fill, minmax(18rem, 1fr))',
+                      }}
+                    >
+                      {buckets.usable.map((row) => (
+                        <ModeRow
+                          key={row.id}
+                          t={t}
+                          row={row}
+                          /* ★ 这一档现在几个人（名单弹窗读完回填的那一份补丁优先） */
+                          granted={grantedCounts[row.id] ?? row.granted}
+                          hasUserIdText={hasUserIdText}
+                          state={accountModeState({
+                            readable: hasFreshUser,
+                            active: currentByUser?.active || [],
+                            modeId: row.id,
+                          })}
+                          busy={busyModeId === row.id}
+                          disabled={
+                            busyModeId === row.id ||
+                            isBlockedById ||
+                            !hasFreshUser
+                          }
+                          onEdit={() => setEditingId(row.id)}
+                          onViewHolders={() => setHoldersId(row.id)}
+                          onDelete={() => setDeleteId(row.id)}
+                          onToggle={(open) => void toggle(row.id, open)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <p
+                      className='text-muted-foreground text-sm'
+                      data-testid='mode-account-empty'
+                    >
+                      {emptyModesHint(
+                        t,
+                        modes?.directory || '',
+                        modes?.knownMediums || []
+                      )}
+                    </p>
+                  )}
 
-              {/*
+                  {/*
                 ★ 公共模式那几行上"未开通"不是一个问题（谁都能开通）—— 那一句必须说出来，
                 否则运营会以为他要把公共模式逐个开一遍。
               */}
-              {hasUserIdText && hasFreshUser ? (
-                <p className='text-muted-foreground text-xs'>
-                  {t(
-                    'Public modes need no opening — every account can open them. The state here tells you whether this account was opened for it individually.'
-                  )}
-                </p>
-              ) : null}
+                  {hasUserIdText && hasFreshUser ? (
+                    <p className='text-muted-foreground text-xs'>
+                      {t(
+                        'Public modes need no opening — every account can open them. The state here tells you whether this account was opened for it individually.'
+                      )}
+                    </p>
+                  ) : null}
 
-              {/* 这个账号手上**现在生效**的那几档（现算，不是从历史行推的） */}
-              {hasUserIdText && currentByUser?.active?.length ? (
-                <div className='flex flex-wrap items-center gap-2'>
-                  <span className='text-muted-foreground text-xs'>
-                    {t('Modes opened for this account')}
-                  </span>
-                  {(currentByUser?.active || []).map((id) => (
-                    <Badge key={id} variant='secondary' className='font-mono'>
-                      {id}
-                    </Badge>
-                  ))}
+                  {/* 这个账号手上**现在生效**的那几档（现算，不是从历史行推的） */}
+                  {hasUserIdText && currentByUser?.active?.length ? (
+                    <div className='flex flex-wrap items-center gap-2'>
+                      <span className='text-muted-foreground text-xs'>
+                        {t('Modes opened for this account')}
+                      </span>
+                      {(currentByUser?.active || []).map((id) => (
+                        <Badge
+                          key={id}
+                          variant='secondary'
+                          className='font-mono'
+                        >
+                          {id}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {/* 历史行（取消过的 / 过期的）—— 运营常问"他什么时候没的" */}
+                  {hasUserIdText && currentByUser?.items?.length ? (
+                    <details data-testid='mode-history'>
+                      <summary className='text-muted-foreground cursor-pointer text-xs'>
+                        {t('History (including cancelled and expired rows)')}
+                      </summary>
+                      <div className='mt-1 flex flex-col gap-1'>
+                        {currentByUser.items.map((row) => {
+                          const state = entitlementState(row, nowSeconds)
+                          return (
+                            <p
+                              key={row.id}
+                              className='text-muted-foreground text-xs'
+                            >
+                              <span className='font-mono'>{row.modeId}</span>
+                              {' · '}
+                              {entitlementStateLabel(t, state)}
+                              {' · '}
+                              {row.source}
+                            </p>
+                          )
+                        })}
+                      </div>
+                    </details>
+                  ) : null}
                 </div>
-              ) : null}
+              </div>
+            </CardContent>
+          </Card>
 
-              {/* 历史行（取消过的 / 过期的）—— 运营常问"他什么时候没的" */}
-              {hasUserIdText && currentByUser?.items?.length ? (
-                <details data-testid='mode-history'>
-                  <summary className='text-muted-foreground cursor-pointer text-xs'>
-                    {t('History (including cancelled and expired rows)')}
-                  </summary>
-                  <div className='mt-1 flex flex-col gap-1'>
-                    {currentByUser.items.map((row) => {
-                      const state = entitlementState(row, nowSeconds)
-                      return (
-                        <p key={row.id} className='text-muted-foreground text-xs'>
-                          <span className='font-mono'>{row.modeId}</span>
-                          {' · '}
-                          {entitlementStateLabel(t, state)}
-                          {' · '}
-                          {row.source}
-                        </p>
-                      )
-                    })}
-                  </div>
-                </details>
-              ) : null}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/*
+          {/*
         ★★ **「模式库」那一张卡没有了**（用户 2026-…）：
 
         > "下面的 模式库 就没有必要显示了吧，直接在上面右侧的模式列表就可以了"
@@ -592,39 +703,66 @@ export function ModePlazaPage() {
         ⚠ 「这一档给了谁」那张卡也一起撤了：它的入口现在是每一行上的
         「查看拥有权限的账号」按钮（弹窗），比"先选中一行、再往下找名单"少一步。
       */}
-      {buckets.broken.length ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>{t('Modes that cannot be shipped')}</CardTitle>
-            <CardDescription>
-              {t(
-                'These files are in the mode directory but cannot be handed to a client. Fix the file, then click Reload.'
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className='flex flex-col gap-3'>
-            {buckets.broken.map((row) => (
-              <Alert key={row.id} variant='destructive' data-testid={`mode-broken-${row.id}`}>
-                <AlertTitle>{row.label || row.id}</AlertTitle>
-                <AlertDescription>
-                  <span className='block'>{row.problem}</span>
-                  <span className='text-muted-foreground mt-1 block text-xs'>{row.source}</span>
-                </AlertDescription>
-              </Alert>
-            ))}
-          </CardContent>
-        </Card>
-      ) : null}
+          {buckets.broken.length ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('Modes that cannot be shipped')}</CardTitle>
+                <CardDescription>
+                  {t(
+                    'These files are in the mode directory but cannot be handed to a client. Fix the file, then click Reload.'
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className='flex flex-col gap-3'>
+                {buckets.broken.map((row) => (
+                  <Alert
+                    key={row.id}
+                    variant='destructive'
+                    data-testid={`mode-broken-${row.id}`}
+                  >
+                    <AlertTitle>{row.label || row.id}</AlertTitle>
+                    {/*
+                  ★ 坏文件**也能删**（服务端只判"文件在不在"，不像"改"那样要求它可读）：
+                  一份因为笔误而发不出去的文件，运营最想做的往往就是**把它拿掉**、
+                  再放一份对的进来 —— 上面那句"Fix the file"说的另一条路。
+                */}
+                    <AlertAction>
+                      <Button
+                        variant='outline'
+                        size='xs'
+                        data-testid={`mode-delete-${row.id}`}
+                        title={t('Delete {{mode}}', {
+                          mode: row.label || row.id,
+                        })}
+                        aria-label={t('Delete {{mode}}', {
+                          mode: row.label || row.id,
+                        })}
+                        onClick={() => setDeleteId(row.id)}
+                      >
+                        <Trash2 className='mr-1 size-3' />
+                        {t('Delete')}
+                      </Button>
+                    </AlertAction>
+                    <AlertDescription>
+                      <span className='block'>{row.problem}</span>
+                      <span className='text-muted-foreground mt-1 block text-xs'>
+                        {row.source}
+                      </span>
+                    </AlertDescription>
+                  </Alert>
+                ))}
+              </CardContent>
+            </Card>
+          ) : null}
 
-      {/*
+          {/*
         ⚠ 列表读失败时说清楚（它是**上面那一张卡**的数据源，所以那句话留在上面那一张卡里）。
       */}
-      {!loading && loadError ? (
-        <Alert variant='destructive' data-testid='mode-list-error'>
-          <AlertDescription>{loadError}</AlertDescription>
-        </Alert>
-      ) : null}
-
+          {!loading && loadError ? (
+            <Alert variant='destructive' data-testid='mode-list-error'>
+              <AlertDescription>{loadError}</AlertDescription>
+            </Alert>
+          ) : null}
 
           <p className='text-muted-foreground flex items-center gap-1 text-xs'>
             <Layers className='h-3 w-3' />
@@ -676,6 +814,49 @@ export function ModePlazaPage() {
           onOpenChange={setCreating}
           onCreated={() => void loadAll()}
         />
+
+        {/*
+          ★★ 「删掉这一档」那个确认框（用户 2026-…）。
+
+          ⚠★ 它非有不可：删的是**磁盘上那个文件**，没有回收站、也没有撤销。
+          而那句话必须把两件"不会发生"的事说清（用户机器上那份、以及授权行）——
+          运营不问也会自己猜，而猜错的代价是他以为"删了就等于把东西从用户手上收回了"。
+        */}
+        <AlertDialog
+          /*
+           * ⚠ 挂载判据是**那一档还在不在**（不是"点过没有"）：列表被别处重读、
+           * 这一档已经没了的时候，一个还开着的确认框会把运营送进一次没有对象的删除。
+           */
+          open={!!deleteTarget}
+          onOpenChange={(next) => {
+            if (!next) setDeleteId('')
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('Delete this mode?')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t(
+                  'Deleting “{{name}}” removes {{source}} from the mode directory, so the mode leaves the plaza for every account. A copy a user already downloaded stays on that machine, and the accounts opened for it keep their grants — putting a file with the same name back restores the mode.',
+                  {
+                    name: deleteTarget?.label || deleteId,
+                    source: deleteTarget?.source || '',
+                  }
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                data-testid='mode-delete-confirm'
+                disabled={deleting}
+                onClick={() => void confirmDelete()}
+              >
+                {t('Delete')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )
@@ -709,6 +890,7 @@ function ModeRow({
   disabled,
   onEdit,
   onViewHolders,
+  onDelete,
   onToggle,
 }: {
   t: TFunction
@@ -726,6 +908,7 @@ function ModeRow({
   disabled: boolean
   onEdit: () => void
   onViewHolders: () => void
+  onDelete: () => void
   onToggle: (open: boolean) => void
 }) {
   const open = state === 'open'
@@ -759,7 +942,9 @@ function ModeRow({
    * 而暗色下自动反过来 —— 十套预设里它都是**反色**，读得清。
    */
   const tinted = open || state === 'unknown'
-  const rowTone = tinted ? `border-transparent bg-foreground text-background` : ''
+  const rowTone = tinted
+    ? `border-transparent bg-foreground text-background`
+    : ''
 
   return (
     <div
@@ -794,7 +979,9 @@ function ModeRow({
             variant='outline'
             size='xs'
             data-testid={`mode-holders-${row.id}`}
-            aria-label={t('View the accounts that hold {{mode}}', { mode: row.label })}
+            aria-label={t('View the accounts that hold {{mode}}', {
+              mode: row.label,
+            })}
             onClick={onViewHolders}
           >
             <Users className='mr-1 size-3' />
@@ -816,15 +1003,37 @@ function ModeRow({
             {open ? t('Cancel access') : t('Open')}
           </Button>
         ) : (
-          <Button
-            variant='outline'
-            size='xs'
-            data-testid={`mode-edit-${row.id}`}
-            onClick={onEdit}
-          >
-            <Pencil className='mr-1 size-3' />
-            {t('Edit')}
-          </Button>
+          <>
+            <Button
+              variant='outline'
+              size='xs'
+              data-testid={`mode-edit-${row.id}`}
+              onClick={onEdit}
+            >
+              <Pencil className='mr-1 size-3' />
+              {t('Edit')}
+            </Button>
+            {/*
+              ★★ 「删除」只在**空着 ID** 时出现，与「编辑」同一侧（用户 2026-…）：
+              那时这一行管的是"这一档模式本身"（改它、删它）；填了 ID 之后管的是
+              "这个人有没有权限" —— 两件事不同时出现在同一行上。
+
+              ⚠ 它只有图标（一行放好几个的前提），所以可访问名必须带上这一档的名字。
+              ⚠ 它是**危险动作**（删的是文件，没有撤销），所以先弹确认框 —— 见下面那个
+              `AlertDialog`。
+            */}
+            <Button
+              variant='ghost'
+              size='icon-xs'
+              className='text-destructive hover:text-destructive'
+              data-testid={`mode-delete-${row.id}`}
+              title={t('Delete {{mode}}', { mode: row.label })}
+              aria-label={t('Delete {{mode}}', { mode: row.label })}
+              onClick={onDelete}
+            >
+              <Trash2 />
+            </Button>
+          </>
         )}
       </span>
     </div>
@@ -883,11 +1092,18 @@ function ModeRowText({
           data-testid={`mode-state-${row.id}`}
           className={`gap-1 ${badgeTone}`}
         >
-          {open ? <ShieldCheck className='size-3' /> : <ShieldOff className='size-3' />}
+          {open ? (
+            <ShieldCheck className='size-3' />
+          ) : (
+            <ShieldOff className='size-3' />
+          )}
           {accountModeStateLabel(t, state)}
         </Badge>
       ) : (
-        <span className={`text-xs ${muted}`} data-testid={`mode-granted-${row.id}`}>
+        <span
+          className={`text-xs ${muted}`}
+          data-testid={`mode-granted-${row.id}`}
+        >
           {grantedLabel(t, { visibility: row.visibility, granted })}
         </span>
       )}
@@ -921,10 +1137,17 @@ function visibilityBadgeVariant(
  * （"Request failed with status code 200"）对运营毫无用处。所以优先取服务端那句。
  */
 function readError(err: unknown, fallback: string): string {
-  const anyErr = err as { response?: { data?: { message?: string } }; message?: string }
+  const anyErr = err as {
+    response?: { data?: { message?: string } }
+    message?: string
+  }
   const fromServer = anyErr?.response?.data?.message
-  if (typeof fromServer === 'string' && fromServer.trim()) return fromServer.trim()
+  if (typeof fromServer === 'string' && fromServer.trim()) {
+    return fromServer.trim()
+  }
   const message = anyErr?.message
-  if (typeof message === 'string' && message.trim()) return message.trim()
+  if (typeof message === 'string' && message.trim()) {
+    return message.trim()
+  }
   return fallback
 }

@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   listApps: vi.fn(),
+  listSites: vi.fn(),
   listCategories: vi.fn(),
   createApp: vi.fn(),
   updateApp: vi.fn(),
@@ -69,6 +70,9 @@ const sourceApp: AppView = {
   slug: '2051268528824700930',
   kind: 'ai_app',
   upstreamId: '2051268528824700930',
+  siteUpstreams: {
+    cn: { upstreamId: '2051268528824700930', slug: '2051268528824700930' },
+  },
   description: 'Studio retouch preset',
   coverUrl: 'https://files.rh.local/cover.png',
   published: true,
@@ -126,6 +130,10 @@ beforeEach(() => {
     totalPages: 1,
     kindCounts: { ai_app: 1 },
   })
+  api.listSites.mockResolvedValue([
+    { key: 'cn', label: 'RunningHub', channelType: 61 },
+    { key: 'intl', label: 'RunningHub Intl', channelType: 62 },
+  ])
   api.listCategories.mockResolvedValue([])
   api.createApp.mockResolvedValue({ ...sourceApp, id: 8 })
   api.updateApp.mockResolvedValue(sourceApp)
@@ -140,7 +148,7 @@ describe('RunningHub app record copy', () => {
     expect(screen.getByLabelText('App Name')).toHaveValue(
       'Portrait Retouch_copy'
     )
-    expect(screen.getByLabelText('Upstream ID')).toHaveValue(
+    expect(screen.getByLabelText('RunningHub Upstream ID')).toHaveValue(
       '2051268528824700930'
     )
     expect(screen.getByDisplayValue('Image')).toBeInTheDocument()
@@ -173,6 +181,11 @@ describe('RunningHub app record copy', () => {
       name: 'Portrait Retouch v2',
       upstreamId: '2051268528824700930',
       slug: '2051268528824700930',
+      // The per-site identifiers travel with the copy, so the duplicated record
+      // submits to the same upstream app until the admin edits them.
+      siteUpstreams: {
+        cn: { upstreamId: '2051268528824700930', slug: '2051268528824700930' },
+      },
       paramSchema: sourceApp.paramSchema,
       perSecondBilling: true,
       quotaPerSecond: 2500,

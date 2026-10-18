@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -129,6 +130,101 @@ func TestLoadModes_ReportsProblemsPerFile(t *testing.T) {
 		require.NotEmpty(t, row.Problem, "%s 应当有 problem", tc.id)
 		require.Contains(t, row.Problem, tc.want, tc.because)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 二、删掉一档（用户 2026-…："模式广场里面增加一个删除功能，可以删除某个模式"）
+// ---------------------------------------------------------------------------
+
+/*
+ * 这一条钉三件事，每件都是一种具体的坏法：
+ *
+ *	① 删的是**那一个文件**，而且删完列表里就没有它了（不是"标记一下"）
+ *	② ★ 坏文件**也能删** —— 一份笔误的文件运营最想做的就是拿掉它
+ *	   （改那两条路会拒绝坏文件，理由是"改它只会把问题搅得更乱"；删不是）
+ *	③ 删不存在的 / 非法的 id 要**报错且说清**，而不是沉默成功
+ *
+ * ⚠ 还有一件不出现在回包里、但必须守着的：`.bak` **不许跟着没**。它是运营刚删错
+ * 时唯一能翻回去的地方。
+ */
+func TestDeleteMode_RemovesTheFileAndNothingElse(t *testing.T) {
+	dir := useModeDir(t, map[string]string{
+		"mv.json":  aValidMode("mv", "video"),
+		"bad.json": `{ 这不是 JSON`,
+		/* 改过一次的模式旁边那一份备份（`WriteModeMeta` 留的） */
+		"mv.json.bak": aValidMode("mv", "video"),
+	})
+
+	row, err := DeleteMode("mv")
+	require.NoError(t, err)
+	require.Equal(t, "mv", row.ID)
+	require.Equal(t, filepath.Join(dir, "mv.json"), row.Source)
+
+	/* ① 磁盘上没有了，列表里也没有了 */
+	_, statErr := os.Stat(filepath.Join(dir, "mv.json"))
+	require.True(t, os.IsNotExist(statErr), "删完之后那个文件不该还在")
+	for _, r := range ReloadModes() {
+		require.NotEqual(t, "mv", r.ID, "删掉的那一档不该再出现在列表里")
+	}
+
+	/* ③ `.bak` 留着（运营唯一能翻回去的那一份） */
+	_, bakErr := os.Stat(filepath.Join(dir, "mv.json.bak"))
+	require.NoError(t, bakErr, "删掉模式时不该连带把 .bak 也删了")
+
+	/* ② 坏文件也允许删：它是"发不出去、干脆别要了"的那一份 */
+	broken, err := DeleteMode("bad")
+	require.NoError(t, err)
+	require.NotEmpty(t, broken.Problem, "坏文件被删掉时，它自己的问题仍然要能说出来")
+	_, statErr = os.Stat(filepath.Join(dir, "bad.json"))
+	require.True(t, os.IsNotExist(statErr))
+
+	/* ③ 再删一次：报"没有这一档"，而且那句话告诉人文件该长什么样 */
+	_, err = DeleteMode("mv")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "没有")
+	require.Contains(t, err.Error(), "mv.json")
+
+	/* ③ id 来自 URL，`../` 不许把路径拼到目录外面去 */
+	_, err = DeleteMode("../secret")
+	require.Error(t, err)
+}
+
+/*
+ * 删完之后**公开面立刻没有它** —— 这一条钉的是"删的是那个文件，而公开面每次都
+ * 重新读盘"（`DeleteMode` 与 `listPublicModes` 之间没有任何缓存要清）。
+ *
+ * ⚠ 它走的是**真路由链 + 真表**（`newTestEnv`），所以顺带钉住"这条路要有管理员
+ * 身份"与回包的信封形状 —— 那两样都是纯函数测不到的。
+ */
+func TestAdminDeleteMode_TakesEffectOnThePublicFace(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "mv.json"),
+		[]byte(aValidModeWithNewline("mv", "video")), 0o600))
+	useModeDirFrom(t, dir)
+
+	env := newTestEnv(t)
+	env.seedAccount(adminUsername, common.RoleAdminUser)
+
+	_, before := env.getJSON("/api/zsy/mode/list", "")
+	require.Equal(t, []string{"mv"}, modeIDsOf(t, before), "删之前公开面应当列着它")
+
+	_, payload := env.callAdmin(http.MethodDelete, "/dashboard/zsy/mode/mv", "")
+	require.Equal(t, true, payload["success"], "删除失败了：%v", payload)
+	data, _ := payload["data"].(map[string]any)
+	require.Equal(t, "mv", data["id"])
+	require.Equal(t, filepath.Join(dir, "mv.json"), data["source"],
+		"回包要说清删的是哪个文件（运营要能自己去核对）")
+
+	_, statErr := os.Stat(filepath.Join(dir, "mv.json"))
+	require.True(t, os.IsNotExist(statErr), "删完之后那个文件不该还在")
+
+	_, after := env.getJSON("/api/zsy/mode/list", "")
+	require.Equal(t, []string{}, modeIDsOf(t, after), "删完之后公开面还列着它")
+
+	/* 再删一次：不是"成功"，而是"没有这一档" —— 沉默成功会让运营以为他删掉了什么 */
+	_, again := env.callAdmin(http.MethodDelete, "/dashboard/zsy/mode/mv", "")
+	require.NotEqual(t, true, again["success"], "删一档不存在的模式被当成了成功")
+	require.Contains(t, messageOf(t, again), "没有")
 }
 
 func TestVisibility_DefaultsToPrivate(t *testing.T) {
@@ -282,11 +378,14 @@ func TestMountRoutes_PublishesTheDocumentedURLs(t *testing.T) {
 	 * ⚠ `/:id/content` 那两条也是 2026-… 加的：**模式正文**的读与写
 	 * （编辑弹窗里那份表单与原始 JSON 都走它们）—— 与 `/:id/meta` 那一对
 	 * 是**两件事**（那一条只动分发策略那两格）。
+	 * ⚠ `DELETE /:id` 是 2026-… 加的：**删掉一档模式**（用户点名要的，删的是
+	 * 模式目录里那个文件）。
 	 */
 	require.ElementsMatch(t, []string{
 		"GET /api/zsy/mode/list",
 		"GET /api/zsy/mode/:id/file",
 		"GET /dashboard/zsy/mode/list",
+		"DELETE /dashboard/zsy/mode/:id",
 		"POST /dashboard/zsy/mode/:id/meta",
 		"GET /dashboard/zsy/mode/:id/content",
 		"POST /dashboard/zsy/mode/:id/content",
@@ -300,26 +399,33 @@ func TestMountRoutes_PublishesTheDocumentedURLs(t *testing.T) {
 
 func TestShippedModes_AreAllGood(t *testing.T) {
 	/*
-	 * ★★ 这一条盯着**真正要发出去的那 10 份**（`new-api/modes/`）。
+	 * ★★ 这一条盯着**真正要发出去的那 11 份**（`new-api/modes/`）。
 	 *
 	 * 它是服务端这一摊最重要的一条守卫：前面那些用例都跑在临时目录里，
-	 * 只证明"这个函数是对的"；而这一条证明"**我们手上这 10 份是好的**"
+	 * 只证明"这个函数是对的"；而这一条证明"**我们手上这 11 份是好的**"
 	 * —— 一份坏的在目录里时的表现是"广场上少了一档，而用户只会以为
 	 * 这一版就是没有它"。
 	 *
 	 * ⚠ 第 10 档（`short-drama` 短剧）是 2026-… 加的：用户在客户端侧点名
 	 * "根据视频工程模式增加一个短剧模式，也在 new-api 这里进行管理，
 	 * **默认是公开版**" —— 所以它一进来就在下面那张公开名单里。
+	 *
+	 * ⚠★ 第 11 档（`first-last` 首尾帧视频）是 2026-10-14 跟着**补版的同一次**进来的：
+	 * 这一趟把 10 份全部对齐到客户端当前那一版（`videoKind` / `planDialog.impl` /
+	 * `framing` 那多出来的 5 格都是那一版加的），而客户端那一版有 11 档 ——
+	 * **服务端少一档的表现是"用户在广场里找不到它，只能自己造一份"**，
+	 * 于是这一份也补上（默认 `private`，要不要开是运营的事）。
 	 */
 	t.Setenv(envModeDir, filepath.Join("..", "..", "modes"))
 	t.Cleanup(func() { LoadModes() })
 
 	rows := ReloadModes()
-	require.Len(t, rows, 10, "仓库 modes/ 里应当有 10 份（视频 4 / 音频 2 / 文本 4）")
+	require.Len(t, rows, 11, "仓库 modes/ 里应当有 11 份（视频 5 / 音频 2 / 文本 4）")
 
 	want := map[string]string{
 		"mv": "video", "science": "video", "ad-idea": "video", "short-drama": "video",
-		"audiobook": "audio", "podcast": "audio",
+		"first-last": "video",
+		"audiobook":  "audio", "podcast": "audio",
 		"article": "text", "novel": "text", "script-text": "text", "science-text": "text",
 	}
 	byID := map[string]*ModeFile{}

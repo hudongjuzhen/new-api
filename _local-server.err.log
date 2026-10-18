@@ -1,0 +1,2 @@
+2026/10/17 17:26:19 WARNING: TRUSTED_PROXIES is unset or blank; trusting loopback, RFC 1918, and IPv6 ULA proxy addresses for compatibility. Set TRUSTED_PROXIES=none to trust no proxies, or configure explicit proxy IPs/CIDRs to replace these defaults.
+[mysql] 2026/10/17 19:17:39 packets.go:37: read tcp 192.168.1.2:58422->182.43.90.173:3306: wsarecv: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.

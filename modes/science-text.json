@@ -7,6 +7,7 @@
   "label": "知识科普",
   "medium": "text",
   "workScale": "single",
+  "videoKind": "other",
   "words": {
     "audio": "导入音频",
     "audioNone": "",
@@ -46,13 +47,6 @@
     "audioScriptName": "音频脚本",
     "audioGenerateHint": "这一屏要发出去的音频提示词（音色表 + 音频脚本）。"
   },
-  "appRows": {
-    "sd": "5",
-    "hd": "10",
-    "upscale": "9",
-    "faceswap": "12",
-    "edit": "11"
-  },
   "lipSync": {
     "when": "byScenario",
     "text": "人物开口时，嘴唇与下颌要随音频逐音节精准开合，只在真正出声的音节上开闭，绝不脱离音频独立动作。（这一档交付的是文字，没有画面。）"
@@ -71,6 +65,7 @@
   "planDialog": {
     "label": "AI 全篇规划",
     "title": "AI 全篇规划",
+    "impl": "song",
     "templates": [
       "请你作为科普作者，结合这份选题与大纲，参考资料库里的素材，来规划这一篇的结构与讲法：",
       "请你作为科普作者，结合这份选题与大纲，参考资料库里的素材，来规划这一篇的结构与讲法：\n从一个问题切入：开头就把它写成一个读者会想问的问题，全文都在回答它，答完就停。",

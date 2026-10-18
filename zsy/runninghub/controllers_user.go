@@ -129,6 +129,53 @@ type AppRunPayload struct {
 	// Zero means the host picks the user's default token, which is the
 	// standard path for requests that carry their own Authorization header.
 	TokenId int64 `json:"tokenId,omitempty"`
+	// Remark is an optional short note in the caller's own words — "生成 30 秒
+	// 视频", "生成 4 张图片" — stored on the task row so the charge explains
+	// itself in 任务日志 (usage-logs → 详情) and in the account's own usage
+	// records (/api/task/self → properties.remark / remark). It is display
+	// text only: it never reaches the upstream payload, and it never takes part
+	// in pricing.
+	Remark string `json:"remark,omitempty"`
+	// Note is the legacy alias of Remark. Both are accepted (`remark` wins when
+	// both are present) so callers that started out sending `note` keep working
+	// after this field was named.
+	Note string `json:"note,omitempty"`
+}
+
+// appRemarkMaxRunes bounds the caller-supplied note. The note is shown verbatim
+// in the task log detail and in the account statements, so one billing row must
+// not be turned into a document by a caller — and a note nobody can read in a
+// single glance is not a note.
+const appRemarkMaxRunes = 120
+
+// normalizeAppRemark cleans a caller-supplied note into something safe to store
+// and display: whitespace runs (spaces, tabs, newlines, full-width spaces) and
+// control characters collapse into single spaces. An empty result means "no
+// note" — an all-whitespace note is treated exactly like an absent one rather
+// than rendering an empty badge.
+func normalizeAppRemark(raw string) string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r <= ' ' || r == 0x7f || r == '\u3000'
+	})
+	if len(fields) == 0 {
+		return ""
+	}
+	joined := strings.Join(fields, " ")
+	if runes := []rune(joined); len(runes) > appRemarkMaxRunes {
+		// The ellipsis says "the caller wrote more" — a silently cut sentence
+		// would read like the whole note.
+		return strings.TrimSpace(string(runes[:appRemarkMaxRunes])) + "…"
+	}
+	return joined
+}
+
+// appRemarkFromPayload resolves the note from the modern `remark` field and its
+// legacy `note` alias.
+func appRemarkFromPayload(payload AppRunPayload) string {
+	if remark := normalizeAppRemark(payload.Remark); remark != "" {
+		return remark
+	}
+	return normalizeAppRemark(payload.Note)
 }
 
 // submitAppRun validates the form payload against the published app's
@@ -167,6 +214,13 @@ func submitAppRun(c *gin.Context) {
 		common.ApiErrorMsg(c, valErr.Error())
 		return
 	}
+
+	// The caller's own note for this run ("生成 30 秒视频"). Display text only:
+	// it is stored on the task row (Properties.Remark) so the charge explains
+	// itself in the task log detail and in the account's usage records, and it
+	// is never sent upstream. Resolved before any billing so both insert paths
+	// (direct submit and queue) see the same value.
+	remark := appRemarkFromPayload(payload)
 
 	// The application's own instance type is the ONLY source for this run: the
 	// admin sets it on /rh-apps, and a request may not override it. An older
@@ -401,7 +455,7 @@ func submitAppRun(c *gin.Context) {
 				// the dispatcher run it as soon as a slot frees (queue.go). The
 				// caller gets a QUEUED record instead of a wait or an error.
 				if errors.Is(selectErr.Err, errChannelSaturated) {
-					queuedTaskID, queueErr := enqueueAppRun(c, app, relayInfo)
+					queuedTaskID, queueErr := enqueueAppRun(c, app, relayInfo, remark)
 					if queueErr != nil {
 						taskErr = queueErr
 						break
@@ -511,7 +565,7 @@ func submitAppRun(c *gin.Context) {
 			// be a timeout candidate on the very next sweep. It's also the
 			// "任务提交时间" shown in the UI.
 			SubmitTime: time.Now().Unix(),
-			Properties: model.Properties{OriginModelName: relayInfo.OriginModelName},
+			Properties: model.Properties{OriginModelName: relayInfo.OriginModelName, Remark: remark},
 			PrivateData: model.TaskPrivateData{
 				UpstreamTaskID: upstreamFromResult(result),
 				// Persist which funding source paid for this run so the
@@ -1090,11 +1144,15 @@ func taskChargeIsFinal(info *relaycommon.RelayInfo, app *AppView) bool {
 // and pre-charges the run, records the task as QUEUED ("排队中") and stores the
 // built upstream request for the dispatcher. It returns the public task id.
 //
+// remark is the caller's own note for the run (already normalized, may be
+// empty); it rides on the task row exactly like on the direct-submit path so a
+// queued run is as self-explanatory as a submitted one.
+//
 // The record is created with progress="100%" and no channel on purpose — the
 // core poller only picks up tasks whose progress is not 100%, and a task that
 // has not reached the upstream has nothing to poll. Dispatch (queue.go) flips it
 // to IN_PROGRESS with a real channel id.
-func enqueueAppRun(c *gin.Context, app *AppView, info *relaycommon.RelayInfo) (string, *dto.TaskError) {
+func enqueueAppRun(c *gin.Context, app *AppView, info *relaycommon.RelayInfo, remark string) (string, *dto.TaskError) {
 	adaptor := &TaskAdaptor{}
 	adaptor.Init(info)
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
@@ -1127,7 +1185,7 @@ func enqueueAppRun(c *gin.Context, app *AppView, info *relaycommon.RelayInfo) (s
 		Status:     model.TaskStatusQueued,
 		Progress:   "100%",
 		SubmitTime: time.Now().Unix(),
-		Properties: model.Properties{OriginModelName: info.OriginModelName},
+		Properties: model.Properties{OriginModelName: info.OriginModelName, Remark: remark},
 		PrivateData: model.TaskPrivateData{
 			BillingSource:  info.BillingSource,
 			SubscriptionId: info.SubscriptionId,

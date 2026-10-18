@@ -82,6 +82,10 @@ type Properties struct {
 	Input             string `json:"input"`
 	UpstreamModelName string `json:"upstream_model_name,omitempty"`
 	OriginModelName   string `json:"origin_model_name,omitempty"`
+	// Remark 是调用方自带的备注（"生成 30 秒视频"这类），用来让账单自己
+	// 说明这一笔是什么。它**不参与计费**，也从不下发到上游 —— 只落在任务行
+	// 上，随任务日志（/api/task）与账号使用记录回到调用方。
+	Remark string `json:"remark,omitempty"`
 }
 
 func (m *Properties) Scan(val interface{}) error {

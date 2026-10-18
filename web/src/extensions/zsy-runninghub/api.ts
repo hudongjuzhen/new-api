@@ -17,6 +17,35 @@ export interface SchemaOption {
   value: string
 }
 
+/**
+ * One site's upstream identifiers for an app. The same workflow lives under
+ * different ids on the domestic and international RunningHub deployments, so an
+ * app carries one pair per site.
+ */
+export interface SiteUpstream {
+  /** The RH application id the site answers to. */
+  upstreamId: string
+  /** The admin's own identifier (标识符) for the app on that site. */
+  slug: string
+}
+
+/**
+ * One RunningHub site the gateway can route an app to (see sites.go on the
+ * backend). The app form renders an upstream-id / identifier block per entry, so
+ * a site added on the backend shows up here without a frontend change.
+ */
+export interface SiteSpec {
+  /** Canonical token stored in `AppView.site` / `siteUpstreams` keys. */
+  key: string
+  /** User-facing site name; doubles as an i18n key. */
+  label: string
+  /** Host channel type that serves the site. */
+  channelType: number
+}
+
+/** Per-site identifiers keyed by site key. */
+export type SiteUpstreamMap = Record<string, SiteUpstream>
+
 export interface SchemaParam {
   nodeId: string
   fieldName: string
@@ -37,7 +66,14 @@ export interface AppView {
   name: string
   slug: string
   kind: string
+  /**
+   * The app's PRIMARY upstream id: the identifier of the site the app itself
+   * runs on. It is what the run is billed and routed under, and it is derived
+   * from `siteUpstreams` on save — edit the per-site values, not this one.
+   */
   upstreamId: string
+  /** Per-site upstream id / identifier pairs, keyed by site key. */
+  siteUpstreams: SiteUpstreamMap
   description: string
   coverUrl: string
   published: boolean
@@ -91,7 +127,14 @@ export interface AppCreateDTO {
   name: string
   slug: string
   kind: string
+  /**
+   * Legacy single-identifier input, filed under the app's own site. The form
+   * sends `siteUpstreams` instead; this stays for API clients that only know
+   * the historical field.
+   */
   upstreamId: string
+  /** One upstream id / identifier pair per site key. */
+  siteUpstreams: SiteUpstreamMap
   description: string
   coverUrl: string
   published: boolean
@@ -138,6 +181,8 @@ export interface ParseCurlResult {
   upstreamId: string
   baseUrl?: string
   slug?: string
+  /** Site the request came from, when its host is one of the registered sites. */
+  site?: string
   nodeInfoList?: Array<{
     nodeId: string
     fieldName: string
@@ -215,6 +260,24 @@ export async function reorderApps(ids: number[]): Promise<number> {
     throw new Error(res.data.message || 'Failed to save the new order')
   }
   return res.data.data?.updated ?? 0
+}
+
+// ---------------------------------------------------------------------------
+// Site registry
+// ---------------------------------------------------------------------------
+
+/**
+ * Every RunningHub site this gateway can route an app to, in display order.
+ *
+ * The app form renders one upstream-id / identifier block per entry and the
+ * apps table labels the site a row runs on, so the list is never duplicated in
+ * the bundle: a site added to the backend registry appears here automatically.
+ */
+export async function listSites(): Promise<SiteSpec[]> {
+  const res = await api.get<{ success: boolean; data: SiteSpec[] }>(
+    '/dashboard/zsy/rh/sites'
+  )
+  return res.data.data ?? []
 }
 
 // ---------------------------------------------------------------------------

@@ -30,6 +30,10 @@ function sourceApp(overrides: Partial<AppView> = {}): AppView {
     slug: '2051268528824700930',
     kind: 'ai_app',
     upstreamId: '2051268528824700930',
+    siteUpstreams: {
+      cn: { upstreamId: '2051268528824700930', slug: '2051268528824700930' },
+      intl: { upstreamId: '2099000000000000001', slug: 'intl-variant' },
+    },
     description: 'Studio retouch preset',
     coverUrl: 'https://files.rh.local/cover.png',
     published: true,
@@ -75,6 +79,10 @@ describe('RunningHub app drafts', () => {
       slug: '2051268528824700930',
       kind: 'ai_app',
       upstreamId: '2051268528824700930',
+      siteUpstreams: {
+        cn: { upstreamId: '2051268528824700930', slug: '2051268528824700930' },
+        intl: { upstreamId: '2099000000000000001', slug: 'intl-variant' },
+      },
       description: 'Studio retouch preset',
       coverUrl: 'https://files.rh.local/cover.png',
       published: true,
@@ -132,6 +140,15 @@ describe('RunningHub app drafts', () => {
 
     expect(app.paramSchema[0].label).toBe('Image')
     expect(app.paramSchema[1].options?.[0].value).toBe('1:1')
+  })
+
+  test('the draft owns its per-site identifiers', () => {
+    const app = sourceApp()
+
+    const draft = appToCreateDTO(app)
+    draft.siteUpstreams.cn.upstreamId = 'edited-on-the-copy'
+
+    expect(app.siteUpstreams.cn.upstreamId).toBe('2051268528824700930')
   })
 
   test('appCopyDraft only renames the record, everything else is identical', () => {

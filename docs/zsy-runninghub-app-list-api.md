@@ -226,7 +226,8 @@ GET /api/zsy/rh/app-catalog
 | `name` | string | 应用名称（全站唯一） |
 | `slug` | string | 可选短名，可为空 |
 | `kind` | string | `ai_app`（AI 应用）/ `workflow`（工作流）/ `model`（模型 API） |
-| `upstreamId` | string | 上游 RunningHub 应用 / 工作流 ID。**第三方一般不需要它**（用 `id` 即可）；它也是模型名与价格表的键 |
+| `upstreamId` | string | 上游 RunningHub 应用 / 工作流 ID —— **主上游ID**，即本应用所在站点（`site`）的那一个。**第三方一般不需要它**（用 `id` 即可）；它也是模型名与价格表的键 |
+| `siteUpstreams` | object | 各站点各自的上游ID与标识符，键是站点（`cn` / `intl` / 以后新增的站点），值形如 `{"upstreamId": "...", "slug": "..."}`。同一个工作流在国内站和国际站是两个不同的上游 ID，**提交时用的是本次运行所在站点的那一对**（见 §5.3 `site`）。只读展示用，调用方不需要自己挑选 |
 | `description` | string | 应用介绍（应用卡片与详情页的正文） |
 | `coverUrl` | string | 封面图 URL，可为空。后台新增 / 编辑应用时可直接上传图片，上传结果存为网关自身地址（`/uploads/…` 或 OSS 全地址）；也接受 `http(s)://` 外链 |
 | `published` | bool | 恒为 `true`（目录只含已发布应用） |

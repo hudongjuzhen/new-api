@@ -3,6 +3,7 @@ package mode
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -51,6 +52,19 @@ const modeGenerationModel = "glm-5.3-flash"
 // 而截断的那一份是"JSON 解析失败"（看起来像模型不会写 JSON，其实是预算不够）。
 const modeGenerationMaxTokens = 16000
 
+/*
+ * `videoKind` 的两个合法字面量（视频那一家的**小类**）。
+ *
+ * ⚠★ 它们是**客户端枚举的副本**，这里只用来"别把非法值照抄进给模型看的示例"
+ * 与"生成出来的那一份校验一下"。客户端那边认的是
+ * `core/modeCatalogKinds.js` 的 `VIDEO_KINDS`（`audio` / `frame` / `other`），
+ * 而 `other` 是它清洗之后的中性兜底 —— **不是能写的值**，所以不在这两个里。
+ */
+const (
+	videoKindAudio = "audio"
+	videoKindFrame = "frame"
+)
+
 // buildModeCreateInstruction assembles the whole prompt.
 //
 // @param request 用户写的那段需求（"我要做美食探店类的短视频"）
@@ -97,6 +111,16 @@ func buildModeCreateInstruction(request, label, medium, summary, id string) stri
 			"不要照抄示例里的\"歌词\"\"镜头\"（那是视频的写法，音频/文稿类要换掉）。", len(modeWordKeys())),
 		"- libraries 至少写一张表（这类作品最需要攒的东西，例如「角色库」「产品库」「素材库」）。",
 		"- requires 那四个布尔都要写，而且**按这份模式实际需不需要**来定。",
+		"- ★★ **planDialog.instruction 必须是对象、不是字符串**：示例里它是对象，那些键" +
+			"（skeleton / ruleCutPoints / framing / songFacts / …）**一个都不许少、一个都不许并成一句话**；" +
+			"`framing` 再下一层也是对象。⚠ 写成字符串的后果是**客户端整节回落成内置 mv 的提示词** ——" +
+			"用户看到的是「请你作为顶级MV导演…」，而不是他这一档该有的那一套（这一条真发生过）。",
+		"- ★★ **planDialog.templates 必须是字符串数组**（5–7 条）：每一条是一个能直接用的完整句子，" +
+			"第 0 条只有开场白（交代「你是谁、要做什么」），其余几条各给一种做法；" +
+			"**不是** [{\"label\":…,\"prompt\":…}] 那样的对象数组（客户端会把对象读成 \"[object Object]\"）。",
+		"- ★★ **planDialog.audio 必须是对象**（15 格），不是一段字符串；同样的理由（写错就整节回落 mv）。",
+		"- ★ 不许把占位说明当内容写进文件：像「（这一段指令写什么）」「（这一格写什么）」" +
+			"这种句子是给你看的形状提示；正式那一份每一格都要是这一类作品**真的能用**的整句话。",
 		"- 拿不准的地方按这一类作品最普通、最好用的做法写 —— 这是一份**模板**，" +
 			"用户拿到之后还能自己改。",
 	}
@@ -116,12 +140,20 @@ func modeFieldCatalog() string {
 		"- format / formatVersion（固定值，见下面）",
 		"- id / label / medium / workScale（workScale 只能是 single 或 serial）",
 		"- words：界面上那些词（下面每一格都要写）",
-		"- planDialog：规划弹窗（label / title / instruction / templates / audio）",
+		"- planDialog：规划弹窗（label / title / instruction / templates / audio）—— " +
+			"⚠★★ 这几格的**类型是硬契约**，见下面【硬规矩】；写错类型的后果不是报错，是客户端整节回落成内置 mv 那一套：",
+		"    · label：这一个弹窗叫什么（例如「AI 整曲规划」）；title 是它上面那一行标题",
+		"    · instruction：**对象**，23 格（skeleton / framing / songFacts / …）—— 视频类作品必写；" +
+			"⚠ 音频与文稿类作品**不要写这一格**（那一整节讲的是镜头脚本）",
+		"    · templates：**字符串数组**（5–7 条），第 0 条 = 开场白，会被放在整段指令的**第一行**",
+		"    · audio：**对象**，15 格（audioScriptLead / exampleSpeak / sfxRules / segmentRule / gen / …）",
 		"- shotDialog：镜头或版本弹窗（label）",
 		"- requires：四个布尔 —— audio / lyrics / refs / segments（这项作品必填哪些）",
 		"- libraries：资料库表（id / label / dir / itemFile / fields）",
 		"- extraButtons：额外按钮（可以空数组）",
 		"- appRows / lipSync / core / coreLabels（可以照示例给一份合理的）",
+		"- ★ videoKind：**只有 medium=video 才写**，值只能是 audio（音频生视频）或 frame（首尾帧视频）。" +
+			"它是视频那一家的小类，决定这份模式在「模式广场」里摆进哪一堆；不认识的值会落成「视频」那一堆",
 		"",
 		fmt.Sprintf("words 那一节（共 %d 格）：%s", len(words), strings.Join(words, " / ")),
 		"",
@@ -217,6 +249,21 @@ func modeShapeTemplate() string {
 			template[key] = placeholderPlanDialog(value)
 		case "libraries":
 			template[key] = placeholderLibraries(value)
+		case "videoKind":
+			/*
+			 * ★★ 视频那一家的**小类**（`audio` / `frame`），2026-… 客户端加的。
+			 *
+			 * ⚠★ 这一格先**归一**再进示例：客户端清洗之后的兜底值是 `"other"`，
+			 * 而它不是能写的字面量（真实踩过：一份生成出来的短剧模式顶着
+			 * `videoKind: "other"`，于是它永远躺在「视频」那一堆里、
+			 * 不参与「音频生视频」的分堆，而界面上看不出任何异常）。
+			 * 照抄出去的表现就是"模型学会了写 other"。
+			 *
+			 * ⚠ 本仓库现挂的十份里还没有这一格（它是客户端新加的、示例文件里
+			 * 因此也没有）—— 这一条守的是**下一次导入之后**：那时示例文件会带上
+			 * 这一格，而它必须示范一个合法的值。
+			 */
+			template[key] = videoKindOf(value, "")
 		default:
 			template[key] = value
 		}
@@ -308,6 +355,8 @@ func placeholderWords(value any) any {
 }
 
 // placeholderPlanDialog shrinks the planning dialog: keys stay, long prose does not.
+//
+// ★★ 类型是**契约**，所以占位只换"值"，不换形状（2026-… 修，见下面 `placeholderCells` 的说明）。
 func placeholderPlanDialog(value any) any {
 	dialog, ok := value.(map[string]any)
 	if !ok {
@@ -317,11 +366,17 @@ func placeholderPlanDialog(value any) any {
 	for key, raw := range dialog {
 		switch key {
 		case "instruction":
-			out[key] = placeholderInstruction(raw)
+			out[key] = placeholderCells(raw)
 		case "templates":
+			/*
+			 * ⚠★ 字符串数组（不是对象数组）：示例里写成对象，模型就会照着写成
+			 * [{"label":…,"prompt":…}]，而客户端那一边 `String(对象)` 得到的是
+			 * `"[object Object]"` —— 表现是**开场白丢失**，规划时用的是内置 mv
+			 * 的那一句「请你作为顶级MV导演…」（真实踩过）。
+			 */
 			out[key] = []any{"（这个模式的默认模板：一句话交代「你是谁、要做什么」）"}
 		case "audio":
-			out[key] = "（这一类作品要生成的音频提示词，没有就留空串）"
+			out[key] = placeholderCells(raw)
 		default:
 			out[key] = raw
 		}
@@ -329,29 +384,54 @@ func placeholderPlanDialog(value any) any {
 	return out
 }
 
-// placeholderInstruction keeps the instruction's **keys** and drops its prose.
-func placeholderInstruction(value any) any {
-	instruction, ok := value.(map[string]any)
+// placeholderCells keeps a nested cell map's **keys and types**, and drops its prose.
+//
+// ★★ 为什么按"再下一层"走而不是整节塞一句话（2026-… 修）
+//
+// 这一份示例是模型唯一的形状凭据：它把 `instruction`（23 格）整节换成**一个字符串**时，
+// 模型看到的形状就是"instruction 是一个字符串"，于是它照着写了一个字符串。
+// 而客户端那一边 `instruction` 必须是对象 —— 读不到那 23 格就**整节回落成内置 mv 的提示词**，
+// 于是用户看到的规划提示词永远写着「请你作为顶级MV导演…」（真实踩过的那一次）。
+//
+// 数组同样处理：值换成一个同形的占位（例如 `["（这一节写什么）"]`），
+// **不**改成字符串 —— 类型一变，模型学到的形状就是错的。
+func placeholderCells(value any) any {
+	cells, ok := value.(map[string]any)
 	if !ok {
-		return "（规划指令：按下面这些分节写，每一段都要写）"
+		return placeholderNote
 	}
-	out := make(map[string]any, len(instruction))
-	for key, raw := range instruction {
-		if nested, isMap := raw.(map[string]any); isMap {
-			inner := make(map[string]any, len(nested))
-			for innerKey := range nested {
-				inner[innerKey] = "（这一格写什么）"
-			}
-			out[key] = inner
-			continue
+	out := make(map[string]any, len(cells))
+	for key, raw := range cells {
+		switch nested := raw.(type) {
+		case map[string]any:
+			out[key] = placeholderCells(nested)
+		case []any:
+			out[key] = []any{noteOf("这一节原来是 " + strconv.Itoa(len(nested)) + " 条，照这个数目给这一类作品写几条")}
+		default:
+			out[key] = placeholderNote
 		}
-		if list, isList := raw.([]any); isList {
-			out[key] = []any{fmt.Sprintf("（这一节写什么，原来有 %d 条）", len(list))}
-			continue
-		}
-		out[key] = "（这一段指令写什么）"
 	}
 	return out
+}
+
+// placeholderNote is the "write this cell" note handed to the model.
+const placeholderNote = "（这一格写什么）"
+
+// noteOf builds one of the bracketed shape notes.
+func noteOf(text string) string { return "（" + text + "）" }
+
+// videoKindOf normalises one `videoKind` value.
+//
+// ⚠ 认不出（含客户端清洗之后的兜底值 `"other"`）时回 `fallback` —— 绝不把
+// 一个非法字面量照抄进给模型看的示例里。
+func videoKindOf(value any, fallback string) string {
+	switch strings.TrimSpace(fmt.Sprint(value)) {
+	case videoKindAudio:
+		return videoKindAudio
+	case videoKindFrame:
+		return videoKindFrame
+	}
+	return fallback
 }
 
 // placeholderLibraries keeps one library's shape and blanks the rest.
@@ -377,6 +457,218 @@ func placeholderLibraries(value any) any {
 		out[key] = raw
 	}
 	return []any{out}
+}
+
+// generatedModeProblem checks the parts of a **generated** mode that the model can get wrong.
+//
+// ★★ 与 `modeShapeProblem` 的分工（2026-… 加，因为真出过一次）
+//
+// | | `modeShapeProblem` | ★ 这一个 |
+// |---|---|---|
+// | 谁用 | **两条路都用**（读盘 + 生成） | 只有「AI 一键生成」那一条路 |
+// | 判什么 | 身份那五格（format / version / id / label / medium） | **契约那几格的类型** |
+//
+// ⚠★ 为什么类型检查**不能**放进 `modeShapeProblem`：它同时是**读盘**那道闸，
+// 而模式库是**运营手放上去的地方**（`ZSY_MODE_DIR`）。把类型写死在那里，
+// 等于"一份只有 `words` 的老模式从此显示成坏的"—— 而客户端本来能读它
+// （`normalizeWorkMode` 逐格回落），那种红是**假警报**，代价是运营不敢动文件。
+//
+// 而"生成"那一条路上，这些格子是**我们自己刚刚求模型写的**：写错了不该落盘
+// （落盘之后用户拿到的是一份"看着正常、跑起来却整节回落成 mv"的模式 ——
+// 表现是规划提示词里写着「请你作为顶级MV导演…」，而文件里明明是自己那一档的说明）。
+//
+// 判据都是从**客户端真的读法**倒推的：
+//
+//	· `planDialog.instruction` 必须是对象 —— 客户端读不到那 23 格就整节回落 mv
+//	· `planDialog.templates` 必须是**字符串**数组、第 0 条非空 —— 它会被放在指令第一行
+//	· `planDialog.audio`（给了的话）必须是对象 —— 同一类回落
+//	· `words` 要盖住客户端认的那些键 —— 缺哪格落回 mv 的词
+//	· `videoKind` 只能是 audio / frame —— 写错会掉进「视频」那一堆
+func generatedModeProblem(manifest map[string]any, medium, label string) string {
+	dialog, hasDialog := manifest["planDialog"].(map[string]any)
+	if !hasDialog {
+		if medium == "video" {
+			return "生成的这一份没有 planDialog —— 视频类作品的规划弹窗（label / " +
+				"title / instruction / templates / audio）是它最主要的一格，" +
+				"少了它用户打开「规划」看到的是空白。请重试一次。"
+		}
+		return ""
+	}
+
+	/* ① 模板那一条是"整段指令的第一行"，错了就没有开场白 */
+	templates, ok := dialog["templates"].([]any)
+	if !ok {
+		return fmt.Sprintf("planDialog.templates 应当是**字符串数组**（它是 %s）—— "+
+			"它会被放在整段规划指令的第一行；写成对象数组的话客户端会读成 "+
+			"\"[object Object]\"，开场白就丢了。请按示例的形状重写这一格。", jsonKindOf(dialog["templates"]))
+	}
+	if len(templates) == 0 {
+		return "planDialog.templates 是空的 —— 它至少要有第 0 条（开场白）。"
+	}
+	for i, one := range templates {
+		if jsonKindOf(one) != "字符串" {
+			return fmt.Sprintf("planDialog.templates 第 %d 条不是字符串（它是%s）—— "+
+				"这个数组里只能放字符串。", i, jsonKindOf(one))
+		}
+		if strings.TrimSpace(fmt.Sprint(one)) == "" {
+			return fmt.Sprintf("planDialog.templates 第 %d 条是空串 —— "+
+				"空的那一条在界面上就是一个空框（点「换一个」会换出空白）。", i)
+		}
+	}
+
+	/*
+	 * ② 分镜指令那 23 格：**视频类作品的命根子**。
+	 *
+	 * ⚠ 音频 / 文稿那两类**刻意不写**这一格（那一整节讲的是镜头脚本），
+	 * 所以只在 medium=video 时要求它。
+	 */
+	if medium == "video" {
+		instruction, isMap := dialog["instruction"].(map[string]any)
+		if !isMap {
+			return fmt.Sprintf("planDialog.instruction 应当是**对象**（它是%s）—— "+
+				"那一节是 23 格（skeleton / framing / songFacts / …），"+
+				"客户端读不到这些格就**整节回落成内置 mv 的提示词**，"+
+				"用户看到的会是「请你作为顶级MV导演…」。请按示例的形状重写这一格。",
+				jsonKindOf(dialog["instruction"]))
+		}
+		/*
+		 * ⚠ 只查**那两格本身就是一层格子**的（`framing` / `songFacts`）：
+		 * 其余 21 格是**字符串**（skeleton / ruleCutPoints / …）—— 一起查的话
+		 * 每一份合法生成的模式都会被自己判死（这一版第一版就踩了这个坑，
+		 * 报出来的是"planDialog.instruction.skeleton 应当是对象"）。
+		 *
+		 * 而那两格**没有也合法**：客户端对缺格是逐键回落，用户自己写的一格也不算错。
+		 * 这里管的是**有、但被写成了一句话**那种（提示词里那句话被照抄回来的形状）。
+		 */
+		for _, key := range instructionObjectCells {
+			if problem := objectCellProblem(instruction, "planDialog.instruction", key); problem != "" {
+				return problem
+			}
+		}
+	}
+
+	/* ③ `audio` 那一节：给了就必须是对象 */
+	if _, given := dialog["audio"]; given {
+		if _, isMap := dialog["audio"].(map[string]any); !isMap {
+			return fmt.Sprintf("planDialog.audio 应当是**对象**（它是%s）—— "+
+				"它是 15 格（audioScriptLead / exampleSpeak / segmentRule / gen / …）。"+
+				"写成一整段字符串的话客户端读不到那些格。", jsonKindOf(dialog["audio"]))
+		}
+	}
+
+	/* ④ 词表：客户端认哪些键，就得写哪些键 */
+	words, ok := manifest["words"].(map[string]any)
+	if !ok {
+		return "生成的这一份没有 words —— 界面上那些词全落回内置 mv 那一套" +
+			"（按钮上写着「歌词」「镜头」）。请补上这一节。"
+	}
+	var missing []string
+	for _, key := range modeWordKeys() {
+		if _, written := words[key]; !written {
+			missing = append(missing, key)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Sprintf("words 少写了 %d 格：%s —— 客户端认的是这 %d 格，"+
+			"缺的那些会逐格回落成内置 mv 的词（音频/文稿类尤其明显）。"+
+			"请把这一节补全（每一格都要写，包括这一档确实用不到的那几格）。",
+			len(missing), strings.Join(missing, " / "), len(modeWordKeys()))
+	}
+
+	/* ⑤ 视频那一家的小类 */
+	if medium == "video" {
+		kind := videoKindOf(manifest["videoKind"], "")
+		if kind == "" {
+			return fmt.Sprintf("videoKind 应当是 %s 或 %s（收到的是 %q）—— "+
+				"它决定这一档在「模式广场」里摆进「音频生视频」还是「首尾帧视频」；"+
+				"认不出的值会落进「视频」那一堆，而界面上看不出异常。",
+				videoKindAudio, videoKindFrame, fmt.Sprint(manifest["videoKind"]))
+		}
+	}
+
+	/* ⑥ 占位说明**不许**当成内容落盘（提示词里那些句子被照抄回来过） */
+	if note := placeholderLeakOf(manifest); note != "" {
+		return fmt.Sprintf("生成的这一份把**形状提示**当成了内容：%s —— "+
+			"「（这一格写什么）」这种句子是给你看的占位说明，"+
+			"每一格都要写这一类作品真的能用的整句话。", note)
+	}
+
+	/* ⑦ 与读盘同源的那一道闸（身份那五格） */
+	if problem := modeShapeProblem(manifest, strings.TrimSpace(label)); problem != "" {
+		return problem
+	}
+	return ""
+}
+
+// instructionObjectCells lists the instruction cells that are **themselves a layer
+// of cells** —— the other 21 are plain strings.
+//
+// ⚠★ 这张表是**客户端契约的副本**（`core/workModes.js` 的 `normalizeInstruction`：
+// `framing` / `songFacts` 是逐键回落的、`framing.sectionLabels` 还再下一层，
+// 其余每一格都是一句话）。把它写在这里而不是"凡对象皆可"，
+// 是为了让"字符串那 21 格"不被误判成错的 —— 那会把每一份合法生成的模式都判死。
+var instructionObjectCells = []string{"framing", "songFacts"}
+
+// objectCellProblem checks one nested cell that must itself be an object.
+//
+// ⚠ **没有那一格不算错**（客户端对缺格是逐键回落）；错的是"有、但被写成了一句话"。
+func objectCellProblem(cells map[string]any, path, key string) string {
+	value, written := cells[key]
+	if !written {
+		return ""
+	}
+	if _, isMap := value.(map[string]any); !isMap {
+		return fmt.Sprintf("%s.%s 应当是**对象**（它是%s）—— 它自己是一层格子（各写一句话），"+
+			"而客户端读不到它就逐键回落成内置 mv 的那几句。",
+			path, key, jsonKindOf(value))
+	}
+	return ""
+}
+
+// placeholderLeakOf answers the first leftover shape note, or "".
+//
+// ⚠ 只认提示词里那两种写法（`（这一格写什么）` / `（这一节……）`）：
+// 匹配得太宽会把用户自己写的括号内容也判成泄漏，那种红没人能解释。
+func placeholderLeakOf(value any) string {
+	switch node := value.(type) {
+	case map[string]any:
+		for _, raw := range node {
+			if hit := placeholderLeakOf(raw); hit != "" {
+				return hit
+			}
+		}
+	case []any:
+		for _, raw := range node {
+			if hit := placeholderLeakOf(raw); hit != "" {
+				return hit
+			}
+		}
+	case string:
+		trimmed := strings.TrimSpace(node)
+		if strings.Contains(trimmed, "（这一格写什么）") || strings.HasPrefix(trimmed, "（这一节") {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// jsonKindOf names a JSON value's kind the way the error messages talk about it.
+func jsonKindOf(value any) string {
+	switch value.(type) {
+	case nil:
+		return "空的"
+	case string:
+		return "字符串"
+	case bool:
+		return "布尔"
+	case float64, int, int64:
+		return "数字"
+	case []any:
+		return "数组"
+	case map[string]any:
+		return "对象"
+	}
+	return "认不出的值"
 }
 
 // nonEmpty answers the fallback when a value is blank.

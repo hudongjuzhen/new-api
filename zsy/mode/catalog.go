@@ -544,6 +544,51 @@ func WriteModeMeta(id string, in ModeMetaInput) (string, error) {
 	return out, nil
 }
 
+// DeleteMode removes one mode from the library.
+//
+// It returns the row it removed, so the caller can name the mode (and the file)
+// in its answer and in the log.
+//
+// # ★★ 删的就是那个文件，与"加一档模式就是把文件放进去"同一条
+//
+// 模式库的存量是磁盘上一个目录（本文件头那段取舍），所以"删掉一档模式"只能是
+// "删掉那一个文件"——界面上那句说明说的也正是这件事（"adding or removing a mode
+// is adding or removing a file"）。因此这里**不碰数据库**：
+// `mode_entitlements` 里那些授权行原样留着 ——
+//
+//	删错了 → 把同名文件放回去，权限**自己就回来了**（不用重新一个个开通）
+//	留着也没害处 → 公开面按磁盘上的文件列，那几行对一份不存在的模式不起任何作用
+//
+// # ⚠★ 坏文件**允许删**（这是它与"改"最大的不同）
+//
+// `WriteModeMeta` / `WriteModeContent` 都拒绝一份读不出来的模式，理由是"改它只会把
+// 问题搅得更乱"。删不是那种情况：一份因为笔误而发不出去的文件，运营最想做的恰恰是
+// **把它拿掉**，再放一份对的进来。所以这里只判"这个文件在不在"。
+//
+// # ⚠★ `.bak` 留着
+//
+// 改过一次的模式旁边会有一份 `<id>.json.bak`（`WriteModeMeta` 留的最早那一版）。
+// 删的时候**不动它**：对一个刚删错的操作来说，那份备份是他唯一能翻回去的地方。
+// 它不在模式库里（`LoadModes` 只认 `.json` 结尾的文件），所以既不会被列出来，
+// 也不会被客户端拿到。
+func DeleteMode(id string) (*ModeFile, error) {
+	row, found := ModeByID(id)
+	if !found {
+		return nil, fmt.Errorf("mode: 模式库里没有 %q 这一档（文件名就是模式 id，例如 mv.json）", id)
+	}
+	info, statErr := os.Stat(row.Source)
+	if statErr != nil {
+		return nil, fmt.Errorf("mode: 读不到 %s 的信息：%w", row.Source, statErr)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("mode: %s 是一个目录，不是模式文件", row.Source)
+	}
+	if err := os.Remove(row.Source); err != nil {
+		return nil, fmt.Errorf("mode: 删除 %s 失败：%w", row.Source, err)
+	}
+	return row, nil
+}
+
 // rewriteMetaKeys reproduces the file **key by key**, replacing (or inserting)
 // only `x-visibility` / `x-summary`.
 //

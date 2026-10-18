@@ -130,9 +130,11 @@ export interface ModeEntitlementByMode {
 }
 
 export async function listModes(): Promise<ModeList> {
-  const res = await api.get<{ success: boolean; message?: string; data: ModeList }>(
-    `${ADMIN_BASE}/list`
-  )
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data: ModeList
+  }>(`${ADMIN_BASE}/list`)
   return ok(res.data)
 }
 
@@ -166,11 +168,35 @@ export async function updateModeMeta(
   const body: Record<string, unknown> = {}
   if (patch.visibility !== undefined) body.visibility = patch.visibility
   if (patch.summary !== undefined) body.summary = patch.summary
-  const res = await api.post<{ success: boolean; message?: string; data: ModeView }>(
-    `${ADMIN_BASE}/${encodeURIComponent(modeId)}/meta`,
-    body
-  )
+  const res = await api.post<{
+    success: boolean
+    message?: string
+    data: ModeView
+  }>(`${ADMIN_BASE}/${encodeURIComponent(modeId)}/meta`, body)
   return ok(res.data)
+}
+
+/**
+ * ★★ **删掉一档模式**（用户 2026-…："模式广场里面增加一个删除功能，可以删除某个模式"）。
+ *
+ * 删的是**模式目录里那个文件**（服务端 `DeleteMode`）：模式库的存量是磁盘上的文件，
+ * 所以这个动作与"把一份模式文件放进那个目录"互为反面。删完**下一次刷新广场就没有
+ * 它了** —— 公开面每次都重新读盘，没有缓存要清。
+ *
+ * ⚠★ 两件事它**不做**，而运营一定会问（弹窗里那句话因此写得很长）：
+ *
+ * | 不会发生 | 为什么 |
+ * |---|---|
+ * | 删掉用户机器上已经下载的那一份 | 那份文件是用户的资产（他可能改过、已经用它建了工程） |
+ * | 清掉这一档的授权行 | 删错了把同名文件放回去，权限**自己就回来了** |
+ */
+export async function deleteMode(modeId: string): Promise<void> {
+  const res = await api.delete<{
+    success: boolean
+    message?: string
+    data?: unknown
+  }>(`${ADMIN_BASE}/${encodeURIComponent(modeId)}`)
+  ok(res.data)
 }
 
 /**
@@ -180,7 +206,9 @@ export async function updateModeMeta(
  * `user_id` 与 `mode_id` 至少要给一个。这里给的是账号那一个 —— 这一屏上操作员
  * 的动作是"给某个人开一档"，所以问题总是从账号出发的。
  */
-export async function listEntitlementsByUser(userId: number): Promise<ModeEntitlementByUser> {
+export async function listEntitlementsByUser(
+  userId: number
+): Promise<ModeEntitlementByUser> {
   const res = await api.get<{
     success: boolean
     message?: string
@@ -190,7 +218,9 @@ export async function listEntitlementsByUser(userId: number): Promise<ModeEntitl
 }
 
 /** 按模式读"这一档给了谁"（只回生效中的那几行）。 */
-export async function listEntitlementsByMode(modeId: string): Promise<ModeEntitlementByMode> {
+export async function listEntitlementsByMode(
+  modeId: string
+): Promise<ModeEntitlementByMode> {
   const res = await api.get<{
     success: boolean
     message?: string
@@ -205,8 +235,10 @@ export async function listEntitlementsByMode(modeId: string): Promise<ModeEntitl
  * 它把新那份模式写进**服务端的模式目录**（`<模式目录>/<id>.json`）——
  * 服务端那份 = 客户端将来会拿到的那一份，所以这个动作就是"把这个模式做出来"。
  *
- * ⚠ 请求体是**下划线**（宿主 dashboard 那一套）：`ai` 那一格是可选的 ——
- * 不带它时正文由调用方给（`body`），带了它就由服务端按那几个输入去生成。
+ * ⚠ 请求体是**下划线**（宿主 dashboard 那一套），与服务端 `adminGenerateParams`
+ * 逐格对应：多一格没用的字段不会报错、只会让人以为它有用，所以这里**只留服务端
+ * 真的读的那几格**。模型名不在其中 —— 它由服务端的 `ZSY_MODE_AI_MODEL` 决定
+ * （弹窗把它念出来，但不传回去）。
  */
 export interface ModeCreateInput {
   /** 模式名称（界面上的 `label`）。 */
@@ -221,24 +253,27 @@ export interface ModeCreateInput {
   visibility?: string
   /** ★ AI 生成那一路：给模型的需求（用户写的那段话）。 */
   request?: string
-  /** ★ AI 生成用哪个模型（默认由服务端配置决定）。 */
-  model?: string
-  /** ★ 生成用的密钥（用户在弹窗里选的那一把）。 */
-  api_key?: string
-  /** 不走 AI 时的正文（一整份模式文件）。 */
-  body?: Record<string, unknown>
+  /**
+   * ★ 生成用的密钥 —— 是**本站令牌的 id**（不是一把上游密钥）：
+   * 这一趟请求走站内中继，花的是那把令牌的额度。
+   * ⚠ 必填：没有它这一趟就没有身份，也就落不到任何渠道上。
+   */
+  token_id?: number
 }
 
 export async function createMode(input: ModeCreateInput): Promise<ModeView> {
-  const res = await api.post<{ success: boolean; message?: string; data: ModeView }>(
-    `${ADMIN_BASE}/create`,
-    input
-  )
+  const res = await api.post<{
+    success: boolean
+    message?: string
+    data: ModeView
+  }>(`${ADMIN_BASE}/create`, input)
   return ok(res.data)
 }
 
 /** 读一档模式的**完整正文**（编辑弹窗里那份表单与原始 JSON 都要它）。 */
-export async function getModeContent(modeId: string): Promise<Record<string, unknown>> {
+export async function getModeContent(
+  modeId: string
+): Promise<Record<string, unknown>> {
   const res = await api.get<{
     success: boolean
     message?: string
@@ -259,10 +294,11 @@ export async function saveModeContent(
   modeId: string,
   content: Record<string, unknown>
 ): Promise<ModeView> {
-  const res = await api.post<{ success: boolean; message?: string; data: ModeView }>(
-    `${ADMIN_BASE}/${encodeURIComponent(modeId)}/content`,
-    { content }
-  )
+  const res = await api.post<{
+    success: boolean
+    message?: string
+    data: ModeView
+  }>(`${ADMIN_BASE}/${encodeURIComponent(modeId)}/content`, { content })
   return ok(res.data)
 }
 
@@ -292,9 +328,11 @@ export interface ModeAiSetup {
 }
 
 export async function listModeAiKeys(): Promise<ModeAiSetup> {
-  const res = await api.get<{ success: boolean; message?: string; data: ModeAiSetup }>(
-    `${ADMIN_BASE}/ai/keys`
-  )
+  const res = await api.get<{
+    success: boolean
+    message?: string
+    data: ModeAiSetup
+  }>(`${ADMIN_BASE}/ai/keys`)
   return ok(res.data)
 }
 
@@ -329,7 +367,10 @@ export async function grantMode(
  * （他可能已经改过、已经用它建了工程），而"收回权限"能表达的是
  * "以后不再发新的"。这一屏上有一句话讲清楚这件事，因为运营一定会问。
  */
-export async function revokeMode(userId: number, modeId: string): Promise<void> {
+export async function revokeMode(
+  userId: number,
+  modeId: string
+): Promise<void> {
   const res = await api.post<{ success: boolean; message?: string }>(
     `${ADMIN_BASE}/entitlements/revoke`,
     {

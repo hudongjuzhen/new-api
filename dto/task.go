@@ -48,8 +48,13 @@ type TaskDto struct {
 	FinishTime int64           `json:"finish_time"`
 	Progress   string          `json:"progress"`
 	Properties any             `json:"properties"`
-	Username   string          `json:"username,omitempty"`
-	Data       json.RawMessage `json:"data"`
+	// Remark 是调用方提交任务时自带的备注（"生成 30 秒视频"），与
+	// `properties.remark` 是同一个值。这里平铺一份，是因为任务日志与账号的
+	// 使用记录都要在**不解析 properties** 的前提下显示它 —— 两处各写一遍
+	// 取 json 的路径，迟早有一处取不到而不报错。
+	Remark   string          `json:"remark,omitempty"`
+	Username string          `json:"username,omitempty"`
+	Data     json.RawMessage `json:"data"`
 	// 计费展示字段：本次任务实际扣除额度的来源（"wallet" 或 "subscription"）
 	// 及订阅实例 ID。与 PrivateData 中同名字段一致，供前端区分扣费来源。
 	BillingSource string `json:"billing_source,omitempty"`

@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
   listApps: vi.fn(),
+  listSites: vi.fn(),
   listCategories: vi.fn(),
   createApp: vi.fn(),
   updateApp: vi.fn(),
@@ -74,6 +75,9 @@ function listedApp(id: number, name: string): AppView {
     slug: `app-${id}`,
     kind: 'ai_app',
     upstreamId: `20512685288247009${id}`,
+    siteUpstreams: {
+      cn: { upstreamId: `20512685288247009${id}`, slug: `app-${id}` },
+    },
     description: '',
     coverUrl: '',
     published: true,
@@ -145,6 +149,10 @@ beforeEach(() => {
     totalPages: 1,
     kindCounts: { ai_app: LISTED.length },
   })
+  api.listSites.mockResolvedValue([
+    { key: 'cn', label: 'RunningHub', channelType: 61 },
+    { key: 'intl', label: 'RunningHub Intl', channelType: 62 },
+  ])
   api.listCategories.mockResolvedValue([])
   api.reorderApps.mockResolvedValue(3)
 })
