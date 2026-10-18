@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
-	"github.com/QuantumNous/new-api/zsy/runninghub"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -138,7 +137,7 @@ func TestAppRemark_IsCollapsedToOneLine(t *testing.T) {
 
 	taskID := env.submitWithRemark(t, appID, map[string]any{
 		"values": map[string]any{"122.prompt": "一只小城堡"},
-		"remark": "  生成\n\n30 秒\t视频　（4K） ",
+		"remark": "  生成   30  秒视频\n\n（4K）\t ",
 	})
 	assert.Equal(t, "生成 30 秒视频 （4K）", env.taskByTaskID(taskID).Properties.Remark)
 }
