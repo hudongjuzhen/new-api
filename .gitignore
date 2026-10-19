@@ -16,7 +16,7 @@ one-api
 new-api
 new-api-linux
 new-api-linux-*
-new-api.exe~
+new-api*.exe~
 /__debug_bin*
 .DS_Store
 tiktoken_cache
@@ -48,5 +48,5 @@ go.work.sum
 
 uploads/
 
-# ±¾µØ½Å±¾µÄÊä³ö£¨Ä£Ê½Í¬²½ / ÐÞ¸´µÄÔ¤ÀÀÎÄ¼þ£©
+# ï¿½ï¿½ï¿½Ø½Å±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£Ê½Í¬ï¿½ï¿½ / ï¿½Þ¸ï¿½ï¿½ï¿½Ô¤ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½
 _scripts/out/
