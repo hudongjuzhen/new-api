@@ -340,7 +340,8 @@ GET /api/zsy/rh/app-catalog
   },
   "instanceType": "default",
   "webhookUrl": "https://your.app/rh-hook",
-  "tokenId": 17
+  "tokenId": 17,
+  "remark": "生成 30 秒视频"
 }
 ```
 
@@ -350,6 +351,22 @@ GET /api/zsy/rh/app-catalog
 | `instanceType` | 否 | **已废弃、会被忽略**：算力实例是应用级配置，由管理员在 `应用管理 → 编辑` 设置，调用方不能按次覆盖。为了兼容旧客户端仍然接受该字段，但提交时一律使用应用配置的值 |
 | `webhookUrl` | 否 | RH 完成回调地址（透传给上游） |
 | `tokenId` | 否 | 面板调用时可指定由哪个 Key 计费；**API Key 调用时只能等于自己**，否则 400 |
+| `remark` | 否 | 调用方备注（见 §8.1.2），上限 120 字 |
+
+#### 8.1.2 备注（remark）
+
+调用方可以带一句话说明这一笔是什么，例如 `生成 30 秒视频`、`生成 4 张图片`。它的用途只有一个：**让账单自己说明自己**。
+
+| 项目 | 规则 |
+| --- | --- |
+| 落点 | 任务行的 `properties.remark`，并平铺成 `TaskDto.remark` |
+| 展示位置 | 站点「任务日志」（`/usage-logs/task`）的**详情**列，以及账号自己的使用记录（`/api/task/self`） |
+| 规范化 | 首尾空白去掉；连续空白（含换行、制表符、全角空格）折叠成一个空格；超过 120 字截断并加 `…` |
+| 空值 | 全空白等同没传 —— 不会在记录上留下一个空白标识 |
+| 计费 | **完全不参与**：不改价格、不改倍率、不改额度 |
+| 上游 | **绝不下发**：RunningHub 收到的请求体里没有这个字段 |
+
+`note` 是它的旧名，仍然接受（两个都传时以 `remark` 为准）。任务因失败/取消退款时，同一条备注也会写进退款日志的 `other.remark`，用户才能把退款对回自己那次生成。
 
 #### 8.1.1 算力实例（instanceType）
 
@@ -403,7 +420,8 @@ GET /api/zsy/rh/app-catalog
   "submit_time": 1767225600,
   "start_time": 1767225610,
   "finish_time": 1767225660,
-  "properties": { "origin_model_name": "1877265245566922753" },
+  "properties": { "origin_model_name": "1877265245566922753", "remark": "生成 30 秒视频" },
+  "remark": "生成 30 秒视频",
   "data": { "results": [ { "url": "https://rh-storage.example.com/out-0.png", "nodeId": "9", "outputType": "image" } ] },
   "billing_source": "wallet"
 }
@@ -416,6 +434,7 @@ GET /api/zsy/rh/app-catalog
 | `progress` | 百分比字符串：排队 `"20%"`、运行中 `"50%"`、终态 `"100%"` |
 | `quota` | 本次实际扣除的额度（失败会全额退回） |
 | `result_url` | 首个结果文件 URL（成功时） |
+| `remark` | 提交时带的调用方备注（§8.1.2）；没带时该字段不出现，`properties.remark` 同理 |
 | `data.results[]` | 一次运行可能产出多个文件：`{url, nodeId, outputType}`；`outputType` ∈ `image`/`video`/`audio`/`text`/… |
 | `billing_source` | `wallet`（钱包）或 `subscription`（订阅实例），另有 `subscription_id` |
 | `fail_reason` | 失败 / 取消原因 |
